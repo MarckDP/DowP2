@@ -1,0 +1,7 @@
+PySide6>=6.11.0
+requests>=2.33.1
+curl_cffi==0.14.0
+mutagen>=1.47.0
+pycryptodomex>=3.23.0
+websockets>=16.0
+brotli>=1.2.0

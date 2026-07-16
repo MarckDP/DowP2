@@ -16,7 +16,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QSize
+from PySide6.QtGui import QImage, QPixmap, QIcon
 
 from core.logger.logger_manager import logger
 from core.utils.cleanup_manager import CleanupManager
@@ -25,53 +26,165 @@ from core.ytdlp_logic.format_selectors import quick_format_selector
 from gui.dialogs.playlist_selection_dialog import PlaylistSelectionDialog
 from gui.styles import get_theme_token
 from gui.tabs.advanced_process.output_options import OutputOptionsWidget
+from gui.tabs.advanced_process.video_details_components import RichComboBox, RichTextDelegate, ThumbnailLoaderThread
 from gui.tabs.advanced_process.workers import AnalysisWorker, DownloadWorker
 from gui.widgets.animated_button import AnimatedButton
+
+
+class QuickThumbnailWidget(QWidget):
+    """
+    Widget de tamaño fijo para mostrar la miniatura del medio
+    y una etiqueta flotante de duración en la esquina inferior derecha.
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(96, 54)
+        
+        # Etiqueta base de la imagen (sin scaledContents para evitar deformar iconos)
+        self.thumb_label = QLabel(self)
+        self.thumb_label.setFixedSize(96, 54)
+        self.thumb_label.setScaledContents(False)
+        self.thumb_label.setAlignment(Qt.AlignCenter)
+        
+        # Etiqueta de duración superpuesta
+        self.duration_label = QLabel(self)
+        self.duration_label.setStyleSheet("""
+            background-color: rgba(0, 0, 0, 0.75);
+            color: #ffffff;
+            font-size: 8px;
+            font-weight: bold;
+            border-radius: 3px;
+            padding: 1px 3px;
+        """)
+        self.duration_label.setAlignment(Qt.AlignCenter)
+        self.duration_label.hide()
+        
+        self.thumb_label.setGeometry(0, 0, 96, 54)
+        self._set_default_thumbnail()
+        
+    def _set_default_thumbnail(self):
+        icon_path = os.path.join(os.path.dirname(__file__), "..", "..", "..", "assets", "icons", "svg", "movie.svg")
+        icon_path = os.path.normpath(icon_path)
+        
+        bg_color = get_theme_token('fondo_principal', '#121212')
+        borde_color = get_theme_token('borde', '#2d2d2d')
+        
+        self.thumb_label.setStyleSheet(f"""
+            QLabel {{
+                background-color: {bg_color};
+                border: 1px solid {borde_color};
+                border-radius: 4px;
+            }}
+        """)
+        
+        if os.path.exists(icon_path):
+            pixmap = QIcon(icon_path).pixmap(24, 24)
+            self.thumb_label.setPixmap(pixmap)
+        else:
+            self.thumb_label.setText("🎞️")
+            
+    def set_duration(self, duration_sec):
+        if not duration_sec:
+            self.duration_label.hide()
+            return
+        try:
+            seconds = int(float(duration_sec))
+            h = seconds // 3600
+            m = (seconds % 3600) // 60
+            s = seconds % 60
+            if h > 0:
+                formatted = f"{h}:{m:02d}:{s:02d}"
+            else:
+                formatted = f"{m:02d}:{s:02d}"
+            self.duration_label.setText(formatted)
+            self.duration_label.adjustSize()
+            
+            # Posicionar en la esquina inferior derecha
+            lbl_w = self.duration_label.width()
+            lbl_h = self.duration_label.height()
+            self.duration_label.setGeometry(96 - lbl_w - 4, 54 - lbl_h - 4, lbl_w, lbl_h)
+            self.duration_label.show()
+        except Exception:
+            self.duration_label.hide()
+            
+    def set_pixmap(self, pixmap):
+        self.thumb_label.setText("")
+        self.thumb_label.setStyleSheet("background-color: transparent; border: none;")
+        # Redimensionar la imagen real manteniendo relación de aspecto
+        scaled = pixmap.scaled(96, 54, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self.thumb_label.setPixmap(scaled)
 
 
 class QuickDownloadRow(QFrame):
     def __init__(self, title, parent=None):
         super().__init__(parent)
         self.setObjectName("queueItemCard")
+        self.original_title = title
+        self._thumb_loaded = False
+        self._thumb_loading = False
+        self.thumb_thread = None
+        self._duration_set = False
         self.init_ui(title)
 
     def init_ui(self, title):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 8, 10, 8)
-        layout.setSpacing(5)
+        main_layout = QHBoxLayout(self)
+        main_layout.setContentsMargins(10, 8, 10, 8)
+        main_layout.setSpacing(12)
 
+        # Miniatura a la izquierda
+        self.thumb_widget = QuickThumbnailWidget(self)
+        main_layout.addWidget(self.thumb_widget)
+
+        # Detalles a la derecha
+        content_layout = QVBoxLayout()
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(4)
+
+        # Fila superior: Título y Estado
         top_layout = QHBoxLayout()
         top_layout.setContentsMargins(0, 0, 0, 0)
         self.title_lbl = QLabel(title)
+        self.title_lbl.setStyleSheet(f"color: {get_theme_token('texto_principal', '#dddddd')}; font-weight: bold;")
         self.title_lbl.setWordWrap(False)
         self.title_lbl.setToolTip(title)
+        
         self.status_lbl = QLabel(self.tr("En espera"))
         self.status_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.status_lbl.setStyleSheet(f"color: {get_theme_token('texto_secundario', '#aaaaaa')}; font-size: 10px;")
+        
         top_layout.addWidget(self.title_lbl, 1)
         top_layout.addWidget(self.status_lbl)
-        layout.addLayout(top_layout)
+        content_layout.addLayout(top_layout)
 
+        # Barra de progreso intermedia
         self.progress_bar = QProgressBar()
         self.progress_bar.setFixedHeight(6)
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
         self.progress_bar.setTextVisible(False)
-        layout.addWidget(self.progress_bar)
+        content_layout.addWidget(self.progress_bar)
 
+        # Fila inferior: Info y Porcentaje
         bottom_layout = QHBoxLayout()
         bottom_layout.setContentsMargins(0, 0, 0, 0)
         self.info_lbl = QLabel("")
+        self.info_lbl.setStyleSheet(f"color: {get_theme_token('texto_secundario', '#888888')}; font-size: 10px;")
+        
         self.percent_lbl = QLabel("0%")
         self.percent_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.percent_lbl.setStyleSheet(f"color: {get_theme_token('acento_primario', '#B9E640')}; font-size: 10px; font-weight: bold;")
+        
         bottom_layout.addWidget(self.info_lbl, 1)
         bottom_layout.addWidget(self.percent_lbl)
-        layout.addLayout(bottom_layout)
+        content_layout.addLayout(bottom_layout)
+
+        main_layout.addLayout(content_layout, 1)
 
         self.setStyleSheet(f"""
             QFrame#queueItemCard {{
                 background-color: {get_theme_token('fondo_principal', '#121212')};
                 border: 1px solid {get_theme_token('borde', '#2d2d2d')};
-                border-radius: 6px;
+                border-radius: 8px;
             }}
             QLabel {{
                 color: {get_theme_token('texto_principal', '#dddddd')};
@@ -99,6 +212,87 @@ class QuickDownloadRow(QFrame):
             self.info_lbl.setToolTip(info)
         if status:
             self.status_lbl.setText(status)
+
+    def update_metadata_from_dict(self, info):
+        if not info:
+            return
+            
+        # 1. Actualizar título si es genérico
+        title = info.get("title")
+        if title and (self.original_title == self.tr("Descarga directa") or not self.original_title):
+            self.original_title = title
+            metrics = self.title_lbl.fontMetrics()
+            elided = metrics.elidedText(title, Qt.ElideRight, self.title_lbl.width() or 300)
+            self.title_lbl.setText(elided)
+            self.title_lbl.setToolTip(title)
+            
+        # 2. Actualizar duración
+        duration_sec = info.get("duration")
+        if duration_sec and not self._duration_set:
+            self.thumb_widget.set_duration(duration_sec)
+            self._duration_set = True
+            
+        # 3. Actualizar miniatura
+        if not self._thumb_loaded and not self._thumb_loading:
+            thumb_url = None
+            thumbs = info.get("thumbnails") or []
+            valid = [t for t in thumbs if t.get("url")]
+            if valid:
+                # Ordenar por tamaño de menor a mayor (baja calidad primero)
+                valid.sort(key=lambda t: (t.get("width") or 0) * (t.get("height") or 0))
+                thumb_url = valid[0]["url"]
+            else:
+                thumb_url = info.get("thumbnail")
+                
+            if thumb_url:
+                self.load_thumbnail(thumb_url)
+
+    def load_thumbnail(self, url):
+        if not url or self._thumb_loaded or self._thumb_loading:
+            return
+        self._thumb_loading = True
+        
+        import re
+        fallback_urls = []
+        match = re.match(r'(https?://i\.ytimg\.com/vi/[^/]+/)([^?]+)', url)
+        if match:
+            base = match.group(1)
+            # Miniatura de baja calidad de YouTube (default.jpg 120x90 es súper rápida de cargar)
+            primary = base + "default.jpg"
+            fallback_urls = [base + "mqdefault.jpg", url]
+        else:
+            primary = url
+            
+        self.thumb_thread = ThumbnailLoaderThread(primary, fallback_urls=fallback_urls)
+        
+        def on_finished(content, error):
+            self._thumb_loading = False
+            if content:
+                self._thumb_loaded = True
+                img = QImage.fromData(content)
+                if not img.isNull():
+                    pix = QPixmap.fromImage(img)
+                    self.thumb_widget.set_pixmap(pix)
+            if self.thumb_thread:
+                self.thumb_thread.deleteLater()
+            self.thumb_thread = None
+            
+        self.thumb_thread.finished.connect(on_finished)
+        self.thumb_thread.start()
+
+    def destroy_row(self):
+        if self.thumb_thread:
+            try:
+                self.thumb_thread.finished.disconnect()
+            except Exception:
+                pass
+            try:
+                if self.thumb_thread.isRunning():
+                    self.thumb_thread.quit()
+                    self.thumb_thread.wait()
+            except RuntimeError:
+                pass
+            self.thumb_thread = None
 
 
 class QuickModeTab(QWidget):
@@ -130,6 +324,22 @@ class QuickModeTab(QWidget):
         self.main_layout.addWidget(self.options_panel)
         self.main_layout.addWidget(self.activity_panel, 1)
         self.main_layout.addWidget(self.output_options)
+
+        # Aplicar el estilo de caja redondeada ("cuadro") a los paneles
+        self.options_panel.setAttribute(Qt.WA_StyledBackground, True)
+        self.activity_panel.setAttribute(Qt.WA_StyledBackground, True)
+        
+        borde_color = get_theme_token('borde_normal', '#2d2d2d')
+        fondo_color = get_theme_token('fondo_secundario', '#1e1e1e')
+        box_style = f"""
+            QFrame#analysisOptionsBar {{
+                background-color: {fondo_color};
+                border: 1px solid {borde_color};
+                border-radius: 12px;
+            }}
+        """
+        self.options_panel.setStyleSheet(box_style)
+        self.activity_panel.setStyleSheet(box_style)
 
         self.output_options.btn_start_download.setText(self.tr("Descargar"))
         self.output_options.btn_start_download.setEnabled(True)
@@ -176,7 +386,8 @@ class QuickModeTab(QWidget):
         layout.addWidget(self.mode_combo)
 
         layout.addWidget(QLabel(self.tr("Calidad:")))
-        self.quality_combo = QComboBox()
+        self.quality_combo = RichComboBox()
+        self.quality_combo.setItemDelegate(RichTextDelegate())
         layout.addWidget(self.quality_combo)
 
         self.chk_playlist_selector = QCheckBox(self.tr("Seleccionar playlist"))
@@ -199,10 +410,6 @@ class QuickModeTab(QWidget):
         layout.setContentsMargins(12, 10, 12, 10)
         layout.setSpacing(8)
 
-        title = QLabel(self.tr("Descargas"))
-        title.setObjectName("sectionTitle")
-        layout.addWidget(title)
-
         self.activity_scroll = QScrollArea()
         self.activity_scroll.setWidgetResizable(True)
         self.activity_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -212,6 +419,13 @@ class QuickModeTab(QWidget):
         self.activity_layout = QVBoxLayout(self.activity_container)
         self.activity_layout.setContentsMargins(0, 0, 0, 0)
         self.activity_layout.setSpacing(8)
+        
+        # Etiqueta de marcador de posición (placeholder) cuando no hay descargas
+        self.empty_lbl = QLabel(self.tr("Aquí aparecerán tus descargas"))
+        self.empty_lbl.setStyleSheet(f"color: {get_theme_token('texto_secundario', '#888888')}; font-size: 11px;")
+        self.empty_lbl.setAlignment(Qt.AlignCenter)
+        self.activity_layout.addWidget(self.empty_lbl)
+        
         self.activity_layout.addStretch(1)
         self.activity_scroll.setWidget(self.activity_container)
         layout.addWidget(self.activity_scroll, 1)
@@ -266,6 +480,8 @@ class QuickModeTab(QWidget):
         self.analysis_worker = AnalysisWorker(url, analyze_playlist=True, fast_mode=True)
 
         def on_finished(data, error):
+            if self.analysis_worker:
+                self.analysis_worker.deleteLater()
             self.analysis_worker = None
             if error:
                 self._set_busy(False)
@@ -372,11 +588,13 @@ class QuickModeTab(QWidget):
         self.item_keys = []
         self.current_item_pos = 1 if entries else 0
         self.completed_items = 0
+        self.empty_lbl.hide()
 
         for idx, entry in enumerate(entries):
             title = entry.get("title") or entry.get("id") or entry.get("url") or self.tr(f"Item {idx + 1}")
             self.item_keys.append(entry.get("playlist_index") or (selected_indices[idx] + 1 if idx < len(selected_indices) else idx + 1))
             row = QuickDownloadRow(str(title), self.activity_container)
+            row.update_metadata_from_dict(entry)
             self.activity_layout.insertWidget(self.activity_layout.count() - 1, row)
             self.item_rows.append(row)
 
@@ -385,12 +603,15 @@ class QuickModeTab(QWidget):
 
     def _clear_activity_rows(self):
         for row in self.item_rows:
+            if hasattr(row, "destroy_row"):
+                row.destroy_row()
             self.activity_layout.removeWidget(row)
             row.deleteLater()
         self.item_rows = []
         self.item_keys = []
         self.current_item_pos = 0
         self.completed_items = 0
+        self.empty_lbl.show()
 
     def _cancel_download(self):
         if self.download_worker:
@@ -413,11 +634,15 @@ class QuickModeTab(QWidget):
             row_idx = self._resolve_progress_row(data)
             if row_idx is not None and 0 <= row_idx < len(self.item_rows):
                 self.current_item_pos = row_idx + 1
-                self.item_rows[row_idx].update_progress(
+                row = self.item_rows[row_idx]
+                row.update_progress(
                     val,
                     info=f"{speed} - ETA: {eta}",
                     status=self.tr("Descargando"),
                 )
+                info = data.get("info_dict")
+                if info:
+                    row.update_metadata_from_dict(info)
             total = max(1, len(self.item_rows))
             global_percent = ((max(0, self.current_item_pos - 1) + (val / 100.0)) / total) * 100.0
             self.output_options.set_progress(
@@ -430,7 +655,11 @@ class QuickModeTab(QWidget):
                 self.last_downloaded_filepath = data.get("filename")
             row_idx = self._resolve_progress_row(data)
             if row_idx is not None and 0 <= row_idx < len(self.item_rows):
-                self.item_rows[row_idx].update_progress(100, status=self.tr("Procesando"))
+                row = self.item_rows[row_idx]
+                row.update_progress(100, status=self.tr("Procesando"))
+                info = data.get("info_dict")
+                if info:
+                    row.update_metadata_from_dict(info)
                 self.completed_items = max(self.completed_items, row_idx + 1)
                 self.current_item_pos = min(len(self.item_rows), row_idx + 2)
             total = max(1, len(self.item_rows))
@@ -470,6 +699,8 @@ class QuickModeTab(QWidget):
                 self.item_rows[idx].update_progress(0, status=self.tr("Error"))
             self.output_options.set_progress(0, self.tr(f"Error: {message}"), "error")
             logger.error(f"QuickModeTab: Error en descarga: {message}")
+        if self.download_worker:
+            self.download_worker.deleteLater()
         self.download_worker = None
 
     def _set_busy(self, busy, message=None):

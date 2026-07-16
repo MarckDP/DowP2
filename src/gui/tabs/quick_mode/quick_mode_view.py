@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QProgressBar,
+    QPushButton,
     QScrollArea,
     QSizePolicy,
     QVBoxLayout,
@@ -360,6 +361,45 @@ class QuickModeTab(QWidget):
         self.url_input.setPlaceholderText(self.tr("Pega una URL para descargar directamente"))
         self.url_input.returnPressed.connect(self._on_download_clicked)
 
+        # Botón circular conmutable para activar el recorte de fragmentos
+        self.btn_cut = QPushButton()
+        self.btn_cut.setCheckable(True)
+        self.btn_cut.setFixedSize(34, 34)
+        self.btn_cut.setToolTip(self.tr("Activar recorte de fragmento"))
+        
+        _icon_path = os.path.join(
+            os.path.dirname(__file__), "..", "..", "..",
+            "assets", "icons", "svg", "content_cut.svg"
+        )
+        _icon_path = os.path.normpath(_icon_path)
+        if os.path.exists(_icon_path):
+            self.btn_cut.setIcon(QIcon(_icon_path))
+            self.btn_cut.setIconSize(QSize(18, 18))
+        else:
+            self.btn_cut.setText("✂")
+            
+        self.btn_cut.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {get_theme_token('fondo_secundario', '#1e1e1e')};
+                border: 1px solid {get_theme_token('borde', '#2d2d2d')};
+                border-radius: 17px;
+                padding: 0px;
+            }}
+            QPushButton:hover {{
+                background-color: {get_theme_token('fondo_hover', '#2a2a2a')};
+            }}
+            QPushButton:checked {{
+                background-color: #e53935;
+                border-color: #ff6b6b;
+            }}
+            QPushButton:checked:hover {{
+                background-color: #ff6b6b;
+            }}
+            QPushButton:disabled {{
+                background-color: #555;
+            }}
+        """)
+
         self.btn_download = AnimatedButton(self.tr("Descargar"))
         self.btn_download.setObjectName("analyzeButton")
         self.btn_download.setFixedWidth(120)
@@ -367,6 +407,7 @@ class QuickModeTab(QWidget):
 
         layout.addWidget(QLabel(self.tr("URL:")))
         layout.addWidget(self.url_input, 1)
+        layout.addWidget(self.btn_cut)
         layout.addWidget(self.btn_download)
         return panel
 
@@ -470,10 +511,128 @@ class QuickModeTab(QWidget):
             self.output_options.set_progress(0, self.tr("Pega una URL primero"), "error")
             return
 
-        if self.chk_playlist_selector.isChecked():
+        if self.btn_cut.isChecked():
+            self._start_cut_analysis(url)
+        elif self.chk_playlist_selector.isChecked():
             self._start_playlist_selection(url)
         else:
             self._start_direct_download(url)
+
+    def _start_cut_analysis(self, url):
+        self._set_busy(True, self.tr("Analizando video para recorte..."))
+        self.analysis_worker = AnalysisWorker(url, analyze_playlist=False, fast_mode=True)
+        
+        def on_finished(data, error):
+            if self.analysis_worker:
+                self.analysis_worker.deleteLater()
+            self.analysis_worker = None
+            
+            if error:
+                self._set_busy(False)
+                self.output_options.set_progress(0, self.tr(f"Error al analizar: {error}"), "error")
+                return
+                
+            self._open_cut_dialog_and_download(url, data)
+            
+        self.analysis_worker.finished.connect(on_finished)
+        self.analysis_worker.start()
+
+    def _open_cut_dialog_and_download(self, url, data):
+        # 1. Buscar la miniatura del video
+        thumb_url = None
+        thumbs = data.get("thumbnails") or []
+        valid_thumbs = [t for t in thumbs if t.get("url")]
+        if valid_thumbs:
+            valid_thumbs.sort(key=lambda t: (t.get("width") or 0) * (t.get("height") or 0), reverse=True)
+            thumb_url = valid_thumbs[0]["url"]
+        else:
+            thumb_url = data.get("thumbnail")
+
+        # Descargar miniatura de manera síncrona pero rápida para pasarla al diálogo
+        pixmap = None
+        if thumb_url:
+            try:
+                import requests
+                from PySide6.QtGui import QImage, QPixmap
+                resp = requests.get(thumb_url, timeout=3)
+                resp.raise_for_status()
+                img = QImage.fromData(resp.content)
+                if not img.isNull():
+                    pixmap = QPixmap.fromImage(img)
+            except Exception as e:
+                logger.warning(f"QuickModeTab: No se pudo descargar miniatura para FragmentDialog: {e}")
+
+        # 2. Encontrar stream_url para la vista previa del reproductor
+        formats = data.get("formats") or []
+        preview_format = None
+        for f in formats:
+            if f.get("url") and not f.get("url", "").startswith("rtmp") and f.get("acodec") != "none" and f.get("vcodec") != "none":
+                h = f.get("height") or 0
+                if 360 <= h <= 720:
+                    preview_format = f
+                    break
+        if not preview_format:
+            for f in formats:
+                if f.get("url") and f.get("vcodec") != "none":
+                    preview_format = f
+                    break
+        stream_url = preview_format.get("url", "") if preview_format else ""
+
+        # 3. Lanzar FragmentDialog con un overlay semitransparente sobre la ventana principal
+        from gui.dialogs.fragment_dialog import FragmentDialog
+        
+        dialog = FragmentDialog(
+            self,
+            stream_url=stream_url,
+            thumbnail_pixmap=pixmap,
+            duration=data.get("duration", 0),
+            fps=data.get("fps", 30) or 30,
+            source_url=data.get("webpage_url", url),
+        )
+
+        main_win = self.window()
+        overlay = None
+        try:
+            from PySide6.QtWidgets import QWidget as _QWidget
+            overlay = _QWidget(main_win)
+            overlay.setStyleSheet("background-color: rgba(0, 0, 0, 160);")
+            overlay.setGeometry(main_win.rect())
+            overlay.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+            overlay.show()
+            overlay.raise_()
+        except Exception:
+            overlay = None
+
+        result = dialog.exec()
+
+        if overlay is not None:
+            try:
+                overlay.hide()
+                overlay.deleteLater()
+            except Exception:
+                pass
+
+        # 4. Si el usuario guarda el fragmento
+        if result:
+            frag_data = dialog.get_fragments_data()
+            selected_fragments = frag_data["fragments"]
+            fragment_mode = frag_data["mode"]
+            
+            # Construimos la petición de descarga
+            req = self._build_request_data(url=url, title=data.get("title", ""), is_playlist=False)
+            req["selected_fragments"] = selected_fragments
+            req["fragment_mode"] = fragment_mode
+            
+            # Limpiamos e iniciamos descarga
+            self.is_downloading = True
+            self._set_busy(False)
+            self._set_download_text(self.tr("Cancelar"))
+            
+            # Iniciamos la descarga pasándole la info analizada para rellenar la tarjeta
+            self._start_worker(req, selected_entries=[data], selected_indices=[0])
+        else:
+            self._set_busy(False)
+            self.output_options.set_progress(0, self.tr("Recorte cancelado"), "wait")
 
     def _start_playlist_selection(self, url):
         self._set_busy(True, self.tr("Analizando playlist..."))
@@ -717,6 +876,7 @@ class QuickModeTab(QWidget):
         self.output_options.output_path_input.setEnabled(enabled)
         self.output_options.btn_select_output_path.setEnabled(enabled)
         self.output_options.speed_limit_input.setEnabled(enabled)
+        self.btn_cut.setEnabled(enabled)
 
     def _set_download_text(self, text):
         self.btn_download.setText(text)

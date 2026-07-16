@@ -230,7 +230,7 @@ def apply_ui_scaling() -> float:
                   f"= {raw_scale:.3f} -> clamped {qt_scale}")
 
     # 3. Aplicar
-    os.environ["QT_SCALE_FACTOR"] = str(qt_scale)
+    #os.environ["QT_SCALE_FACTOR"] = str(qt_scale)
     _log("INFO", f"QT_SCALE_FACTOR = {qt_scale}")
 
     return qt_scale

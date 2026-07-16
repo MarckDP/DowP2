@@ -106,22 +106,29 @@ def get_base_ydl_opts(extra_opts=None):
         if target:
             ydl_opts['impersonate'] = target
 
-    # --- PARCHES ESPECÍFICOS Y JS RUNTIMES ---
-    # El DowP 1.0 aplicaba apply_yt_patch() SIEMPRE para YouTube,
-    # no solo con cookies. Replicamos ese comportamiento.
+    # --- JS RUNTIMES Y COMPONENTES REMOTOS ---
+    # Necesarios siempre para resolver challenges de YouTube.
     env = get_dependency_env()
     deno_dir = next((p for p in env.get('PATH', '').split(os.pathsep) if 'deno' in p.lower()), '')
     deno_path = os.path.join(deno_dir, 'deno.exe') if deno_dir else 'deno'
     
     ydl_opts['js_runtimes'] = {'deno': {'path': deno_path}}
     ydl_opts['remote_components'] = ['ejs:github']
-    ydl_opts['extractor_args'] = {
-        'youtube': {
-            'player_client': ['web_safari', 'android', 'web', 'tv'],
-            'n_client': ['web_safari', 'android', 'tv'],
-            'skip': []
+
+    # --- EXTRACTOR ARGS (solo con cookies) ---
+    # Sin cookies: NO forzar extractor_args. yt-dlp usará sus defaults
+    # internos que se actualizan con cada release para adaptarse a YouTube.
+    # Forzar clientes como web_safari o android sin autenticación provoca
+    # que YouTube restrinja los formatos a calidades bajas (SABR / tokens).
+    # Con cookies: excluimos clientes problemáticos conocidos.
+    if use_cookies:
+        ydl_opts['extractor_args'] = {
+            'youtube': {
+                'player_client': ['default', '-tv_simply', '-android_sdkless'],
+                'n_client': ['default'],
+                'skip': []
+            }
         }
-    }
         
     return ydl_opts
 

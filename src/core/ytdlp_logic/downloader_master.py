@@ -179,6 +179,8 @@ class DownloaderMaster:
         # Bloquear rígidamente la extracción de más de 1 item si no es una playlist autorizada
         if not is_playlist:
             ydl_opts['playlist_items'] = '1'
+        elif data.get("playlist_items"):
+            ydl_opts['playlist_items'] = data.get("playlist_items")
 
         # --- FRAGMENTOS / RECORTES ---
         fragments = data.get("selected_fragments", [])

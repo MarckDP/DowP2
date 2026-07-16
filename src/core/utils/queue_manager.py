@@ -422,27 +422,8 @@ class QueueWorker(QThread):
 
     @staticmethod
     def _playlist_format_selector(mode, quality):
-        if mode == "audio_only":
-            if quality == "best_compatible":
-                # Para solo audio, el contenedor casi siempre dicta el códec (m4a=aac, mp3=mp3).
-                # Es mucho más seguro y directo buscar por extensión prioritaria.
-                return "bestaudio[ext=m4a]/bestaudio[ext=mp4]/bestaudio[ext=mp3]/bestaudio[ext=wav]/bestaudio/best"
-            return "bestaudio/best"
-
-        if quality == "best_compatible":
-            # Usamos regex estándar sin (?i) ya que yt-dlp maneja codecs en minúsculas
-            # y agrupamos correctamente con ^(codec1|codec2) para evitar fallos de matching parcial.
-            return (
-                "bestvideo[vcodec~='^(avc1|h264|hevc|h265|prores|dnxhd|dnxhr|cfhd)']+bestaudio[acodec~='^(aac|mp4a|pcm_s16le|pcm_s24le|mp3|ac3)']/"
-                "bestvideo[ext=mp4]+bestaudio[ext=m4a]/"
-                "best[ext~='^(mp4|mov|avi)'][vcodec~='^(avc1|h264|hevc|h265|prores|dnxhd|dnxhr|cfhd)']/best"
-            )
-        if quality == "best":
-            return "bestvideo+bestaudio/best"
-        if str(quality).isdigit():
-            h = str(quality)
-            return f"bestvideo[height<={h}]+bestaudio/best[height<={h}]/best"
-        return "bestvideo+bestaudio/best"
+        from core.ytdlp_logic.format_selectors import playlist_format_selector
+        return playlist_format_selector(mode, quality)
 
     @staticmethod
     def _default_output_path():

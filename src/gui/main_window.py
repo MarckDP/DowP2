@@ -9,6 +9,7 @@ from core.utils.config_manager import get_config
 
 # Import Tab Views
 from gui.tabs.advanced_process.advanced_process_view import AdvancedProcessTab
+from gui.tabs.quick_mode.quick_mode_view import QuickModeTab
 from gui.tabs.image_tools.image_tools_view import ImageToolsTab
 from gui.tabs.video_tools.video_tools_view import VideoToolsTab
 from gui.tabs.settings.settings_view import SettingsTab
@@ -49,11 +50,15 @@ class MainWindow(QMainWindow):
         self.tabs = QTabWidget()
         self.tabs.setObjectName("mainTabs")
 
-        # 1. Proceso Avanzado
+        # 1. Modo Rápido
+        self.tab_quick = QuickModeTab()
+        self.tabs.addTab(self.tab_quick, self.tr("Modo Rápido"))
+
+        # 2. Proceso Avanzado
         self.tab_single = AdvancedProcessTab()
         self.tabs.addTab(self.tab_single, self.tr("Proceso Avanzado"))
 
-        # 2. Herramientas de Imagen
+        # 3. Herramientas de Imagen
         self.tab_image = ImageToolsTab()
         self.tabs.addTab(self.tab_image, self.tr("Herramientas de Imagen"))
 
@@ -75,7 +80,7 @@ class MainWindow(QMainWindow):
 
     def on_tab_changed(self, index):
         """Se ejecuta al cambiar de pestaña."""
-        if index == 0:
+        if self.tabs.widget(index) == self.tab_single:
             logger.info("MainWindow: Recargando etiquetas en Proceso Avanzado")
             self.tab_single.video_details.load_labels()
 

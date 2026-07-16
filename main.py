@@ -14,7 +14,7 @@ from core.logger.logger_manager import logger
 # Enviar los logs de escalado al logger real
 flush_scaling_logs()
 
-from core.setup.setup_manager import verify_all_dependencies, download_missing_dependencies
+from core.setup.setup_manager import verify_all_dependencies
 from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QFontDatabase, QIcon
 from gui.main_window import MainWindow
@@ -76,8 +76,12 @@ def main():
     logger.info("Checking dependencies...")
     status = verify_all_dependencies()
     if not all(status.values()):
-        logger.info("Some dependencies are missing. Starting download...")
-        download_missing_dependencies()
+        logger.info("Some dependencies are missing. Showing installer dialog...")
+        from gui.dialogs.dependency_dialog import DependencyDialog
+        dialog = DependencyDialog()
+        if not dialog.exec():
+            logger.info("Dependency installation cancelled or failed. Exiting.")
+            sys.exit(0)
         logger.info("Dependencies ready.")
     else:
         logger.info("All dependencies found.")

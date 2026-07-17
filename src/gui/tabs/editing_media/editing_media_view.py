@@ -46,6 +46,14 @@ from core.tabs.editing_media.editing_media_logic import (
 from gui.tabs.editing_media.waveform_widget import AudioWaveformWidget
 from gui.tabs.editing_media.preview_panel import PreviewContainerWidget
 
+_SVG_DIR = os.path.normpath(os.path.join(
+    os.path.dirname(__file__), "..", "..", "..", "assets", "icons", "svg"
+))
+
+def get_svg_icon(name: str) -> QIcon:
+    path = os.path.join(_SVG_DIR, name)
+    return QIcon(path) if os.path.exists(path) else QIcon()
+
 
 class EditingMediaTab(QWidget):
     """Pestaña 'Medios de Edición' con una distribución visual de tres paneles de 20/40/40."""
@@ -152,71 +160,16 @@ class EditingMediaTab(QWidget):
         self.tree_folders.setAnimated(True)
         self.tree_folders.setIndentation(14)
         self.tree_folders.itemClicked.connect(self._on_tree_item_clicked)
+        self.tree_folders.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.tree_folders.customContextMenuRequested.connect(self._show_tree_context_menu)
         layout.addWidget(self.tree_folders, 1)
 
-        # ── PANEL DE BOTONES (4 acciones: 2 para Carpetas, 2 para Colecciones) ──
-        buttons_layout = QVBoxLayout()
-        buttons_layout.setSpacing(5)
-
-        # Fila 1: Carpetas Físicas
-        row_folders = QHBoxLayout()
-        row_folders.setSpacing(6)
-        
+        # Botón para Indexar Carpeta (único botón físico)
         self.btn_add_folder = AnimatedButton(self.tr("Indexar Carpeta"))
         self.btn_add_folder.setObjectName("analyzeButton")
-        self.btn_add_folder.setFixedHeight(30)
+        self.btn_add_folder.setFixedHeight(32)
         self.btn_add_folder.clicked.connect(self._on_add_folder_clicked)
-        
-        self.btn_remove_folder = QPushButton(self.tr("Desvincular"))
-        self.btn_remove_folder.setFixedHeight(30)
-        self.btn_remove_folder.setEnabled(False)
-        self.btn_remove_folder.clicked.connect(self._on_remove_folder_clicked)
-        
-        row_folders.addWidget(self.btn_add_folder, 1)
-        row_folders.addWidget(self.btn_remove_folder, 1)
-        buttons_layout.addLayout(row_folders)
-
-        # Fila 2: Colecciones Virtuales
-        row_collections = QHBoxLayout()
-        row_collections.setSpacing(6)
-        
-        self.btn_add_col = QPushButton(self.tr("Nueva Col."))
-        self.btn_add_col.setFixedHeight(30)
-        self.btn_add_col.clicked.connect(self._on_add_collection_clicked)
-        
-        self.btn_remove_col = QPushButton(self.tr("Borrar Col."))
-        self.btn_remove_col.setFixedHeight(30)
-        self.btn_remove_col.setEnabled(False)
-        self.btn_remove_col.clicked.connect(self._on_remove_collection_clicked)
-        
-        row_collections.addWidget(self.btn_add_col, 1)
-        row_collections.addWidget(self.btn_remove_col, 1)
-        buttons_layout.addLayout(row_collections)
-
-        layout.addLayout(buttons_layout)
-
-        # Estilo común para botones secundarios de la barra lateral
-        secundary_btn_style = f"""
-            QPushButton {{
-                background-color: {get_theme_token('boton_secundario_fondo', '#2d2d2d')};
-                color: {get_theme_token('boton_secundario_texto', '#cdd6f4')};
-                border: 1px solid {get_theme_token('borde_normal', '#2d2d2d')};
-                border-radius: 8px;
-                font-size: 11px;
-                font-weight: bold;
-            }}
-            QPushButton:hover {{
-                background-color: {get_theme_token('boton_secundario_hover', '#3a3a3a')};
-            }}
-            QPushButton:disabled {{
-                background-color: #1e1e1e;
-                color: #555555;
-                border-color: #2d2d2d;
-            }}
-        """
-        self.btn_remove_folder.setStyleSheet(secundary_btn_style)
-        self.btn_add_col.setStyleSheet(secundary_btn_style)
-        self.btn_remove_col.setStyleSheet(secundary_btn_style)
+        layout.addWidget(self.btn_add_folder)
 
         return col
 
@@ -270,6 +223,7 @@ class EditingMediaTab(QWidget):
         self.media_list = QListWidget()
         self.media_list.setObjectName("mediaListWidget")
         self.media_list.setSpacing(0)
+        self.media_list.setIconSize(QSize(16, 16))
         self.media_list.itemClicked.connect(self._on_media_clicked)
         
         # Activar menú contextual
@@ -324,7 +278,6 @@ class EditingMediaTab(QWidget):
         controls_layout.addWidget(self.vol_slider)
 
         audio_layout.addLayout(controls_layout)
-        layout.addWidget(self.audio_panel)
 
         return col
 
@@ -342,6 +295,9 @@ class EditingMediaTab(QWidget):
         # Contenedor de Vista Previa Cuadrado
         self.preview_box = PreviewContainerWidget()
         layout.addWidget(self.preview_box)
+
+        # El panel de audio/forma de onda
+        layout.addWidget(self.audio_panel)
 
         # Contenedor de Información Técnica (Metadatos)
         self.info_box = QFrame()
@@ -565,24 +521,28 @@ class EditingMediaTab(QWidget):
         self.tree_folders.clear()
 
         # 1. Nodo Raíz de Directorios Físicos
-        self.physical_root = QTreeWidgetItem(self.tree_folders, [self.tr("📁 Directorios Físicos")])
+        self.physical_root = QTreeWidgetItem(self.tree_folders, [self.tr("Directorios Físicos")])
+        self.physical_root.setIcon(0, get_svg_icon("folder_open.svg"))
         self.physical_root.setData(0, Qt.UserRole, {"tipo": "root_physical"})
         self.physical_root.setExpanded(True)
 
         for folder in self.controller.indexed_folders:
             folder_name = os.path.basename(folder) or folder
             item = QTreeWidgetItem(self.physical_root, [folder_name])
+            item.setIcon(0, get_svg_icon("folder_managed.svg"))
             item.setData(0, Qt.UserRole, {"tipo": "folder", "ruta": folder})
             item.setExpanded(True)
             self._add_folder_subdirs(item, folder)
 
         # 2. Nodo Raíz de Colecciones Virtuales
-        self.virtual_root = QTreeWidgetItem(self.tree_folders, [self.tr("🌟 Colecciones Virtuales")])
+        self.virtual_root = QTreeWidgetItem(self.tree_folders, [self.tr("Colecciones Virtuales")])
+        self.virtual_root.setIcon(0, get_svg_icon("star.svg"))
         self.virtual_root.setData(0, Qt.UserRole, {"tipo": "root_virtual"})
         self.virtual_root.setExpanded(True)
 
         for col_name in self.controller.collections.keys():
             item = QTreeWidgetItem(self.virtual_root, [col_name])
+            item.setIcon(0, get_svg_icon("star.svg"))
             item.setData(0, Qt.UserRole, {"tipo": "collection", "nombre": col_name})
 
         # Restaurar selección anterior
@@ -628,32 +588,14 @@ class EditingMediaTab(QWidget):
                 subpath = os.path.join(folder_path, name)
                 if os.path.isdir(subpath):
                     child = QTreeWidgetItem(parent_item, [name])
+                    child.setIcon(0, get_svg_icon("folder_open.svg"))
                     child.setData(0, Qt.UserRole, {"tipo": "subfolder", "ruta": subpath.replace("\\", "/")})
                     self._add_folder_subdirs(child, subpath)
         except Exception as e:
             logger.debug(f"EditingMediaTab: Error al buscar subcarpetas en {folder_path}: {e}")
 
     def _update_button_states(self):
-        """Habilita o deshabilita botones según el ítem seleccionado en el árbol."""
-        selected = self.tree_folders.currentItem()
-        if not selected:
-            self.btn_remove_folder.setEnabled(False)
-            self.btn_remove_col.setEnabled(False)
-            return
-
-        data = selected.data(0, Qt.UserRole)
-        if not data:
-            self.btn_remove_folder.setEnabled(False)
-            self.btn_remove_col.setEnabled(False)
-            return
-
-        tipo = data.get("tipo")
-        
-        # Desvincular carpeta solo activo en raíces físicas añadidas manualmente
-        self.btn_remove_folder.setEnabled(tipo == "folder")
-        
-        # Eliminar colección solo activo para colecciones virtuales creadas
-        self.btn_remove_col.setEnabled(tipo == "collection")
+        pass
 
     # ── Población y Control de la Lista de Medios ──────────────────────────
     def _update_media_list(self):
@@ -697,9 +639,14 @@ class EditingMediaTab(QWidget):
             elif self.active_filter == "Audios" and item_type != "audio":
                 continue
 
-            # Construir visual del item
-            icon_str = "🎥 " if item_type == "video" else ("🖼️ " if item_type == "imagen" else "🎵 ")
-            list_item = QListWidgetItem(icon_str + item["nombre"])
+            # Construir visual del item con iconos SVG reales
+            list_item = QListWidgetItem(item["nombre"])
+            if item_type == "video":
+                list_item.setIcon(get_svg_icon("movie.svg"))
+            elif item_type == "imagen":
+                list_item.setIcon(get_svg_icon("edit.svg"))
+            elif item_type == "audio":
+                list_item.setIcon(get_svg_icon("music_note.svg"))
             list_item.setData(Qt.UserRole, item)
             self.media_list.addItem(list_item)
 
@@ -1103,6 +1050,36 @@ class EditingMediaTab(QWidget):
             self.active_filter = "Todos"
             
         self._update_media_list()
+
+    # ── Menú Contextual (Click derecho sobre el árbol de carpetas) ────────────
+    def _show_tree_context_menu(self, position):
+        item = self.tree_folders.itemAt(position)
+        menu = QMenu(self)
+        
+        if not item:
+            # Click derecho en zona vacía: ofrecer crear colección virtual
+            act_new_col = menu.addAction(self.tr("Nueva Colección Virtual"))
+            act_new_col.triggered.connect(self._on_add_collection_clicked)
+            menu.exec(self.tree_folders.mapToGlobal(position))
+            return
+            
+        data = item.data(0, Qt.UserRole)
+        if not data:
+            return
+            
+        tipo = data.get("tipo")
+        if tipo == "folder":
+            act_remove = menu.addAction(self.tr("Desvincular Carpeta Física"))
+            act_remove.triggered.connect(self._on_remove_folder_clicked)
+            menu.exec(self.tree_folders.mapToGlobal(position))
+        elif tipo == "collection":
+            act_remove = menu.addAction(self.tr("Eliminar Colección Virtual"))
+            act_remove.triggered.connect(self._on_remove_collection_clicked)
+            menu.exec(self.tree_folders.mapToGlobal(position))
+        elif tipo == "root_virtual":
+            act_new_col = menu.addAction(self.tr("Nueva Colección Virtual"))
+            act_new_col.triggered.connect(self._on_add_collection_clicked)
+            menu.exec(self.tree_folders.mapToGlobal(position))
 
     # ── Menú Contextual (Click derecho sobre la lista central) ───────────────
     def _show_media_context_menu(self, position):

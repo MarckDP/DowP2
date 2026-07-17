@@ -160,6 +160,7 @@ class EditingMediaTab(QWidget):
         self.tree_folders.setAnimated(True)
         self.tree_folders.setIndentation(14)
         self.tree_folders.itemClicked.connect(self._on_tree_item_clicked)
+        self.tree_folders.currentItemChanged.connect(self._on_tree_current_item_changed)
         self.tree_folders.setContextMenuPolicy(Qt.CustomContextMenu)
         self.tree_folders.customContextMenuRequested.connect(self._show_tree_context_menu)
         layout.addWidget(self.tree_folders, 1)
@@ -225,6 +226,7 @@ class EditingMediaTab(QWidget):
         self.media_list.setSpacing(0)
         self.media_list.setIconSize(QSize(16, 16))
         self.media_list.itemClicked.connect(self._on_media_clicked)
+        self.media_list.currentItemChanged.connect(self._on_current_item_changed)
         
         # Activar menú contextual
         self.media_list.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -735,6 +737,14 @@ class EditingMediaTab(QWidget):
                 self._clear_metadata()
 
     # ── Eventos de interacción de selección en las Vistas ────────────────────
+    def _on_tree_current_item_changed(self, current, previous):
+        if current:
+            self._on_tree_item_clicked(current, 0)
+
+    def _on_current_item_changed(self, current, previous):
+        if current:
+            self._on_media_clicked(current)
+
     def _on_tree_item_clicked(self, item, column):
         self._update_button_states()
         self._update_media_list()

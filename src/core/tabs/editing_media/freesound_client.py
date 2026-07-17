@@ -22,7 +22,11 @@ class FreesoundClient:
         page: int = 1,
         page_size: int = 30
     ) -> dict:
-        """Realiza una búsqueda de sonidos en Freesound."""
+        """Realiza una búsqueda de sonidos en Freesound.
+        
+        Args:
+            token: Access token OAuth2 (Bearer) o API key legacy (Token).
+        """
         if not token:
             raise ValueError("Token de Freesound API requerido.")
 
@@ -38,11 +42,13 @@ class FreesoundClient:
         
         params = {
             "query": query,
-            "token": token,
             "fields": fields,
             "page": page,
             "page_size": page_size
         }
+
+        # Usar Bearer auth (OAuth2) en vez de token como parámetro GET
+        headers = {"Authorization": f"Bearer {token}"}
 
         # Construir filtros
         filters = []
@@ -76,9 +82,9 @@ class FreesoundClient:
 
         try:
             logger.debug(f"FreesoundClient: Realizando búsqueda con parámetros: {params}")
-            response = self.session.get(url, params=params, timeout=10)
+            response = self.session.get(url, params=params, headers=headers, timeout=10)
             if response.status_code == 401:
-                raise ValueError("Token de API inválido o no autorizado.")
+                raise ValueError("Token expirado o inválido. Inicie sesión de nuevo en Freesound.")
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:

@@ -245,11 +245,9 @@ class EditingMediaTab(QWidget):
         self.search_input.textChanged.connect(self._update_media_input_changed)
         search_layout.addWidget(self.search_input)
 
-        self.btn_freesound_settings = QPushButton()
-        self.btn_freesound_settings.setIcon(get_svg_icon("settings.svg"))
-        self.btn_freesound_settings.setFixedSize(26, 26)
-        self.btn_freesound_settings.setToolTip(self.tr("Configurar API Key de Freesound"))
-        self.btn_freesound_settings.setStyleSheet(f"""
+        self.btn_freesound_login = QPushButton()
+        self.btn_freesound_login.setFixedSize(26, 26)
+        self.btn_freesound_login.setStyleSheet(f"""
             QPushButton {{
                 background-color: {get_theme_token('fondo_elemento', '#2d2d2d')};
                 border: 1px solid {get_theme_token('borde_normal', '#2d2d2d')};
@@ -259,9 +257,10 @@ class EditingMediaTab(QWidget):
                 background-color: {get_theme_token('seleccion_fondo', '#3d3d3d')};
             }}
         """)
-        self.btn_freesound_settings.clicked.connect(self._on_configure_freesound_token)
-        self.btn_freesound_settings.setVisible(False)
-        search_layout.addWidget(self.btn_freesound_settings)
+        self.btn_freesound_login.clicked.connect(self._on_freesound_login_clicked)
+        self.btn_freesound_login.setVisible(False)
+        self._update_freesound_login_button()
+        search_layout.addWidget(self.btn_freesound_login)
 
         layout.addLayout(search_layout)
 
@@ -759,8 +758,8 @@ class EditingMediaTab(QWidget):
             self.btn_add_folder.setEnabled(not is_online)
         
         # Mostrar engranaje de configuración en modo online
-        if hasattr(self, "btn_freesound_settings"):
-            self.btn_freesound_settings.setVisible(is_online)
+        if hasattr(self, "btn_freesound_login"):
+            self.btn_freesound_login.setVisible(is_online)
             
         # Si es online, forzar el filtro "Audios" y deshabilitar los otros
         if is_online:
@@ -812,8 +811,8 @@ class EditingMediaTab(QWidget):
             elif tipo == "root_online":
                 # Renderizar resultados de Freesound
                 icon_cloud = self._get_cached_media_icon("travel_explore.svg", "#3498db")
-                if not self.controller.freesound_api_key:
-                    list_item = QListWidgetItem(self.tr("Configure API Key de Freesound usando el engranaje ⚙️"))
+                if not self.controller.is_freesound_authenticated:
+                    list_item = QListWidgetItem(self.tr("Inicia sesión con Freesound para buscar sonidos 🔑"))
                     self.media_list.addItem(list_item)
                     return
 
@@ -1668,23 +1667,78 @@ class EditingMediaTab(QWidget):
         else:
             self._update_media_list()
 
-    def _on_configure_freesound_token(self):
-        token, ok = QInputDialog.getText(
+    def _update_freesound_login_button(self):
+        """Actualiza el icono y tooltip del botón de login de Freesound según el estado de autenticación."""
+        if not hasattr(self, "btn_freesound_login"):
+            return
+        if self.controller.is_freesound_authenticated:
+            username = self.controller.freesound_username or "usuario"
+            self.btn_freesound_login.setIcon(get_svg_icon("person.svg"))
+            self.btn_freesound_login.setToolTip(self.tr(f"Conectado como: {username} (clic para cerrar sesión)"))
+        else:
+            self.btn_freesound_login.setIcon(get_svg_icon("login.svg"))
+            self.btn_freesound_login.setToolTip(self.tr("Iniciar sesión con Freesound"))
+
+    def _on_freesound_login_clicked(self):
+        """Maneja el clic en el botón de login/logout de Freesound."""
+        if self.controller.is_freesound_authenticated:
+            # Ya autenticado → preguntar si desea cerrar sesión
+            reply = QMessageBox.question(
+                self,
+                self.tr("Cerrar Sesión"),
+                self.tr(f"¿Desea cerrar la sesión de Freesound ({self.controller.freesound_username})?"),
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            if reply == QMessageBox.Yes:
+                self.controller.clear_freesound_auth()
+                self._update_freesound_login_button()
+                self.online_results = []
+                self.current_page = 1
+                self._update_media_list()
+        else:
+            # No autenticado → iniciar flujo OAuth2
+            self._start_freesound_oauth()
+
+    def _start_freesound_oauth(self):
+        """Inicia el flujo OAuth2 con Freesound."""
+        from core.tabs.editing_media.freesound_auth import FreesoundAuth
+        
+        self._oauth_handler = FreesoundAuth()
+        self._oauth_handler.signals.auth_success.connect(self._on_oauth_success)
+        self._oauth_handler.signals.auth_error.connect(self._on_oauth_error)
+        self._oauth_handler.start_oauth_flow()
+        
+        # Mostrar feedback visual al usuario
+        QMessageBox.information(
             self,
-            self.tr("Configurar Freesound"),
-            self.tr("Ingrese su API Key / Token de Freesound:"),
-            QLineEdit.Normal,
-            self.controller.freesound_api_key
+            self.tr("Iniciar Sesión en Freesound"),
+            self.tr("Se ha abierto tu navegador para iniciar sesión en Freesound.\n\n"
+                    "Inicia sesión y autoriza la aplicación. "
+                    "Esta ventana se actualizará automáticamente cuando completes el proceso.")
         )
-        if ok:
-            self.controller.freesound_api_key = token.strip()
-            self.controller.save_data()
-            self.current_page = 1
-            self.online_results = []
-            self._update_media_list()
+
+    def _on_oauth_success(self, auth_data: dict):
+        """Callback cuando la autenticación OAuth2 es exitosa."""
+        self.controller.freesound_auth.update(auth_data)
+        self.controller.save_data()
+        self._update_freesound_login_button()
+        self.current_page = 1
+        self.online_results = []
+        self._update_media_list()
+        logger.info(f"EditingMediaTab: Autenticación OAuth2 exitosa para '{auth_data.get('username', '')}'")
+
+    def _on_oauth_error(self, error_msg: str):
+        """Callback cuando la autenticación OAuth2 falla."""
+        logger.error(f"EditingMediaTab: Error OAuth2: {error_msg}")
+        QMessageBox.warning(
+            self,
+            self.tr("Error de Autenticación"),
+            self.tr(f"No se pudo completar la autenticación con Freesound:\n{error_msg}")
+        )
 
     def _exec_online_search(self):
-        token = self.controller.freesound_api_key
+        token = self.controller.freesound_token
         query = self.search_input.text().strip()
         
         if not token:

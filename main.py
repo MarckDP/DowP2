@@ -11,7 +11,7 @@ ui_scale_factor = apply_ui_scaling()
 
 from core.logger.logger_manager import logger
 
-# Enviar los logs de escalado al logger real
+# Enviar los logs de escalado al logger real 
 flush_scaling_logs()
 
 from core.setup.setup_manager import verify_all_dependencies

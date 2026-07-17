@@ -145,14 +145,19 @@ class EditingMediaController(QObject):
             "SFX": [],
             "Música": []
         }
-        self.freesound_api_key = ""
+        self.freesound_auth = {
+            "access_token": "",
+            "refresh_token": "",
+            "expires_at": 0,
+            "username": ""
+        }
         
         self.observer = None
         self.load_data()
         self.start_watcher()
 
     def load_data(self):
-        """Carga carpetas indexadas, colecciones y API key desde indexed_media.json."""
+        """Carga carpetas indexadas, colecciones y auth OAuth2 desde indexed_media.json."""
         if os.path.exists(self.db_path):
             try:
                 with open(self.db_path, "r", encoding="utf-8") as f:
@@ -163,7 +168,11 @@ class EditingMediaController(QObject):
                         "SFX": [],
                         "Música": []
                     })
-                    self.freesound_api_key = data.get("freesound_api_key", "")
+                    # Cargar autenticación OAuth2 (con migración desde formato legacy)
+                    saved_auth = data.get("freesound_auth", None)
+                    if saved_auth and isinstance(saved_auth, dict):
+                        self.freesound_auth.update(saved_auth)
+                    # Ignorar freesound_api_key legacy — OAuth2 lo reemplaza
                 logger.info(f"EditingMediaLogic: Datos cargados desde {self.db_path}")
             except Exception as e:
                 logger.error(f"EditingMediaLogic: Error leyendo base de datos: {e}")
@@ -171,19 +180,46 @@ class EditingMediaController(QObject):
             self.save_data()
 
     def save_data(self):
-        """Guarda carpetas indexadas, colecciones y API key en indexed_media.json."""
+        """Guarda carpetas indexadas, colecciones y auth OAuth2 en indexed_media.json."""
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         try:
             data = {
                 "indexed_folders": self.indexed_folders,
                 "collections": self.collections,
-                "freesound_api_key": self.freesound_api_key
+                "freesound_auth": self.freesound_auth
             }
             with open(self.db_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=4, ensure_ascii=False)
             logger.debug(f"EditingMediaLogic: Datos guardados en {self.db_path}")
         except Exception as e:
             logger.error(f"EditingMediaLogic: Error guardando datos: {e}")
+
+    @property
+    def freesound_token(self) -> str | None:
+        """Obtiene un access token OAuth2 válido, refrescando automáticamente si expiró."""
+        from core.tabs.editing_media.freesound_auth import FreesoundAuth
+        return FreesoundAuth.get_valid_token(self.freesound_auth, save_callback=self.save_data)
+
+    @property
+    def freesound_username(self) -> str:
+        """Retorna el username de Freesound del usuario autenticado."""
+        return self.freesound_auth.get("username", "")
+
+    @property
+    def is_freesound_authenticated(self) -> bool:
+        """Verifica si hay una sesión de Freesound activa."""
+        return bool(self.freesound_auth.get("access_token", ""))
+
+    def clear_freesound_auth(self):
+        """Cierra la sesión de Freesound limpiando todos los tokens."""
+        self.freesound_auth = {
+            "access_token": "",
+            "refresh_token": "",
+            "expires_at": 0,
+            "username": ""
+        }
+        self.save_data()
+        logger.info("EditingMediaLogic: Sesión de Freesound cerrada")
 
     # ── Gestión de Monitoreo en Tiempo Real (Watchdog) ───────────────────────
     def start_watcher(self):

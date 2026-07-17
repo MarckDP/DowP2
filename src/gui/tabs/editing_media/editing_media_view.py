@@ -67,6 +67,28 @@ def get_folder_icon() -> QIcon:
     return icon
 
 
+from PySide6.QtCore import QThread
+
+class FreesoundSearchThread(QThread):
+    """Hilo secundario para realizar búsquedas en Freesound sin congelar la interfaz."""
+    finished_search = Signal(dict)
+    error_search = Signal(str)
+
+    def __init__(self, client, query, token, page=1, parent=None):
+        super().__init__(parent)
+        self.client = client
+        self.query = query
+        self.token = token
+        self.page = page
+
+    def run(self):
+        try:
+            results = self.client.search(self.query, self.token, page=self.page)
+            self.finished_search.emit(results)
+        except Exception as e:
+            self.error_search.emit(str(e))
+
+
 class EditingMediaTab(QWidget):
     """Pestaña 'Medios de Edición' con una distribución visual de tres paneles de 20/40/40."""
     
@@ -81,6 +103,18 @@ class EditingMediaTab(QWidget):
         self.active_filter = "Todos"
         self._metadata_cache = {}
         self.waveform_thread = None
+        
+        # Inicializar cliente de Freesound y timer para debouncing de búsqueda
+        from core.tabs.editing_media.freesound_client import FreesoundClient
+        from PySide6.QtCore import QTimer
+        self.freesound_client = FreesoundClient()
+        self.search_timer = QTimer(self)
+        self.search_timer.setSingleShot(True)
+        self.search_timer.timeout.connect(self._exec_online_search)
+        self.online_search_thread = None
+        self.online_results = []
+        self.current_page = 1
+        self.loading_next_page = False
         
         # Inicializar reproductor de audio central para el espectro
         self.audio_player = None
@@ -203,10 +237,33 @@ class EditingMediaTab(QWidget):
         layout.addWidget(lbl_section)
 
         # Buscador
+        search_layout = QHBoxLayout()
+        search_layout.setSpacing(6)
+
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText(self.tr("Buscar medios..."))
-        self.search_input.textChanged.connect(self._update_media_list)
-        layout.addWidget(self.search_input)
+        self.search_input.textChanged.connect(self._update_media_input_changed)
+        search_layout.addWidget(self.search_input)
+
+        self.btn_freesound_settings = QPushButton()
+        self.btn_freesound_settings.setIcon(get_svg_icon("settings.svg"))
+        self.btn_freesound_settings.setFixedSize(26, 26)
+        self.btn_freesound_settings.setToolTip(self.tr("Configurar API Key de Freesound"))
+        self.btn_freesound_settings.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {get_theme_token('fondo_elemento', '#2d2d2d')};
+                border: 1px solid {get_theme_token('borde_normal', '#2d2d2d')};
+                border-radius: 6px;
+            }}
+            QPushButton:hover {{
+                background-color: {get_theme_token('seleccion_fondo', '#3d3d3d')};
+            }}
+        """)
+        self.btn_freesound_settings.clicked.connect(self._on_configure_freesound_token)
+        self.btn_freesound_settings.setVisible(False)
+        search_layout.addWidget(self.btn_freesound_settings)
+
+        layout.addLayout(search_layout)
 
         # Botones de filtro rápido
         btn_bar = QHBoxLayout()
@@ -244,9 +301,10 @@ class EditingMediaTab(QWidget):
         self.media_list.itemClicked.connect(self._on_media_clicked)
         self.media_list.currentItemChanged.connect(self._on_current_item_changed)
         
-        # Activar menú contextual
+        # Activar menú contextual e infinite scroll
         self.media_list.setContextMenuPolicy(Qt.CustomContextMenu)
         self.media_list.customContextMenuRequested.connect(self._show_media_context_menu)
+        self.media_list.verticalScrollBar().valueChanged.connect(self._on_list_scroll)
         
         layout.addWidget(self.media_list, 1)
 
@@ -330,6 +388,33 @@ class EditingMediaTab(QWidget):
         # El panel de audio/forma de onda
         layout.addWidget(self.audio_panel)
 
+        # Panel de Licencia Online
+        self.license_panel = QFrame()
+        self.license_panel.setObjectName("licensePanel")
+        self.license_panel.setVisible(False)
+        self.license_panel.setStyleSheet(f"""
+            QFrame#licensePanel {{
+                background-color: {get_theme_token('fondo_elemento', '#1e1e1e')};
+                border: 1px solid {get_theme_token('acento_primario', '#B9E640')};
+                border-radius: 8px;
+            }}
+        """)
+        license_layout = QHBoxLayout(self.license_panel)
+        license_layout.setContentsMargins(8, 4, 8, 4)
+
+        self.lbl_license_icon = QLabel()
+        copyright_icon = get_colored_svg_icon("copyright.svg", get_theme_token("acento_primario", "#B9E640"))
+        self.lbl_license_icon.setPixmap(copyright_icon.pixmap(16, 16))
+        license_layout.addWidget(self.lbl_license_icon)
+
+        self.lbl_license_text = QLabel()
+        self.lbl_license_text.setStyleSheet("font-size: 11px; font-weight: bold; color: #f5c2e7;")
+        self.lbl_license_text.setWordWrap(True)
+        self.lbl_license_text.setOpenExternalLinks(True)
+        license_layout.addWidget(self.lbl_license_text, 1)
+
+        layout.addWidget(self.license_panel)
+
         # Contenedor de Información Técnica (Metadatos)
         self.info_box = QFrame()
         self.info_box.setObjectName("infoBoxFrame")
@@ -402,6 +487,7 @@ class EditingMediaTab(QWidget):
             ("bitrate_audio", self.tr("Bitrate Audio:")),
         ]
         
+        self.metadata_header_labels = {}
         for key, label_text in fields:
             row = QHBoxLayout()
             row.setSpacing(6)
@@ -409,6 +495,7 @@ class EditingMediaTab(QWidget):
             lbl_key = QLabel(label_text)
             lbl_key.setFixedWidth(90)
             lbl_key.setStyleSheet("color: #89b4fa; font-size: 11px; font-weight: bold;")
+            self.metadata_header_labels[key] = lbl_key
             
             lbl_val = QLabel("-")
             lbl_val.setStyleSheet("color: #cdd6f4; font-size: 11px;")
@@ -423,11 +510,24 @@ class EditingMediaTab(QWidget):
         scroll_area.setWidget(scroll_content)
         info_layout.addWidget(scroll_area, 1)
 
+        # Botones inferiores del panel de metadatos
+        buttons_layout = QHBoxLayout()
+        buttons_layout.setSpacing(8)
+
         # Botón para revelar en el explorador de archivos
         self.btn_reveal = AnimatedButton(self.tr("Revelar en Explorador"))
         self.btn_reveal.setEnabled(False)
         self.btn_reveal.clicked.connect(self._on_reveal_clicked)
-        info_layout.addWidget(self.btn_reveal)
+        buttons_layout.addWidget(self.btn_reveal, 1)
+
+        # Botón para descargar archivo de Freesound
+        self.btn_download = AnimatedButton(self.tr("Descargar Audio"))
+        self.btn_download.setEnabled(False)
+        self.btn_download.setVisible(False)
+        self.btn_download.clicked.connect(self._on_download_clicked)
+        buttons_layout.addWidget(self.btn_download, 1)
+
+        info_layout.addLayout(buttons_layout)
 
         layout.addWidget(self.info_box, 1)
 
@@ -550,8 +650,14 @@ class EditingMediaTab(QWidget):
             selected_data = selected.data(0, Qt.UserRole)
 
         self.tree_folders.clear()
+        
+        # 1. Nodo Raíz de Freesound (Online)
+        self.online_root = QTreeWidgetItem(self.tree_folders, [self.tr("Freesound")])
+        self.online_root.setIcon(0, get_svg_icon("travel_explore.svg"))
+        self.online_root.setData(0, Qt.UserRole, {"tipo": "root_online"})
+        self.online_root.setExpanded(True)
 
-        # 1. Nodo Raíz de Directorios Físicos
+        # 2. Nodo Raíz de Directorios Físicos
         self.physical_root = QTreeWidgetItem(self.tree_folders, [self.tr("Directorios")])
         self.physical_root.setIcon(0, get_folder_icon())
         self.physical_root.setData(0, Qt.UserRole, {"tipo": "root_physical"})
@@ -569,7 +675,7 @@ class EditingMediaTab(QWidget):
             item.setExpanded(True)
             self._add_folder_subdirs(item, folder)
 
-        # 2. Nodo Raíz de Colecciones Virtuales
+        # 3. Nodo Raíz de Colecciones Virtuales
         self.virtual_root = QTreeWidgetItem(self.tree_folders, [self.tr("Colecciones")])
         self.virtual_root.setIcon(0, get_svg_icon("star.svg"))
         self.virtual_root.setData(0, Qt.UserRole, {"tipo": "root_virtual"})
@@ -606,7 +712,7 @@ class EditingMediaTab(QWidget):
                         match = True
                     elif tipo == "collection" and child_data.get("nombre") == target_data.get("nombre"):
                         match = True
-                    elif tipo in ["root_physical", "root_virtual"]:
+                    elif tipo in ["root_physical", "root_virtual", "root_online"]:
                         match = True
                 
                 if match:
@@ -639,7 +745,36 @@ class EditingMediaTab(QWidget):
             logger.debug(f"EditingMediaTab: Error al buscar subcarpetas en {folder_path}: {e}")
 
     def _update_button_states(self):
-        pass
+        selected = self.tree_folders.currentItem()
+        is_online = False
+        if selected:
+            data = selected.data(0, Qt.UserRole)
+            if data:
+                tipo = data.get("tipo")
+                if tipo == "root_online":
+                    is_online = True
+        
+        # Deshabilitar botón de indexar carpeta en modo online
+        if hasattr(self, "btn_add_folder"):
+            self.btn_add_folder.setEnabled(not is_online)
+        
+        # Mostrar engranaje de configuración en modo online
+        if hasattr(self, "btn_freesound_settings"):
+            self.btn_freesound_settings.setVisible(is_online)
+            
+        # Si es online, forzar el filtro "Audios" y deshabilitar los otros
+        if is_online:
+            for btn in self.filter_buttons:
+                if btn.text() == self.tr("Audios"):
+                    btn.setChecked(True)
+                    btn.setEnabled(True)
+                    self.active_filter = "Audios"
+                else:
+                    btn.setChecked(False)
+                    btn.setEnabled(False)
+        else:
+            for btn in self.filter_buttons:
+                btn.setEnabled(True)
 
     # ── Población y Control de la Lista de Medios ──────────────────────────
     # Cache de iconos coloreados para evitar recrearlos en cada refresco de lista
@@ -674,6 +809,29 @@ class EditingMediaTab(QWidget):
             elif tipo == "collection":
                 nombre = data.get("nombre")
                 media_items = self.controller.get_media_files_in_collection(nombre)
+            elif tipo == "root_online":
+                # Renderizar resultados de Freesound
+                icon_cloud = self._get_cached_media_icon("travel_explore.svg", "#3498db")
+                if not self.controller.freesound_api_key:
+                    list_item = QListWidgetItem(self.tr("Configure API Key de Freesound usando el engranaje ⚙️"))
+                    self.media_list.addItem(list_item)
+                    return
+
+                if not self.online_results:
+                    is_searching = self.online_search_thread and self.online_search_thread.isRunning()
+                    if is_searching:
+                        list_item = QListWidgetItem(self.tr("Buscando en Freesound..."))
+                    else:
+                        list_item = QListWidgetItem(self.tr("No se encontraron resultados o la búsqueda falló. Intente de nuevo."))
+                    self.media_list.addItem(list_item)
+                    return
+
+                for item in self.online_results:
+                    list_item = QListWidgetItem(item["nombre"])
+                    list_item.setIcon(icon_cloud)
+                    list_item.setData(Qt.UserRole, item)
+                    self.media_list.addItem(list_item)
+                return
             else:
                 media_items = self.controller.get_all_media_files()
 
@@ -805,6 +963,13 @@ class EditingMediaTab(QWidget):
 
     def _on_tree_item_clicked(self, item, column):
         self._update_button_states()
+        
+        data = item.data(0, Qt.UserRole)
+        if data and data.get("tipo") == "root_online":
+            self.current_page = 1
+            if not self.online_results:
+                self._exec_online_search()
+                
         self._update_media_list()
 
     def _on_media_clicked(self, list_item):
@@ -815,6 +980,7 @@ class EditingMediaTab(QWidget):
         name = item_data["nombre"]
         tipo = item_data["tipo"]
         path = item_data["ruta"]
+        is_remote = path.startswith("http://") or path.startswith("https://")
 
         # Detener cualquier audio previo al cambiar de archivo
         self._stop_audio_playback()
@@ -836,7 +1002,7 @@ class EditingMediaTab(QWidget):
             w_width = self.waveform_widget.width()
             num_peaks = max(50, min((w_width - 24) // 5, 180)) if w_width > 50 else 80
             
-            # Iniciar extracción asíncrona de amplitudes reales
+            # Iniciar extracción asíncrona de amplitudes reales (remoto o local)
             self.waveform_thread = WaveformExtractorThread(path, num_peaks, self)
             if tipo == "video":
                 # Para videos: si no hay audio, ocultar el panel automáticamente
@@ -850,8 +1016,12 @@ class EditingMediaTab(QWidget):
             # Controles de reproducción de audio solo para archivos de audio puros
             if tipo == "audio" and self.audio_player:
                 try:
-                    self.audio_player.setSource(QUrl.fromLocalFile(path))
-                    self.lbl_time.setText("00:00 / " + self.controller.get_media_duration_for_file(path))
+                    if is_remote:
+                        self.audio_player.setSource(QUrl(path))
+                        self.lbl_time.setText("00:00 / " + item_data.get("duración", "-"))
+                    else:
+                        self.audio_player.setSource(QUrl.fromLocalFile(path))
+                        self.lbl_time.setText("00:00 / " + self.controller.get_media_duration_for_file(path))
                 except Exception as e:
                     logger.error(f"EditingMediaTab: Error cargando fuente de audio: {e}")
         else:
@@ -869,31 +1039,91 @@ class EditingMediaTab(QWidget):
         self.metadata_labels["nombre"].setText(name)
         self.metadata_labels["ruta"].setText(path)
         self.metadata_labels["tipo"].setText(tipo.upper())
-        self.metadata_labels["tamaño"].setText(item_data["tamaño"])
+        self.metadata_labels["tamaño"].setText(item_data.get("tamaño", "-"))
         
-        # Obtener metadatos ricos de la cache o extraerlos
-        if path not in self._metadata_cache:
-            self._metadata_cache[path] = self._extract_rich_metadata(path, tipo)
-            
-        rich_meta = self._metadata_cache[path]
-        
-        # Llenar todos los campos en la UI
-        self.metadata_labels["creado"].setText(rich_meta.get("creado", "-"))
-        self.metadata_labels["modificado"].setText(rich_meta.get("modificado", "-"))
-        self.metadata_labels["duración"].setText(rich_meta.get("duración", "-"))
-        self.metadata_labels["resolución"].setText(rich_meta.get("resolución", "-"))
-        self.metadata_labels["video_codec"].setText(rich_meta.get("video_codec", "-"))
-        self.metadata_labels["video_profile"].setText(rich_meta.get("video_profile", "-"))
-        self.metadata_labels["fps"].setText(rich_meta.get("fps", "-"))
-        self.metadata_labels["aspecto"].setText(rich_meta.get("aspecto", "-"))
-        self.metadata_labels["bitrate_video"].setText(rich_meta.get("bitrate_video", "-"))
-        self.metadata_labels["color"].setText(rich_meta.get("color", "-"))
-        self.metadata_labels["audio_codec"].setText(rich_meta.get("audio_codec", "-"))
-        self.metadata_labels["samplerate"].setText(rich_meta.get("samplerate", "-"))
-        self.metadata_labels["canales"].setText(rich_meta.get("canales", "-"))
-        self.metadata_labels["bitrate_audio"].setText(rich_meta.get("bitrate_audio", "-"))
+        # Ocultar/mostrar botones según tipo local/online
+        self.btn_reveal.setVisible(not is_remote)
+        self.btn_reveal.setEnabled(not is_remote)
+        self.btn_download.setVisible(is_remote)
+        self.btn_download.setEnabled(is_remote)
 
-        self.btn_reveal.setEnabled(True)
+        if is_remote:
+            self.license_panel.setVisible(True)
+            
+            def get_friendly_license_name(url: str) -> str:
+                if not url:
+                    return "Licencia"
+                url_lower = url.lower()
+                if "zero" in url_lower or "cc0" in url_lower:
+                    return "CC0 (Public Domain)"
+                elif "by-nc" in url_lower:
+                    return "CC BY-NC (Attribution Non-Commercial)"
+                elif "by-nd" in url_lower:
+                    return "CC BY-ND (Attribution NoDerivatives)"
+                elif "by-sa" in url_lower:
+                    return "CC BY-SA (Attribution ShareAlike)"
+                elif "by" in url_lower:
+                    return "CC BY (Attribution)"
+                elif "sampling" in url_lower:
+                    return "Sampling Plus"
+                return "Ver Licencia"
+                
+            license_url = item_data.get("license", "-")
+            if license_url.startswith("http"):
+                friendly_name = get_friendly_license_name(license_url)
+                self.lbl_license_text.setText(
+                    self.tr('Licencia: <a href="{url}" style="color: #B9E640; text-decoration: underline;">{name}</a>').format(
+                        url=license_url, name=friendly_name
+                    )
+                )
+            else:
+                self.lbl_license_text.setText(self.tr("Licencia: ") + license_url)
+            
+            self.metadata_header_labels["video_codec"].setText(self.tr("Usuario:"))
+            self.metadata_header_labels["video_profile"].setText(self.tr("Licencia:"))
+            self.metadata_header_labels["aspecto"].setText(self.tr("Estadísticas:"))
+            
+            self.metadata_labels["creado"].setText("-")
+            self.metadata_labels["modificado"].setText("-")
+            self.metadata_labels["duración"].setText(item_data.get("duración", "-"))
+            self.metadata_labels["resolución"].setText("-")
+            self.metadata_labels["video_codec"].setText(item_data.get("username", "-"))
+            self.metadata_labels["video_profile"].setText(item_data.get("license", "-"))
+            self.metadata_labels["fps"].setText("-")
+            self.metadata_labels["aspecto"].setText(f"Rating: {item_data.get('avg_rating', '-')} | Descargas: {item_data.get('num_downloads', '-')}")
+            self.metadata_labels["bitrate_video"].setText("-")
+            self.metadata_labels["color"].setText("-")
+            self.metadata_labels["audio_codec"].setText("REMOTO (Freesound)")
+            self.metadata_labels["samplerate"].setText("-")
+            self.metadata_labels["canales"].setText("-")
+            self.metadata_labels["bitrate_audio"].setText("-")
+        else:
+            self.license_panel.setVisible(False)
+            self.metadata_header_labels["video_codec"].setText(self.tr("Códec Video:"))
+            self.metadata_header_labels["video_profile"].setText(self.tr("Perfil Video:"))
+            self.metadata_header_labels["aspecto"].setText(self.tr("Rel. Aspecto:"))
+            
+            # Obtener metadatos ricos de la cache o extraerlos
+            if path not in self._metadata_cache:
+                self._metadata_cache[path] = self._extract_rich_metadata(path, tipo)
+                
+            rich_meta = self._metadata_cache[path]
+            
+            # Llenar todos los campos en la UI
+            self.metadata_labels["creado"].setText(rich_meta.get("creado", "-"))
+            self.metadata_labels["modificado"].setText(rich_meta.get("modificado", "-"))
+            self.metadata_labels["duración"].setText(rich_meta.get("duración", "-"))
+            self.metadata_labels["resolución"].setText(rich_meta.get("resolución", "-"))
+            self.metadata_labels["video_codec"].setText(rich_meta.get("video_codec", "-"))
+            self.metadata_labels["video_profile"].setText(rich_meta.get("video_profile", "-"))
+            self.metadata_labels["fps"].setText(rich_meta.get("fps", "-"))
+            self.metadata_labels["aspecto"].setText(rich_meta.get("aspecto", "-"))
+            self.metadata_labels["bitrate_video"].setText(rich_meta.get("bitrate_video", "-"))
+            self.metadata_labels["color"].setText(rich_meta.get("color", "-"))
+            self.metadata_labels["audio_codec"].setText(rich_meta.get("audio_codec", "-"))
+            self.metadata_labels["samplerate"].setText(rich_meta.get("samplerate", "-"))
+            self.metadata_labels["canales"].setText(rich_meta.get("canales", "-"))
+            self.metadata_labels["bitrate_audio"].setText(rich_meta.get("bitrate_audio", "-"))
 
     def _on_video_waveform_ready(self, peaks: list):
         """Callback para el waveform de videos: muestra los peaks si hay audio, oculta el panel si no."""
@@ -1129,6 +1359,8 @@ class EditingMediaTab(QWidget):
         for lbl in self.metadata_labels.values():
             lbl.setText("-")
         self.btn_reveal.setEnabled(False)
+        if hasattr(self, "license_panel"):
+            self.license_panel.setVisible(False)
 
     def _on_reveal_clicked(self):
         selected = self.media_list.currentItem()
@@ -1336,9 +1568,14 @@ class EditingMediaTab(QWidget):
                 act_none = submenu.addAction(self.tr("(Sin colecciones)"))
                 act_none.setEnabled(False)
 
+        is_remote = file_path.startswith("http://") or file_path.startswith("https://")
         menu.addSeparator()
-        act_reveal = menu.addAction(self.tr("Revelar en Explorador"))
-        act_reveal.triggered.connect(self._on_reveal_clicked)
+        if is_remote:
+            act_download = menu.addAction(self.tr("Descargar Audio"))
+            act_download.triggered.connect(self._on_download_clicked)
+        else:
+            act_reveal = menu.addAction(self.tr("Revelar en Explorador"))
+            act_reveal.triggered.connect(self._on_reveal_clicked)
 
         menu.exec(self.media_list.mapToGlobal(position))
 
@@ -1414,3 +1651,199 @@ class EditingMediaTab(QWidget):
                     self.tree_folders.setCurrentItem(child)
                     self._update_media_list()
                     break
+
+    # ── Métodos de Búsqueda y Descarga Remota (Freesound) ───────────────────
+    def _update_media_input_changed(self, text):
+        selected = self.tree_folders.currentItem()
+        is_online = False
+        if selected:
+            data = selected.data(0, Qt.UserRole)
+            if data and data.get("tipo") == "root_online":
+                is_online = True
+        
+        if is_online:
+            self.current_page = 1
+            self.online_results = []
+            self.search_timer.start(600)
+        else:
+            self._update_media_list()
+
+    def _on_configure_freesound_token(self):
+        token, ok = QInputDialog.getText(
+            self,
+            self.tr("Configurar Freesound"),
+            self.tr("Ingrese su API Key / Token de Freesound:"),
+            QLineEdit.Normal,
+            self.controller.freesound_api_key
+        )
+        if ok:
+            self.controller.freesound_api_key = token.strip()
+            self.controller.save_data()
+            self.current_page = 1
+            self.online_results = []
+            self._update_media_list()
+
+    def _exec_online_search(self):
+        token = self.controller.freesound_api_key
+        query = self.search_input.text().strip()
+        
+        if not token:
+            self.online_results = []
+            self._update_media_list()
+            return
+            
+        if self.online_search_thread and self.online_search_thread.isRunning():
+            if self.online_search_thread.page == self.current_page:
+                return
+            self.online_search_thread.terminate()
+            self.online_search_thread.wait()
+            
+        self.online_search_thread = FreesoundSearchThread(self.freesound_client, query, token, self.current_page, self)
+        self.online_search_thread.finished_search.connect(self._on_online_search_success)
+        self.online_search_thread.error_search.connect(self._on_online_search_error)
+        self.online_search_thread.start()
+
+    def _on_online_search_success(self, data):
+        self.loading_next_page = False
+        results = data.get("results", [])
+        
+        if self.current_page == 1:
+            self.online_results = []
+            
+        new_items = []
+        for r in results:
+            previews = r.get("previews", {})
+            preview_url = previews.get("preview-hq-mp3", previews.get("preview-lq-mp3", ""))
+            if not preview_url:
+                continue
+            
+            dur = r.get("duration", 0)
+            dur_m = int(dur // 60)
+            dur_s = int(dur % 60)
+            dur_str = f"{dur_m:02d}:{dur_s:02d}"
+            
+            size_val = r.get("filesize", 0)
+            size_kb = size_val / 1024.0
+            if size_kb > 1024:
+                size_str = f"{size_kb / 1024.0:.1f} MB"
+            else:
+                size_str = f"{size_kb:.1f} KB"
+                
+            new_items.append({
+                "nombre": r.get("name", "Sonido sin nombre") + ".mp3",
+                "ruta": preview_url,
+                "tipo": "audio",
+                "tamaño": size_str,
+                "duración": dur_str,
+                "es_remoto": True,
+                "username": r.get("username", "-"),
+                "license": r.get("license", "-"),
+                "avg_rating": f"{r.get('avg_rating', 0):.1f}",
+                "num_downloads": str(r.get("num_downloads", 0)),
+                "description": r.get("description", "-")
+            })
+        
+        self.online_results.extend(new_items)
+        self._update_media_list()
+
+    def _on_online_search_error(self, error_msg):
+        self.loading_next_page = False
+        logger.error(f"EditingMediaTab: Error en búsqueda online: {error_msg}")
+        if self.current_page == 1:
+            self.online_results = []
+        self._update_media_list()
+        QMessageBox.warning(self, self.tr("Error de Búsqueda"), self.tr(f"No se pudo completar la búsqueda en Freesound:\n{error_msg}"))
+
+    def _on_list_scroll(self, value):
+        selected = self.tree_folders.currentItem()
+        if not selected:
+            return
+        data = selected.data(0, Qt.UserRole)
+        if not data or data.get("tipo") != "root_online":
+            return
+            
+        max_scroll = self.media_list.verticalScrollBar().maximum()
+        # Si llega casi al final y no hay búsqueda activa, cargar la siguiente página
+        if value >= max_scroll - 5 and max_scroll > 0:
+            if not self.loading_next_page:
+                self.loading_next_page = True
+                self.current_page += 1
+                self._exec_online_search()
+
+    def _on_download_clicked(self):
+        selected_item = self.media_list.currentItem()
+        if not selected_item:
+            return
+        item_data = selected_item.data(Qt.UserRole)
+        if not item_data or not item_data.get("es_remoto"):
+            return
+            
+        url = item_data["ruta"]
+        name = item_data["nombre"]
+        
+        workspace_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+        downloads_dir = os.path.join(workspace_dir, "downloads", "freesound")
+        os.makedirs(downloads_dir, exist_ok=True)
+        
+        clean_name = "".join(c for c in name if c.isalnum() or c in (".", "_", " ", "-")).strip()
+        dest_path = os.path.join(downloads_dir, clean_name).replace("\\", "/")
+        
+        from PySide6.QtWidgets import QProgressDialog
+        progress_dialog = QProgressDialog(self.tr("Descargando sonido de Freesound..."), self.tr("Cancelar"), 0, 100, self)
+        progress_dialog.setWindowModality(Qt.WindowModal)
+        progress_dialog.setValue(0)
+        progress_dialog.show()
+        
+        class DownloadThread(QThread):
+            progress = Signal(int)
+            finished = Signal(bool)
+            error = Signal(str)
+            
+            def __init__(self, client, url, path):
+                super().__init__()
+                self.client = client
+                self.url = url
+                self.path = path
+                
+            def run(self):
+                try:
+                    success = self.client.download_file(self.url, self.path, self.progress.emit)
+                    self.finished.emit(success)
+                except Exception as e:
+                    self.error.emit(str(e))
+                    
+        self.dl_thread = DownloadThread(self.freesound_client, url, dest_path)
+        self.dl_thread.progress.connect(progress_dialog.setValue)
+        
+        def on_finished(success):
+            progress_dialog.close()
+            if success:
+                item_data["ruta"] = dest_path
+                item_data["es_remoto"] = False
+                
+                selected_item.setData(Qt.UserRole, item_data)
+                
+                self.btn_reveal.setVisible(True)
+                self.btn_reveal.setEnabled(True)
+                self.btn_download.setVisible(False)
+                self.btn_download.setEnabled(False)
+                self.metadata_labels["ruta"].setText(dest_path)
+                
+                for col_name in self.controller.collections.keys():
+                    if url in self.controller.collections[col_name]:
+                        idx = self.controller.collections[col_name].index(url)
+                        self.controller.collections[col_name][idx] = dest_path
+                self.controller.save_data()
+                
+                QMessageBox.information(self, self.tr("Descarga Completada"), self.tr(f"El sonido ha sido guardado exitosamente en:\n{dest_path}"))
+                self._update_media_list()
+                
+        def on_error(err):
+            progress_dialog.close()
+            QMessageBox.warning(self, self.tr("Error de Descarga"), self.tr(f"No se pudo descargar el archivo:\n{err}"))
+            
+        self.dl_thread.finished.connect(on_finished)
+        self.dl_thread.error.connect(on_error)
+        
+        progress_dialog.canceled.connect(self.dl_thread.terminate)
+        self.dl_thread.start()

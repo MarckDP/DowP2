@@ -145,13 +145,14 @@ class EditingMediaController(QObject):
             "SFX": [],
             "Música": []
         }
+        self.freesound_api_key = ""
         
         self.observer = None
         self.load_data()
         self.start_watcher()
 
     def load_data(self):
-        """Carga carpetas indexadas y colecciones desde indexed_media.json."""
+        """Carga carpetas indexadas, colecciones y API key desde indexed_media.json."""
         if os.path.exists(self.db_path):
             try:
                 with open(self.db_path, "r", encoding="utf-8") as f:
@@ -162,6 +163,7 @@ class EditingMediaController(QObject):
                         "SFX": [],
                         "Música": []
                     })
+                    self.freesound_api_key = data.get("freesound_api_key", "")
                 logger.info(f"EditingMediaLogic: Datos cargados desde {self.db_path}")
             except Exception as e:
                 logger.error(f"EditingMediaLogic: Error leyendo base de datos: {e}")
@@ -169,12 +171,13 @@ class EditingMediaController(QObject):
             self.save_data()
 
     def save_data(self):
-        """Guarda carpetas indexadas y colecciones en indexed_media.json."""
+        """Guarda carpetas indexadas, colecciones y API key en indexed_media.json."""
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         try:
             data = {
                 "indexed_folders": self.indexed_folders,
-                "collections": self.collections
+                "collections": self.collections,
+                "freesound_api_key": self.freesound_api_key
             }
             with open(self.db_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=4, ensure_ascii=False)
@@ -274,8 +277,9 @@ class EditingMediaController(QObject):
         return False
 
     def add_to_collection(self, collection_name: str, file_path: str) -> bool:
-        """Asocia un archivo (acceso directo) a una colección virtual."""
-        norm_path = os.path.normpath(file_path).replace("\\", "/")
+        """Asocia un archivo (acceso directo o URL remota) a una colección virtual."""
+        is_remote = file_path.startswith("http://") or file_path.startswith("https://")
+        norm_path = file_path if is_remote else os.path.normpath(file_path).replace("\\", "/")
         if collection_name in self.collections:
             if norm_path not in self.collections[collection_name]:
                 self.collections[collection_name].append(norm_path)
@@ -287,7 +291,8 @@ class EditingMediaController(QObject):
 
     def remove_from_collection(self, collection_name: str, file_path: str) -> bool:
         """Quita un archivo de una colección virtual."""
-        norm_path = os.path.normpath(file_path).replace("\\", "/")
+        is_remote = file_path.startswith("http://") or file_path.startswith("https://")
+        norm_path = file_path if is_remote else os.path.normpath(file_path).replace("\\", "/")
         if collection_name in self.collections:
             if norm_path in self.collections[collection_name]:
                 self.collections[collection_name].remove(norm_path)
@@ -310,16 +315,18 @@ class EditingMediaController(QObject):
     def _build_file_entry(self, path: str, name: str, ext: str) -> dict:
         """Construye un diccionario de archivo multimedia SIN llamar a mutagen (duración diferida)."""
         tipo = get_media_type(ext)
+        is_remote = path.startswith("http://") or path.startswith("https://")
         try:
-            size_val = os.path.getsize(path)
+            size_val = 0 if is_remote else os.path.getsize(path)
         except Exception:
             size_val = 0
         return {
             "nombre": name,
-            "ruta": path.replace("\\", "/"),
+            "ruta": path if is_remote else path.replace("\\", "/"),
             "tipo": tipo,
-            "tamaño": format_size(size_val),
-            "duración": "-"  # Se calcula de forma diferida al seleccionar el archivo
+            "tamaño": "-" if is_remote else format_size(size_val),
+            "duración": "-",  # Se calcula de forma diferida al seleccionar el archivo
+            "es_remoto": is_remote
         }
 
     def get_media_duration_for_file(self, path: str) -> str:
@@ -366,9 +373,18 @@ class EditingMediaController(QObject):
             has_changes = False
             
             for path in self.collections[collection_name]:
-                if os.path.exists(path) and os.path.isfile(path):
+                is_remote = path.startswith("http://") or path.startswith("https://")
+                if is_remote or (os.path.exists(path) and os.path.isfile(path)):
                     paths_to_keep.append(path)
-                    name = os.path.basename(path)
+                    
+                    if is_remote:
+                        clean_path = path.split('?')[0]
+                        name = os.path.basename(clean_path)
+                        if not os.path.splitext(name)[1]:
+                            name = name + ".mp3"
+                    else:
+                        name = os.path.basename(path)
+                        
                     ext = os.path.splitext(name)[1].lower()
                     files.append(self._build_file_entry(path, name, ext))
                 else:
@@ -431,6 +447,29 @@ def extract_waveform_peaks(audio_path: str, num_peaks: int = 150) -> list:
         logger.warning("EditingMediaLogic: ffmpeg no está instalado, no se puede extraer la forma de onda.")
         return []
     
+    temp_file = None
+    if audio_path.startswith("http://") or audio_path.startswith("https://"):
+        try:
+            import tempfile
+            import requests
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
+                temp_file = tmp.name
+            
+            logger.debug(f"EditingMediaLogic: Descargando audio remoto temporal: {audio_path} -> {temp_file}")
+            response = requests.get(audio_path, timeout=10)
+            response.raise_for_status()
+            with open(temp_file, "wb") as f:
+                f.write(response.content)
+            audio_path = temp_file
+        except Exception as e:
+            logger.error(f"EditingMediaLogic: Error descargando audio remoto temporal: {e}")
+            if temp_file and os.path.exists(temp_file):
+                try:
+                    os.remove(temp_file)
+                except Exception:
+                    pass
+            return []
+
     info = get_platform_info()
     ffmpeg_exe = os.path.join(get_ffmpeg_dir(), info["binary_name"])
     
@@ -495,6 +534,12 @@ def extract_waveform_peaks(audio_path: str, num_peaks: int = 150) -> list:
     except Exception as e:
         logger.error(f"EditingMediaLogic: Error extrayendo amplitudes de onda: {e}")
         return []
+    finally:
+        if temp_file and os.path.exists(temp_file):
+            try:
+                os.remove(temp_file)
+            except Exception:
+                pass
 
 
 class WaveformExtractorThread(QThread):

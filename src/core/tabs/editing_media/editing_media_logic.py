@@ -55,6 +55,40 @@ def get_media_duration(path: str, ext: str) -> str:
     return "-"
 
 
+def check_file_has_audio(path: str) -> bool:
+    """Verifica rápidamente si un archivo multimedia contiene una pista de audio usando ffmpeg."""
+    from core.setup.ffmpeg_setup import get_ffmpeg_dir, get_platform_info, check_ffmpeg
+    if not check_ffmpeg():
+        return False
+    try:
+        info = get_platform_info()
+        ffmpeg_exe = os.path.join(get_ffmpeg_dir(), info["binary_name"])
+        cmd = [ffmpeg_exe, "-hide_banner", "-i", path]
+        
+        startupinfo = None
+        if os.name == 'nt':
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            startupinfo=startupinfo,
+            text=True,
+            encoding='utf-8',
+            errors='ignore'
+        )
+        _, stderr = process.communicate(timeout=3)
+        
+        # Buscar cualquier stream de audio en la salida de ffmpeg
+        import re
+        return bool(re.search(r"Stream #\d+:\d+.*Audio:", stderr))
+    except Exception as e:
+        logger.error(f"EditingMediaLogic: Error verificando audio en {path}: {e}")
+        return False
+
+
 if WATCHDOG_AVAILABLE:
     class MediaFolderWatcherHandler(FileSystemEventHandler):
         """Manejador de eventos de watchdog que notifica cambios al controlador."""
@@ -294,7 +328,7 @@ class EditingMediaController(QObject):
         return get_media_duration(path, ext)
 
     def get_media_files_in_folder(self, folder_path: str) -> list:
-        """Retorna la lista de archivos multimedia contenidos directamente en la carpeta (con cache)."""
+        """Retorna la lista de archivos multimedia en la carpeta y sus subcarpetas de forma recursiva (con cache)."""
         cache_key = f"folder:{folder_path}"
         if hasattr(self, "_media_cache") and cache_key in self._media_cache:
             return self._media_cache[cache_key]
@@ -305,12 +339,12 @@ class EditingMediaController(QObject):
         files = []
         if os.path.exists(folder_path) and os.path.isdir(folder_path):
             try:
-                with os.scandir(folder_path) as entries:
-                    for entry in entries:
-                        if entry.is_file(follow_symlinks=False):
-                            ext = os.path.splitext(entry.name)[1].lower()
-                            if ext in VALID_EXTS:
-                                files.append(self._build_file_entry(entry.path, entry.name, ext))
+                for root, dirs, filenames in os.walk(folder_path):
+                    for name in filenames:
+                        ext = os.path.splitext(name)[1].lower()
+                        if ext in VALID_EXTS:
+                            path = os.path.join(root, name)
+                            files.append(self._build_file_entry(path, name, ext))
             except Exception as e:
                 logger.error(f"EditingMediaLogic: Error listando archivos de {folder_path}: {e}")
         

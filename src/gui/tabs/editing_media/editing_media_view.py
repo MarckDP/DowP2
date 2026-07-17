@@ -100,6 +100,10 @@ class EditingMediaTab(QWidget):
 
         self.init_ui()
         
+        # Conectar señales del reproductor de video de la vista previa al waveform central
+        if MULTIMEDIA_AVAILABLE and hasattr(self, "preview_box") and self.preview_box.media_player:
+            self.preview_box.media_player.positionChanged.connect(self._on_video_position_changed)
+        
         # Conectar señales del controlador
         self.controller.disk_changed.connect(self._on_disk_changed)
         self.controller.collections_changed.connect(self._on_collections_changed)
@@ -264,13 +268,26 @@ class EditingMediaTab(QWidget):
         self.waveform_widget.seek_requested.connect(self._on_waveform_seek_requested)
         audio_layout.addWidget(self.waveform_widget)
 
-        # Controles inferiores (Play/Pausa, Volumen, Tiempo)
-        controls_layout = QHBoxLayout()
+        # Controles inferiores (Play/Pausa, Volumen, Tiempo) — agrupados para poder ocultarlos en videos
+        self.audio_controls_widget = QWidget()
+        controls_layout = QHBoxLayout(self.audio_controls_widget)
+        controls_layout.setContentsMargins(0, 0, 0, 0)
         controls_layout.setSpacing(8)
 
-        self.btn_play = QPushButton("▶")
+        self.btn_play = QPushButton()
+        self.btn_play.setIcon(get_svg_icon("play_arrow.svg"))
+        self.btn_play.setIconSize(QSize(14, 14))
         self.btn_play.setFixedSize(26, 26)
-        self.btn_play.setStyleSheet(f"border-radius: 13px; background-color: {get_theme_token('acento_primario', '#B9E640')}; color: black; font-weight: bold;")
+        self.btn_play.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {get_theme_token('acento_secundario', '#1DC038')};
+                border: none;
+                border-radius: 13px;
+            }}
+            QPushButton:hover {{
+                background-color: {get_theme_token('acento_primario', '#B9E640')};
+            }}
+        """)
         self.btn_play.clicked.connect(self._on_play_clicked)
         controls_layout.addWidget(self.btn_play)
 
@@ -291,7 +308,7 @@ class EditingMediaTab(QWidget):
         self.vol_slider.valueChanged.connect(self._on_volume_changed)
         controls_layout.addWidget(self.vol_slider)
 
-        audio_layout.addLayout(controls_layout)
+        audio_layout.addWidget(self.audio_controls_widget)
 
         return col
 
@@ -803,8 +820,10 @@ class EditingMediaTab(QWidget):
         self._stop_audio_playback()
 
         # 1. Controlar la visualización del espectro de audio
-        if tipo == "audio":
+        if tipo in ("audio", "video"):
             self.audio_panel.setVisible(True)
+            # Los controles de reproducción solo se muestran para archivos de audio puros
+            self.audio_controls_widget.setVisible(tipo == "audio")
             self.waveform_widget.set_audio_path(path)
             self.waveform_widget.set_playback_ratio(0.0)
             
@@ -819,10 +838,17 @@ class EditingMediaTab(QWidget):
             
             # Iniciar extracción asíncrona de amplitudes reales
             self.waveform_thread = WaveformExtractorThread(path, num_peaks, self)
-            self.waveform_thread.finished_extraction.connect(self.waveform_widget.set_peaks)
+            if tipo == "video":
+                # Para videos: si no hay audio, ocultar el panel automáticamente
+                self.waveform_thread.finished_extraction.connect(
+                    lambda peaks: self._on_video_waveform_ready(peaks)
+                )
+            else:
+                self.waveform_thread.finished_extraction.connect(self.waveform_widget.set_peaks)
             self.waveform_thread.start()
 
-            if self.audio_player:
+            # Controles de reproducción de audio solo para archivos de audio puros
+            if tipo == "audio" and self.audio_player:
                 try:
                     self.audio_player.setSource(QUrl.fromLocalFile(path))
                     self.lbl_time.setText("00:00 / " + self.controller.get_media_duration_for_file(path))
@@ -868,6 +894,14 @@ class EditingMediaTab(QWidget):
         self.metadata_labels["bitrate_audio"].setText(rich_meta.get("bitrate_audio", "-"))
 
         self.btn_reveal.setEnabled(True)
+
+    def _on_video_waveform_ready(self, peaks: list):
+        """Callback para el waveform de videos: muestra los peaks si hay audio, oculta el panel si no."""
+        if peaks:
+            self.waveform_widget.set_peaks(peaks)
+        else:
+            # El video no tiene pista de audio — ocultar el panel de waveform
+            self.audio_panel.setVisible(False)
 
     def _extract_rich_metadata(self, path: str, tipo: str) -> dict:
         import datetime
@@ -1018,19 +1052,44 @@ class EditingMediaTab(QWidget):
         state = self.audio_player.playbackState()
         if state == QMediaPlayer.PlaybackState.PlayingState:
             self.audio_player.pause()
-            self.btn_play.setText("▶")
+            self.btn_play.setIcon(get_svg_icon("play_arrow.svg"))
         else:
             self.audio_player.play()
-            self.btn_play.setText("⏸")
+            self.btn_play.setIcon(get_svg_icon("pause.svg"))
 
     def _on_volume_changed(self, value):
         if self.audio_output:
             self.audio_output.setVolume(value / 100.0)
 
     def _on_waveform_seek_requested(self, ratio):
-        if self.audio_player and self.audio_player.duration() > 0:
-            pos = int(self.audio_player.duration() * ratio)
-            self.audio_player.setPosition(pos)
+        # Obtener el tipo del item actualmente seleccionado en la lista
+        selected_item = self.media_list.currentItem()
+        tipo = None
+        if selected_item:
+            item_data = selected_item.data(Qt.UserRole)
+            if item_data:
+                tipo = item_data.get("tipo")
+
+        if tipo == "video":
+            if self.preview_box and self.preview_box.media_player and self.preview_box.media_player.duration() > 0:
+                pos = int(self.preview_box.media_player.duration() * ratio)
+                self.preview_box.media_player.setPosition(pos)
+        else:
+            if self.audio_player and self.audio_player.duration() > 0:
+                pos = int(self.audio_player.duration() * ratio)
+                self.audio_player.setPosition(pos)
+
+    def _on_video_position_changed(self, position):
+        if not self.preview_box or not self.preview_box.media_player:
+            return
+        selected_item = self.media_list.currentItem()
+        if selected_item:
+            item_data = selected_item.data(Qt.UserRole)
+            if item_data and item_data.get("tipo") == "video":
+                duration = self.preview_box.media_player.duration()
+                if duration > 0:
+                    ratio = position / duration
+                    self.waveform_widget.set_playback_ratio(ratio)
 
     def _on_audio_position_changed(self, position):
         if not self.audio_player:
@@ -1062,7 +1121,7 @@ class EditingMediaTab(QWidget):
         if self.audio_player:
             try:
                 self.audio_player.stop()
-                self.btn_play.setText("▶")
+                self.btn_play.setIcon(get_svg_icon("play_arrow.svg"))
             except Exception:
                 pass
 

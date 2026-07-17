@@ -5,3 +5,4 @@ mutagen>=1.47.0
 pycryptodomex>=3.23.0
 websockets>=16.0
 brotli>=1.2.0
+watchdog>=6.0.0

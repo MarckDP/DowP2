@@ -12,6 +12,7 @@ from gui.tabs.advanced_process.advanced_process_view import AdvancedProcessTab
 from gui.tabs.quick_mode.quick_mode_view import QuickModeTab
 from gui.tabs.image_tools.image_tools_view import ImageToolsTab
 from gui.tabs.video_tools.video_tools_view import VideoToolsTab
+from gui.tabs.editing_media.editing_media_view import EditingMediaTab
 from gui.tabs.settings.settings_view import SettingsTab
 
 
@@ -66,7 +67,11 @@ class MainWindow(QMainWindow):
         self.tab_video = VideoToolsTab()
         self.tabs.addTab(self.tab_video, self.tr("Herramientas de Video"))
 
-        # 5. Ajustes
+        # 5. Medios de Edición
+        self.tab_editing = EditingMediaTab()
+        self.tabs.addTab(self.tab_editing, self.tr("Medios de Edición"))
+
+        # 6. Ajustes
         self.tab_settings = SettingsTab()
         self.tabs.addTab(self.tab_settings, self.tr("Ajustes"))
 

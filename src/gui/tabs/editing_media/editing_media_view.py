@@ -644,7 +644,7 @@ class EditingMediaTab(QWidget):
             if item_type == "video":
                 list_item.setIcon(get_svg_icon("movie.svg"))
             elif item_type == "imagen":
-                list_item.setIcon(get_svg_icon("edit.svg"))
+                list_item.setIcon(get_svg_icon("image.svg"))
             elif item_type == "audio":
                 list_item.setIcon(get_svg_icon("music_note.svg"))
             list_item.setData(Qt.UserRole, item)

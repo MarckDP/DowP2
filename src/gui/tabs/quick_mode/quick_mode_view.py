@@ -1,5 +1,7 @@
 import os
+import platform
 import re
+import subprocess
 import threading
 
 from PySide6.QtWidgets import (
@@ -17,7 +19,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import Qt, QSize, Signal
 from PySide6.QtGui import QImage, QPixmap, QIcon
 
 from core.logger.logger_manager import logger
@@ -116,7 +118,36 @@ class QuickThumbnailWidget(QWidget):
         self.thumb_label.setPixmap(scaled)
 
 
+def reveal_in_file_manager(path):
+    """Abre el gestor de archivos y selecciona/marca el archivo dado. Multiplataforma."""
+    path = os.path.normpath(path)
+    system = platform.system()
+    try:
+        if system == "Windows":
+            subprocess.Popen(["explorer", "/select,", path])
+        elif system == "Darwin":
+            subprocess.Popen(["open", "-R", path])
+        else:
+            # Linux: intentar DBus FileManager1, fallback a xdg-open del directorio
+            try:
+                subprocess.Popen([
+                    "dbus-send", "--session", "--dest=org.freedesktop.FileManager1",
+                    "--type=method_call", "/org/freedesktop/FileManager1",
+                    "org.freedesktop.FileManager1.ShowItems",
+                    f"array:string:file://{path}", "string:"
+                ])
+            except Exception:
+                folder = os.path.dirname(path)
+                subprocess.Popen(["xdg-open", folder])
+    except Exception as e:
+        logger.warning(f"No se pudo revelar archivo en el gestor: {e}")
+
+
 class QuickDownloadRow(QFrame):
+    """Tarjeta individual de descarga con miniatura, progreso y botones de acción."""
+    close_requested = Signal(object)    # Emitido al pulsar X
+    reveal_requested = Signal(object)   # Emitido al pulsar botón de carpeta
+
     def __init__(self, title, parent=None):
         super().__init__(parent)
         self.setObjectName("queueItemCard")
@@ -125,6 +156,9 @@ class QuickDownloadRow(QFrame):
         self._thumb_loading = False
         self.thumb_thread = None
         self._duration_set = False
+        self.downloaded_filepath = None  # Ruta del archivo descargado
+        self._is_completed = False
+        self._is_error = False
         self.init_ui(title)
 
     def init_ui(self, title):
@@ -136,7 +170,7 @@ class QuickDownloadRow(QFrame):
         self.thumb_widget = QuickThumbnailWidget(self)
         main_layout.addWidget(self.thumb_widget)
 
-        # Detalles a la derecha
+        # Detalles en el centro
         content_layout = QVBoxLayout()
         content_layout.setContentsMargins(0, 0, 0, 0)
         content_layout.setSpacing(4)
@@ -181,6 +215,58 @@ class QuickDownloadRow(QFrame):
 
         main_layout.addLayout(content_layout, 1)
 
+        # --- Botones de acción a la derecha ---
+        actions_layout = QVBoxLayout()
+        actions_layout.setContentsMargins(0, 0, 0, 0)
+        actions_layout.setSpacing(4)
+        actions_layout.setAlignment(Qt.AlignCenter)
+
+        icon_dir = os.path.normpath(os.path.join(
+            os.path.dirname(__file__), "..", "..", "..", "assets", "icons", "svg"
+        ))
+        _action_btn_style = f"""
+            QPushButton {{
+                background-color: transparent;
+                border: none;
+                border-radius: 12px;
+                padding: 2px;
+            }}
+            QPushButton:hover {{
+                background-color: {get_theme_token('fondo_hover', '#2a2a2a')};
+            }}
+        """
+
+        # Botón de abrir carpeta (oculto hasta que la descarga termine)
+        self.btn_reveal = QPushButton()
+        self.btn_reveal.setFixedSize(24, 24)
+        self.btn_reveal.setToolTip(self.tr("Abrir ubicación del archivo"))
+        self.btn_reveal.setStyleSheet(_action_btn_style)
+        _folder_icon = os.path.join(icon_dir, "folder_open.svg")
+        if os.path.exists(_folder_icon):
+            self.btn_reveal.setIcon(QIcon(_folder_icon))
+            self.btn_reveal.setIconSize(QSize(16, 16))
+        else:
+            self.btn_reveal.setText("📂")
+        self.btn_reveal.hide()
+        self.btn_reveal.clicked.connect(lambda: self.reveal_requested.emit(self))
+
+        # Botón X (cerrar / quitar de la lista)
+        self.btn_close = QPushButton()
+        self.btn_close.setFixedSize(24, 24)
+        self.btn_close.setToolTip(self.tr("Quitar de la lista"))
+        self.btn_close.setStyleSheet(_action_btn_style)
+        _close_icon = os.path.join(icon_dir, "close.svg")
+        if os.path.exists(_close_icon):
+            self.btn_close.setIcon(QIcon(_close_icon))
+            self.btn_close.setIconSize(QSize(14, 14))
+        else:
+            self.btn_close.setText("✕")
+        self.btn_close.clicked.connect(lambda: self.close_requested.emit(self))
+
+        actions_layout.addWidget(self.btn_reveal)
+        actions_layout.addWidget(self.btn_close)
+        main_layout.addLayout(actions_layout)
+
         self.setStyleSheet(f"""
             QFrame#queueItemCard {{
                 background-color: {get_theme_token('fondo_principal', '#121212')};
@@ -202,6 +288,18 @@ class QuickDownloadRow(QFrame):
                 border-radius: 3px;
             }}
         """)
+
+    def mark_completed(self, filepath=None):
+        """Marca este item como completado y muestra el botón de carpeta."""
+        self._is_completed = True
+        if filepath:
+            self.downloaded_filepath = filepath
+        if self.downloaded_filepath and os.path.exists(self.downloaded_filepath):
+            self.btn_reveal.show()
+
+    def mark_error(self):
+        """Marca este item como error."""
+        self._is_error = True
 
     def update_progress(self, percent, info="", status=None):
         percent = max(0, min(100, int(percent)))
@@ -389,11 +487,11 @@ class QuickModeTab(QWidget):
                 background-color: {get_theme_token('fondo_hover', '#2a2a2a')};
             }}
             QPushButton:checked {{
-                background-color: #e53935;
-                border-color: #ff6b6b;
+                background-color: #2e7d32;
+                border-color: #4caf50;
             }}
             QPushButton:checked:hover {{
-                background-color: #ff6b6b;
+                background-color: #388e3c;
             }}
             QPushButton:disabled {{
                 background-color: #555;
@@ -432,6 +530,7 @@ class QuickModeTab(QWidget):
         layout.addWidget(self.quality_combo)
 
         self.chk_playlist_selector = QCheckBox(self.tr("Seleccionar playlist"))
+        self.chk_playlist_selector.toggled.connect(self._on_playlist_selector_toggled)
         layout.addWidget(self.chk_playlist_selector)
 
         self.chk_thumb_file = QCheckBox(self.tr("Guardar miniatura"))
@@ -450,6 +549,42 @@ class QuickModeTab(QWidget):
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(12, 10, 12, 10)
         layout.setSpacing(8)
+
+        # Barra de encabezado con botón "Limpiar todo"
+        header_layout = QHBoxLayout()
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(6)
+        header_layout.addStretch(1)
+
+        icon_dir = os.path.normpath(os.path.join(
+            os.path.dirname(__file__), "..", "..", "..", "assets", "icons", "svg"
+        ))
+        self.btn_clear_all = QPushButton(self.tr("Limpiar"))
+        self.btn_clear_all.setFixedHeight(22)
+        self.btn_clear_all.setToolTip(self.tr("Cancelar descargas activas y limpiar la lista"))
+        _delete_icon = os.path.join(icon_dir, "delete.svg")
+        if os.path.exists(_delete_icon):
+            self.btn_clear_all.setIcon(QIcon(_delete_icon))
+            self.btn_clear_all.setIconSize(QSize(14, 14))
+        self.btn_clear_all.setStyleSheet(f"""
+            QPushButton {{
+                background-color: transparent;
+                color: {get_theme_token('texto_secundario', '#888888')};
+                border: 1px solid {get_theme_token('borde', '#2d2d2d')};
+                border-radius: 6px;
+                padding: 2px 10px;
+                font-size: 10px;
+            }}
+            QPushButton:hover {{
+                background-color: {get_theme_token('fondo_hover', '#2a2a2a')};
+                color: #ff6b6b;
+                border-color: #ff6b6b;
+            }}
+        """)
+        self.btn_clear_all.clicked.connect(self._on_clear_all_clicked)
+        self.btn_clear_all.hide()  # Ocultar hasta que haya items
+        header_layout.addWidget(self.btn_clear_all)
+        layout.addLayout(header_layout)
 
         self.activity_scroll = QScrollArea()
         self.activity_scroll.setWidgetResizable(True)
@@ -748,12 +883,15 @@ class QuickModeTab(QWidget):
         self.current_item_pos = 1 if entries else 0
         self.completed_items = 0
         self.empty_lbl.hide()
+        self.btn_clear_all.show()
 
         for idx, entry in enumerate(entries):
             title = entry.get("title") or entry.get("id") or entry.get("url") or self.tr(f"Item {idx + 1}")
             self.item_keys.append(entry.get("playlist_index") or (selected_indices[idx] + 1 if idx < len(selected_indices) else idx + 1))
             row = QuickDownloadRow(str(title), self.activity_container)
             row.update_metadata_from_dict(entry)
+            row.close_requested.connect(self._on_row_close_requested)
+            row.reveal_requested.connect(self._on_row_reveal_requested)
             self.activity_layout.insertWidget(self.activity_layout.count() - 1, row)
             self.item_rows.append(row)
 
@@ -771,6 +909,7 @@ class QuickModeTab(QWidget):
         self.current_item_pos = 0
         self.completed_items = 0
         self.empty_lbl.show()
+        self.btn_clear_all.hide()
 
     def _cancel_download(self):
         if self.download_worker:
@@ -810,12 +949,15 @@ class QuickModeTab(QWidget):
                 "downloading",
             )
         elif data.get("status") == "finished":
-            if data.get("filename"):
-                self.last_downloaded_filepath = data.get("filename")
+            filepath = data.get("filename")
+            if filepath:
+                self.last_downloaded_filepath = filepath
             row_idx = self._resolve_progress_row(data)
             if row_idx is not None and 0 <= row_idx < len(self.item_rows):
                 row = self.item_rows[row_idx]
                 row.update_progress(100, status=self.tr("Procesando"))
+                if filepath:
+                    row.downloaded_filepath = filepath
                 info = data.get("info_dict")
                 if info:
                     row.update_metadata_from_dict(info)
@@ -844,6 +986,7 @@ class QuickModeTab(QWidget):
         if success:
             for row in self.item_rows:
                 row.update_progress(100, status=self.tr("Completado"))
+                row.mark_completed()
             title = self.last_request_data.get("title", "").strip()
             output_dir = self.last_request_data.get("output_path", "")
             if title and output_dir:
@@ -856,6 +999,7 @@ class QuickModeTab(QWidget):
             if self.item_rows:
                 idx = max(0, min(len(self.item_rows) - 1, self.current_item_pos - 1))
                 self.item_rows[idx].update_progress(0, status=self.tr("Error"))
+                self.item_rows[idx].mark_error()
             self.output_options.set_progress(0, self.tr(f"Error: {message}"), "error")
             logger.error(f"QuickModeTab: Error en descarga: {message}")
         if self.download_worker:
@@ -868,6 +1012,14 @@ class QuickModeTab(QWidget):
         if message:
             self.output_options.set_progress(0, message, "running" if busy else "wait")
 
+    def _on_playlist_selector_toggled(self, checked):
+        """Cuando playlist está activa, deshabilitar y desactivar el corte de fragmento."""
+        if checked:
+            self.btn_cut.setChecked(False)
+            self.btn_cut.setEnabled(False)
+        else:
+            self.btn_cut.setEnabled(True)
+
     def _set_controls_enabled(self, enabled):
         self.url_input.setEnabled(enabled)
         self.btn_download.setEnabled(enabled or self.is_downloading)
@@ -876,7 +1028,11 @@ class QuickModeTab(QWidget):
         self.output_options.output_path_input.setEnabled(enabled)
         self.output_options.btn_select_output_path.setEnabled(enabled)
         self.output_options.speed_limit_input.setEnabled(enabled)
-        self.btn_cut.setEnabled(enabled)
+        # btn_cut: solo habilitar si playlist_selector no está activo
+        if enabled:
+            self.btn_cut.setEnabled(not self.chk_playlist_selector.isChecked())
+        else:
+            self.btn_cut.setEnabled(False)
 
     def _set_download_text(self, text):
         self.btn_download.setText(text)
@@ -887,7 +1043,8 @@ class QuickModeTab(QWidget):
         if not path:
             return
         if self.last_downloaded_filepath and os.path.exists(self.last_downloaded_filepath):
-            path = self.last_downloaded_filepath
+            reveal_in_file_manager(self.last_downloaded_filepath)
+            return
 
         if os.path.exists(path):
             if os.name == "nt":
@@ -896,3 +1053,37 @@ class QuickModeTab(QWidget):
                 from PySide6.QtCore import QUrl
                 from PySide6.QtGui import QDesktopServices
                 QDesktopServices.openUrl(QUrl.fromLocalFile(path if os.path.isdir(path) else os.path.dirname(path)))
+
+    # --- Handlers de acciones por fila ---
+
+    def _on_row_close_requested(self, row):
+        """Quitar un item de la lista. Si estaba descargándose activamente, cancela."""
+        if row not in self.item_rows:
+            return
+        idx = self.item_rows.index(row)
+        # Si es el único item y está descargando, cancelar toda la descarga
+        if self.is_downloading and len(self.item_rows) == 1:
+            self._cancel_download()
+        # Remover de las listas de tracking
+        self.item_rows.pop(idx)
+        if idx < len(self.item_keys):
+            self.item_keys.pop(idx)
+        # Remover widget
+        row.destroy_row()
+        self.activity_layout.removeWidget(row)
+        row.deleteLater()
+        # Actualizar visibilidad
+        if not self.item_rows:
+            self.empty_lbl.show()
+            self.btn_clear_all.hide()
+
+    def _on_row_reveal_requested(self, row):
+        """Abrir el gestor de archivos y seleccionar el archivo descargado."""
+        if row.downloaded_filepath and os.path.exists(row.downloaded_filepath):
+            reveal_in_file_manager(row.downloaded_filepath)
+
+    def _on_clear_all_clicked(self):
+        """Cancelar descargas activas y limpiar toda la lista."""
+        if self.is_downloading:
+            self._cancel_download()
+        self._clear_activity_rows()

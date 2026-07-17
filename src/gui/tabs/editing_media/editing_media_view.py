@@ -54,6 +54,16 @@ def get_svg_icon(name: str) -> QIcon:
     path = os.path.join(_SVG_DIR, name)
     return QIcon(path) if os.path.exists(path) else QIcon()
 
+def get_folder_icon() -> QIcon:
+    icon = QIcon()
+    path_closed = os.path.join(_SVG_DIR, "folder.svg")
+    path_open = os.path.join(_SVG_DIR, "folder_open.svg")
+    if os.path.exists(path_closed):
+        icon.addFile(path_closed, QSize(), QIcon.Mode.Normal, QIcon.State.Off)
+    if os.path.exists(path_open):
+        icon.addFile(path_open, QSize(), QIcon.Mode.Normal, QIcon.State.On)
+    return icon
+
 
 class EditingMediaTab(QWidget):
     """Pestaña 'Medios de Edición' con una distribución visual de tres paneles de 20/40/40."""
@@ -524,14 +534,14 @@ class EditingMediaTab(QWidget):
 
         # 1. Nodo Raíz de Directorios Físicos
         self.physical_root = QTreeWidgetItem(self.tree_folders, [self.tr("Directorios Físicos")])
-        self.physical_root.setIcon(0, get_svg_icon("folder_open.svg"))
+        self.physical_root.setIcon(0, get_folder_icon())
         self.physical_root.setData(0, Qt.UserRole, {"tipo": "root_physical"})
         self.physical_root.setExpanded(True)
 
         for folder in self.controller.indexed_folders:
             folder_name = os.path.basename(folder) or folder
             item = QTreeWidgetItem(self.physical_root, [folder_name])
-            item.setIcon(0, get_svg_icon("folder_managed.svg"))
+            item.setIcon(0, get_folder_icon())
             item.setData(0, Qt.UserRole, {"tipo": "folder", "ruta": folder})
             item.setExpanded(True)
             self._add_folder_subdirs(item, folder)
@@ -590,7 +600,7 @@ class EditingMediaTab(QWidget):
                 subpath = os.path.join(folder_path, name)
                 if os.path.isdir(subpath):
                     child = QTreeWidgetItem(parent_item, [name])
-                    child.setIcon(0, get_svg_icon("folder_open.svg"))
+                    child.setIcon(0, get_folder_icon())
                     child.setData(0, Qt.UserRole, {"tipo": "subfolder", "ruta": subpath.replace("\\", "/")})
                     self._add_folder_subdirs(child, subpath)
         except Exception as e:

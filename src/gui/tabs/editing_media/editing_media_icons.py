@@ -49,3 +49,18 @@ def get_colored_folder_icon(color_hex: str) -> QIcon:
             icon.addPixmap(pix_open, QIcon.Mode.Normal, QIcon.State.On)
             
     return icon
+
+def get_svg_icon(name: str) -> QIcon:
+    path = os.path.join(_SVG_DIR, name)
+    return QIcon(path) if os.path.exists(path) else QIcon()
+
+def get_folder_icon() -> QIcon:
+    icon = QIcon()
+    path_closed = os.path.join(_SVG_DIR, "folder.svg")
+    path_open = os.path.join(_SVG_DIR, "folder_open.svg")
+    if os.path.exists(path_closed):
+        icon.addFile(path_closed, QSize(), QIcon.Mode.Normal, QIcon.State.Off)
+    if os.path.exists(path_open):
+        icon.addFile(path_open, QSize(), QIcon.Mode.Normal, QIcon.State.On)
+    return icon
+

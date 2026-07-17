@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QMessageBox,
     QMenu,
+    QScrollArea,
 )
 from PySide6.QtCore import Qt, QSize, Signal, QUrl
 from PySide6.QtGui import QIcon, QPixmap, QCursor
@@ -58,6 +59,7 @@ class EditingMediaTab(QWidget):
         
         self.selected_tree_item_data = None
         self.active_filter = "Todos"
+        self._metadata_cache = {}
         self.waveform_thread = None
         
         # Inicializar reproductor de audio central para el espectro
@@ -352,15 +354,65 @@ class EditingMediaTab(QWidget):
         lbl_info_title.setStyleSheet("font-weight: bold; font-size: 12px; color: #a6adc8;")
         info_layout.addWidget(lbl_info_title)
 
-        # Grid de metadatos simulado
+        # Crear QScrollArea para los metadatos
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QScrollArea.NoFrame)
+        scroll_area.setStyleSheet("background: transparent; border: none;")
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+
+        # Estilizar el scrollbar de manera elegante
+        scroll_area.verticalScrollBar().setStyleSheet("""
+            QScrollBar:vertical {
+                border: none;
+                background: #111;
+                width: 6px;
+                margin: 0px;
+                border-radius: 3px;
+            }
+            QScrollBar::handle:vertical {
+                background: #333;
+                min-height: 20px;
+                border-radius: 3px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: #1DC038;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                border: none;
+                background: none;
+                height: 0px;
+            }
+        """)
+
+        scroll_content = QWidget()
+        scroll_content.setStyleSheet("background: transparent;")
+        scroll_layout = QVBoxLayout(scroll_content)
+        scroll_layout.setContentsMargins(0, 0, 8, 0)
+        scroll_layout.setSpacing(6)
+
+        # Grid de metadatos ampliado
         self.metadata_labels = {}
         fields = [
             ("nombre", self.tr("Nombre:")),
             ("ruta", self.tr("Ruta:")),
             ("tipo", self.tr("Tipo:")),
             ("tamaño", self.tr("Tamaño:")),
-            ("resolución", self.tr("Resolución:")),
+            ("creado", self.tr("Creado:")),
+            ("modificado", self.tr("Modificado:")),
             ("duración", self.tr("Duración:")),
+            ("resolución", self.tr("Resolución:")),
+            ("video_codec", self.tr("Códec Video:")),
+            ("video_profile", self.tr("Perfil Video:")),
+            ("fps", self.tr("FPS:")),
+            ("aspecto", self.tr("Rel. Aspecto:")),
+            ("bitrate_video", self.tr("Bitrate Video:")),
+            ("color", self.tr("Espacio Color:")),
+            ("audio_codec", self.tr("Códec Audio:")),
+            ("samplerate", self.tr("Muestreo:")),
+            ("canales", self.tr("Canales:")),
+            ("bitrate_audio", self.tr("Bitrate Audio:")),
         ]
         
         for key, label_text in fields:
@@ -368,19 +420,21 @@ class EditingMediaTab(QWidget):
             row.setSpacing(6)
             
             lbl_key = QLabel(label_text)
-            lbl_key.setFixedWidth(80)
-            lbl_key.setStyleSheet("color: #89b4fa; font-size: 12px;")
+            lbl_key.setFixedWidth(90)
+            lbl_key.setStyleSheet("color: #89b4fa; font-size: 11px; font-weight: bold;")
             
             lbl_val = QLabel("-")
-            lbl_val.setStyleSheet("color: #cdd6f4; font-size: 12px;")
+            lbl_val.setStyleSheet("color: #cdd6f4; font-size: 11px;")
             lbl_val.setWordWrap(True)
             self.metadata_labels[key] = lbl_val
             
             row.addWidget(lbl_key)
             row.addWidget(lbl_val, 1)
-            info_layout.addLayout(row)
+            scroll_layout.addLayout(row)
 
-        info_layout.addStretch()
+        scroll_layout.addStretch()
+        scroll_area.setWidget(scroll_content)
+        info_layout.addWidget(scroll_area, 1)
 
         # Botón para revelar en el explorador de archivos
         self.btn_reveal = AnimatedButton(self.tr("Revelar en Explorador"))
@@ -793,15 +847,170 @@ class EditingMediaTab(QWidget):
         self.metadata_labels["tipo"].setText(tipo.upper())
         self.metadata_labels["tamaño"].setText(item_data["tamaño"])
         
-        # Mostrar resolución si existe
-        resolucion = item_data.get("resolución", "-")
-        self.metadata_labels["resolución"].setText(resolucion)
+        # Obtener metadatos ricos de la cache o extraerlos
+        if path not in self._metadata_cache:
+            self._metadata_cache[path] = self._extract_rich_metadata(path, tipo)
+            
+        rich_meta = self._metadata_cache[path]
         
-        # Mostrar duración si existe
-        duracion = item_data.get("duración", "-")
-        self.metadata_labels["duración"].setText(duracion)
+        # Llenar todos los campos en la UI
+        self.metadata_labels["creado"].setText(rich_meta.get("creado", "-"))
+        self.metadata_labels["modificado"].setText(rich_meta.get("modificado", "-"))
+        self.metadata_labels["duración"].setText(rich_meta.get("duración", "-"))
+        self.metadata_labels["resolución"].setText(rich_meta.get("resolución", "-"))
+        self.metadata_labels["video_codec"].setText(rich_meta.get("video_codec", "-"))
+        self.metadata_labels["video_profile"].setText(rich_meta.get("video_profile", "-"))
+        self.metadata_labels["fps"].setText(rich_meta.get("fps", "-"))
+        self.metadata_labels["aspecto"].setText(rich_meta.get("aspecto", "-"))
+        self.metadata_labels["bitrate_video"].setText(rich_meta.get("bitrate_video", "-"))
+        self.metadata_labels["color"].setText(rich_meta.get("color", "-"))
+        self.metadata_labels["audio_codec"].setText(rich_meta.get("audio_codec", "-"))
+        self.metadata_labels["samplerate"].setText(rich_meta.get("samplerate", "-"))
+        self.metadata_labels["canales"].setText(rich_meta.get("canales", "-"))
+        self.metadata_labels["bitrate_audio"].setText(rich_meta.get("bitrate_audio", "-"))
 
         self.btn_reveal.setEnabled(True)
+
+    def _extract_rich_metadata(self, path: str, tipo: str) -> dict:
+        import datetime
+        import re
+        import subprocess
+        
+        meta = {
+            "creado": "-",
+            "modificado": "-",
+            "duración": "-",
+            "resolución": "-",
+            "video_codec": "-",
+            "video_profile": "-",
+            "fps": "-",
+            "aspecto": "-",
+            "bitrate_video": "-",
+            "color": "-",
+            "audio_codec": "-",
+            "samplerate": "-",
+            "canales": "-",
+            "bitrate_audio": "-"
+        }
+        
+        if not os.path.exists(path):
+            return meta
+            
+        # 1. Fechas físicas del archivo
+        try:
+            stat_info = os.stat(path)
+            # Fecha de modificación
+            mtime = datetime.datetime.fromtimestamp(stat_info.st_mtime)
+            meta["modificado"] = mtime.strftime("%Y-%m-%d %H:%M:%S")
+            
+            # Fecha de creación (Windows st_ctime es creación; Unix es metadatos)
+            ctime = datetime.datetime.fromtimestamp(stat_info.st_ctime)
+            meta["creado"] = ctime.strftime("%Y-%m-%d %H:%M:%S")
+        except Exception as e:
+            logger.error(f"EditingMediaTab: Error al obtener fechas del archivo: {e}")
+            
+        # 2. Detalles específicos según tipo
+        if tipo == "imagen":
+            try:
+                from PySide6.QtGui import QImageReader, QImage
+                reader = QImageReader(path)
+                if reader.canRead():
+                    size = reader.size()
+                    meta["resolución"] = f"{size.width()}x{size.height()}"
+                    fmt = reader.format().data().decode('utf-8', errors='ignore').upper()
+                    meta["video_codec"] = fmt
+                    
+                    img = QImage(path)
+                    if not img.isNull():
+                        fmt_name = str(img.format()).split('.')[-1]
+                        meta["color"] = fmt_name
+            except Exception as e:
+                logger.error(f"EditingMediaTab: Error al extraer metadatos de imagen: {e}")
+                
+        elif tipo in ("video", "audio"):
+            from core.setup.ffmpeg_setup import get_ffmpeg_dir, get_platform_info, check_ffmpeg
+            if check_ffmpeg():
+                try:
+                    info = get_platform_info()
+                    ffmpeg_exe = os.path.join(get_ffmpeg_dir(), info["binary_name"])
+                    cmd = [ffmpeg_exe, "-hide_banner", "-i", path]
+                    
+                    startupinfo = None
+                    if os.name == 'nt':
+                        startupinfo = subprocess.STARTUPINFO()
+                        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                        
+                    process = subprocess.Popen(
+                        cmd,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        startupinfo=startupinfo,
+                        text=True,
+                        encoding='utf-8',
+                        errors='ignore'
+                    )
+                    _, stderr = process.communicate(timeout=5)
+                    
+                    # Parsear duración
+                    dur_match = re.search(r"Duration:\s*(\d{2}:\d{2}:\d{2}(?:\.\d+)?)", stderr)
+                    if dur_match:
+                        dur = dur_match.group(1)
+                        if '.' in dur:
+                            dur = dur.split('.')[0]
+                        meta["duración"] = dur
+                        
+                    # Parsear Video Stream
+                    video_match = re.search(r"Stream #\d+:\d+.*Video:\s*([^\n]+)", stderr)
+                    if video_match:
+                        video_info = video_match.group(1)
+                        parts = [p.strip() for p in video_info.split(',')]
+                        
+                        codec_part = parts[0]
+                        profile_m = re.search(r"\(([^)]+)\)", codec_part)
+                        if profile_m:
+                            meta["video_profile"] = profile_m.group(1)
+                        codec_clean = re.sub(r"\s*\([^)]*\)", "", codec_part)
+                        meta["video_codec"] = codec_clean.upper()
+                        
+                        for part in parts:
+                            res_m = re.search(r"\b(\d{2,5})x(\d{2,5})\b", part)
+                            if res_m:
+                                meta["resolución"] = res_m.group(0)
+                            if "DAR" in part or "SAR" in part:
+                                meta["aspecto"] = part
+                                
+                        for part in parts:
+                            if "fps" in part:
+                                meta["fps"] = part
+                            if "kb/s" in part:
+                                meta["bitrate_video"] = part
+                                
+                        for part in parts:
+                            if any(x in part.lower() for x in ["yuv", "rgb", "bgr", "gray", "nv12", "nv21", "p010"]):
+                                meta["color"] = part
+                                
+                    # Parsear Audio Stream
+                    audio_match = re.search(r"Stream #\d+:\d+.*Audio:\s*([^\n]+)", stderr)
+                    if audio_match:
+                        audio_info = audio_match.group(1)
+                        parts = [p.strip() for p in audio_info.split(',')]
+                        
+                        codec_part = parts[0]
+                        codec_clean = re.sub(r"\s*\([^)]*\)", "", codec_part)
+                        meta["audio_codec"] = codec_clean.upper()
+                        
+                        if len(parts) > 1:
+                            meta["samplerate"] = parts[1]
+                        if len(parts) > 2:
+                            meta["canales"] = parts[2]
+                        for part in parts:
+                            if "kb/s" in part:
+                                meta["bitrate_audio"] = part
+                                
+                except Exception as e:
+                    logger.error(f"EditingMediaTab: Error al extraer metadatos vía ffmpeg: {e}")
+                    
+        return meta
 
     # ── Métodos de Control para el Reproductor de Audio Central ─────────────
     def _on_play_clicked(self):

@@ -53,19 +53,15 @@ class AudioWaveformWidget(QWidget):
         # Fondo del espectro
         painter.fillRect(0, 0, width, height, QColor(fondo_normal))
 
-        # Configurar pincel para las barras
-        pen = QPen()
-        pen.setWidth(2)
-        pen.setCapStyle(Qt.RoundCap)
-
         mid_y = height / 2
 
         # 1. Determinar el set de picos a renderizar (reales o simulados por defecto)
         if not self.peaks:
             # Si no hay picos reales cargados aún, dibujar una onda senoidal elegante y simple
             peaks_to_draw = []
-            for x in range(12, width - 12, 5):
-                val = (math.sin(x * 0.04) * 0.4 + math.cos(x * 0.015) * 0.2 + 0.35)
+            num_sim_bars = 80
+            for i in range(num_sim_bars):
+                val = (math.sin(i * 0.25) * 0.4 + math.cos(i * 0.1) * 0.2 + 0.35)
                 peaks_to_draw.append(max(0.05, min(val, 0.95)))
         else:
             peaks_to_draw = self.peaks
@@ -74,56 +70,61 @@ class AudioWaveformWidget(QWidget):
         if num_bars == 0:
             return
 
-        # Calcular espaciado y centrado dinámico
-        bar_width = 3
-        spacing = 2
-        total_width = num_bars * (bar_width + spacing) - spacing
-        start_x = max(12, (width - total_width) // 2)
+        # Rango horizontal para dibujar las barras (de 10 a width - 10)
+        start_x = 10
+        end_x = width - 10
+        span = max(1, end_x - start_x)
+
+        # Calcular ancho de barra y espaciado dinámicamente
+        step = span / (num_bars - 1) if num_bars > 1 else span
+        bar_width = max(1, int(step * 0.6))
+
+        # Configurar pincel para las barras
+        pen = QPen()
+        pen.setWidth(bar_width)
+        pen.setCapStyle(Qt.RoundCap)
+
+        # Cabezal de reproducción
+        playhead_x = start_x + self._playback_ratio * span
 
         # 2. Dibujar las barras de amplitudes
         for i, peak in enumerate(peaks_to_draw):
-            x = start_x + i * (bar_width + spacing)
-            if x >= width - 10:
+            x = start_x + i * step
+            if x >= width:
                 break
 
             wave_h = peak * (height - 14)
             wave_h = max(2, wave_h)
 
-            # Atenuar los bordes para un diseño más pulido
-            factor = 1.0
-            if x < 40:
-                factor = x / 40.0
-            elif x > width - 40:
-                factor = (width - x) / 40.0
-            wave_h *= factor
-
             # Color según si ya fue reproducido o no
             col = QColor(acento)
-            current_ratio = x / width
-            if current_ratio <= self._playback_ratio:
+            if x <= playhead_x:
                 # Ya reproducido: color acento brillante
                 pen.setColor(col)
             else:
                 # No reproducido: semi-transparente
-                col.setAlpha(80)
+                col.setAlpha(60)
                 pen.setColor(col)
 
             painter.setPen(pen)
-            painter.drawLine(x, int(mid_y - wave_h / 2), x, int(mid_y + wave_h / 2))
+            painter.drawLine(int(x), int(mid_y - wave_h / 2), int(x), int(mid_y + wave_h / 2))
 
         # 3. Dibujar cabezal de reproducción (línea vertical roja)
-        playhead_x = int(width * self._playback_ratio)
-        if playhead_x > 0:
+        if self.audio_path or self.peaks:
             pen_head = QPen(QColor("#ff6c6b"), 2)
             painter.setPen(pen_head)
-            painter.drawLine(playhead_x, 4, playhead_x, height - 4)
+            painter.drawLine(int(playhead_x), 4, int(playhead_x), height - 4)
 
     def mousePressEvent(self, event):
         """Permite hacer click en la onda para buscar posiciones (seeking)."""
         if event.button() == Qt.LeftButton:
             x = event.position().x()
-            ratio = x / self.width()
-            ratio = max(0.0, min(ratio, 1.0))
-            self.seek_requested.emit(ratio)
-            self.set_playback_ratio(ratio)
+            start_x = 10
+            end_x = self.width() - 10
+            span = end_x - start_x
+            if span > 0:
+                ratio = (x - start_x) / span
+                ratio = max(0.0, min(ratio, 1.0))
+                self.seek_requested.emit(ratio)
+                self.set_playback_ratio(ratio)
             super().mousePressEvent(event)

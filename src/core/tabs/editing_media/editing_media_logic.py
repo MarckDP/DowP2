@@ -189,6 +189,7 @@ class EditingMediaController(QObject):
     def _on_disk_modified(self):
         """Callback ejecutado cuando watchdog detecta cambios en disco."""
         logger.debug("EditingMediaLogic: Cambio detectado en el disco por Watchdog.")
+        self._invalidate_media_cache()
         self.disk_changed.emit()
 
     # ── Operaciones con Carpetas Físicas ─────────────────────────────────────
@@ -199,6 +200,7 @@ class EditingMediaController(QObject):
             self.indexed_folders.append(norm_path)
             self.save_data()
             self.start_watcher()
+            self._invalidate_media_cache()
             self.disk_changed.emit()
             return True
         return False
@@ -210,6 +212,7 @@ class EditingMediaController(QObject):
             self.indexed_folders.remove(norm_path)
             self.save_data()
             self.start_watcher()
+            self._invalidate_media_cache()
             self.disk_changed.emit()
             return True
         return False
@@ -221,6 +224,7 @@ class EditingMediaController(QObject):
         if name and name not in self.collections:
             self.collections[name] = []
             self.save_data()
+            self._invalidate_media_cache()
             self.collections_changed.emit()
             return True
         return False
@@ -230,6 +234,7 @@ class EditingMediaController(QObject):
         if name in self.collections:
             del self.collections[name]
             self.save_data()
+            self._invalidate_media_cache()
             self.collections_changed.emit()
             return True
         return False
@@ -241,6 +246,7 @@ class EditingMediaController(QObject):
             if norm_path not in self.collections[collection_name]:
                 self.collections[collection_name].append(norm_path)
                 self.save_data()
+                self._invalidate_media_cache()
                 self.collections_changed.emit()
                 return True
         return False
@@ -252,36 +258,74 @@ class EditingMediaController(QObject):
             if norm_path in self.collections[collection_name]:
                 self.collections[collection_name].remove(norm_path)
                 self.save_data()
+                self._invalidate_media_cache()
                 self.collections_changed.emit()
                 return True
         return False
 
     # ── Lectura de Archivos (Físicos y Virtuales) ────────────────────────────
+    # Cache interna de resultados de escaneo para evitar I/O repetitivo.
+    # Se invalida cuando watchdog detecta cambios o se agregan/remueven carpetas y colecciones.
+    
+    def _invalidate_media_cache(self):
+        """Invalida la cache de archivos multimedia para forzar un re-escaneo en la próxima consulta."""
+        if not hasattr(self, "_media_cache"):
+            self._media_cache = {}
+        self._media_cache.clear()
+
+    def _build_file_entry(self, path: str, name: str, ext: str) -> dict:
+        """Construye un diccionario de archivo multimedia SIN llamar a mutagen (duración diferida)."""
+        tipo = get_media_type(ext)
+        try:
+            size_val = os.path.getsize(path)
+        except Exception:
+            size_val = 0
+        return {
+            "nombre": name,
+            "ruta": path.replace("\\", "/"),
+            "tipo": tipo,
+            "tamaño": format_size(size_val),
+            "duración": "-"  # Se calcula de forma diferida al seleccionar el archivo
+        }
+
+    def get_media_duration_for_file(self, path: str) -> str:
+        """Obtiene la duración de un archivo de audio de forma diferida (solo al seleccionarlo)."""
+        ext = os.path.splitext(path)[1].lower()
+        return get_media_duration(path, ext)
+
     def get_media_files_in_folder(self, folder_path: str) -> list:
-        """Retorna la lista de archivos multimedia contenidos directamente en la carpeta."""
+        """Retorna la lista de archivos multimedia contenidos directamente en la carpeta (con cache)."""
+        cache_key = f"folder:{folder_path}"
+        if hasattr(self, "_media_cache") and cache_key in self._media_cache:
+            return self._media_cache[cache_key]
+        
+        if not hasattr(self, "_media_cache"):
+            self._media_cache = {}
+
         files = []
         if os.path.exists(folder_path) and os.path.isdir(folder_path):
             try:
-                for name in os.listdir(folder_path):
-                    path = os.path.join(folder_path, name)
-                    if os.path.isfile(path):
-                        ext = os.path.splitext(name)[1].lower()
-                        if ext in VALID_EXTS:
-                            tipo = get_media_type(ext)
-                            size_val = os.path.getsize(path)
-                            files.append({
-                                "nombre": name,
-                                "ruta": path.replace("\\", "/"),
-                                "tipo": tipo,
-                                "tamaño": format_size(size_val),
-                                "duración": get_media_duration(path, ext)
-                            })
+                with os.scandir(folder_path) as entries:
+                    for entry in entries:
+                        if entry.is_file(follow_symlinks=False):
+                            ext = os.path.splitext(entry.name)[1].lower()
+                            if ext in VALID_EXTS:
+                                files.append(self._build_file_entry(entry.path, entry.name, ext))
             except Exception as e:
                 logger.error(f"EditingMediaLogic: Error listando archivos de {folder_path}: {e}")
+        
+        self._media_cache[cache_key] = files
         return files
 
     def get_media_files_in_collection(self, collection_name: str) -> list:
-        """Retorna la lista de archivos multimedia asociados a la colección virtual, validando su existencia."""
+        """Retorna la lista de archivos multimedia asociados a la colección virtual, validando su existencia (con cache)."""
+        cache_key = f"collection:{collection_name}"
+        if hasattr(self, "_media_cache") and cache_key in self._media_cache:
+            return self._media_cache[cache_key]
+        
+        if not hasattr(self, "_media_cache"):
+            self._media_cache = {}
+
         files = []
         if collection_name in self.collections:
             paths_to_keep = []
@@ -292,17 +336,8 @@ class EditingMediaController(QObject):
                     paths_to_keep.append(path)
                     name = os.path.basename(path)
                     ext = os.path.splitext(name)[1].lower()
-                    tipo = get_media_type(ext)
-                    size_val = os.path.getsize(path)
-                    files.append({
-                        "nombre": name,
-                        "ruta": path,
-                        "tipo": tipo,
-                        "tamaño": format_size(size_val),
-                        "duración": get_media_duration(path, ext)
-                    })
+                    files.append(self._build_file_entry(path, name, ext))
                 else:
-                    # El archivo ya no existe físicamente, se quita del índice de la colección
                     has_changes = True
                     logger.info(f"EditingMediaLogic: Removiendo archivo inexistente de la colección: {path}")
 
@@ -310,10 +345,18 @@ class EditingMediaController(QObject):
                 self.collections[collection_name] = paths_to_keep
                 self.save_data()
                 
+        self._media_cache[cache_key] = files
         return files
 
     def get_all_media_files(self) -> list:
-        """Escanéa todas las carpetas indexadas recursivamente y colecciones, retornando la lista consolidada."""
+        """Escanéa todas las carpetas indexadas recursivamente y colecciones, retornando la lista consolidada (con cache)."""
+        cache_key = "__all__"
+        if hasattr(self, "_media_cache") and cache_key in self._media_cache:
+            return self._media_cache[cache_key]
+        
+        if not hasattr(self, "_media_cache"):
+            self._media_cache = {}
+
         files = []
         seen_paths = set()
         
@@ -328,18 +371,7 @@ class EditingMediaController(QObject):
                                 path = os.path.join(root, name).replace("\\", "/")
                                 if path not in seen_paths:
                                     seen_paths.add(path)
-                                    tipo = get_media_type(ext)
-                                    try:
-                                        size_val = os.path.getsize(path)
-                                        files.append({
-                                            "nombre": name,
-                                            "ruta": path,
-                                            "tipo": tipo,
-                                            "tamaño": format_size(size_val),
-                                            "duración": get_media_duration(path, ext)
-                                        })
-                                    except Exception:
-                                        pass
+                                    files.append(self._build_file_entry(path, name, ext))
                 except Exception as e:
                     logger.error(f"EditingMediaLogic: Error en escaneo general de {folder}: {e}")
 
@@ -352,74 +384,9 @@ class EditingMediaController(QObject):
                         seen_paths.add(norm_path)
                         name = os.path.basename(norm_path)
                         ext = os.path.splitext(name)[1].lower()
-                        tipo = get_media_type(ext)
-                        try:
-                            size_val = os.path.getsize(norm_path)
-                            files.append({
-                                "nombre": name,
-                                "ruta": norm_path,
-                                "tipo": tipo,
-                                "tamaño": format_size(size_val),
-                                "duración": get_media_duration(norm_path, ext)
-                            })
-                        except Exception:
-                            pass
+                        files.append(self._build_file_entry(norm_path, name, ext))
 
-        return files
-
-    def get_all_media_files(self) -> list:
-        """Escanéa todas las carpetas indexadas recursivamente y colecciones, retornando la lista consolidada."""
-        files = []
-        seen_paths = set()
-        
-        # 1. Escanear carpetas físicas indexadas de forma recursiva
-        for folder in self.indexed_folders:
-            if os.path.exists(folder) and os.path.isdir(folder):
-                try:
-                    for root, dirs, filenames in os.walk(folder):
-                        for name in filenames:
-                            ext = os.path.splitext(name)[1].lower()
-                            if ext in VALID_EXTS:
-                                path = os.path.join(root, name).replace("\\", "/")
-                                if path not in seen_paths:
-                                    seen_paths.add(path)
-                                    tipo = get_media_type(ext)
-                                    try:
-                                        size_val = os.path.getsize(path)
-                                        files.append({
-                                            "nombre": name,
-                                            "ruta": path,
-                                            "tipo": tipo,
-                                            "tamaño": format_size(size_val),
-                                            "duración": get_media_duration(path, ext)
-                                        })
-                                    except Exception:
-                                        pass
-                except Exception as e:
-                    logger.error(f"EditingMediaLogic: Error en escaneo general de {folder}: {e}")
-
-        # 2. Agregar archivos en colecciones
-        for col_name in self.collections.keys():
-            for path in self.collections[col_name]:
-                norm_path = path.replace("\\", "/")
-                if os.path.exists(norm_path) and os.path.isfile(norm_path):
-                    if norm_path not in seen_paths:
-                        seen_paths.add(norm_path)
-                        name = os.path.basename(norm_path)
-                        ext = os.path.splitext(name)[1].lower()
-                        tipo = get_media_type(ext)
-                        try:
-                            size_val = os.path.getsize(norm_path)
-                            files.append({
-                                "nombre": name,
-                                "ruta": norm_path,
-                                "tipo": tipo,
-                                "tamaño": format_size(size_val),
-                                "duración": get_media_duration(norm_path, ext)
-                            })
-                        except Exception:
-                            pass
-
+        self._media_cache[cache_key] = files
         return files
 
 

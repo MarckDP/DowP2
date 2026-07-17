@@ -45,6 +45,8 @@ from core.tabs.editing_media.editing_media_logic import (
 # Importar los widgets que fueron extraídos a sus propios archivos
 from gui.tabs.editing_media.waveform_widget import AudioWaveformWidget
 from gui.tabs.editing_media.preview_panel import PreviewContainerWidget
+from gui.tabs.editing_media.editing_media_icons import get_colored_svg_icon, get_colored_folder_icon
+from core.tabs.editing_media.folder_color_manager import get_item_color, set_item_color, get_random_label_color
 
 _SVG_DIR = os.path.normpath(os.path.join(
     os.path.dirname(__file__), "..", "..", "..", "assets", "icons", "svg"
@@ -533,7 +535,7 @@ class EditingMediaTab(QWidget):
         self.tree_folders.clear()
 
         # 1. Nodo Raíz de Directorios Físicos
-        self.physical_root = QTreeWidgetItem(self.tree_folders, [self.tr("Directorios Físicos")])
+        self.physical_root = QTreeWidgetItem(self.tree_folders, [self.tr("Directorios")])
         self.physical_root.setIcon(0, get_folder_icon())
         self.physical_root.setData(0, Qt.UserRole, {"tipo": "root_physical"})
         self.physical_root.setExpanded(True)
@@ -541,20 +543,28 @@ class EditingMediaTab(QWidget):
         for folder in self.controller.indexed_folders:
             folder_name = os.path.basename(folder) or folder
             item = QTreeWidgetItem(self.physical_root, [folder_name])
-            item.setIcon(0, get_folder_icon())
+            color = get_item_color(f"folder:{folder}")
+            if color:
+                item.setIcon(0, get_colored_folder_icon(color))
+            else:
+                item.setIcon(0, get_folder_icon())
             item.setData(0, Qt.UserRole, {"tipo": "folder", "ruta": folder})
             item.setExpanded(True)
             self._add_folder_subdirs(item, folder)
 
         # 2. Nodo Raíz de Colecciones Virtuales
-        self.virtual_root = QTreeWidgetItem(self.tree_folders, [self.tr("Colecciones Virtuales")])
+        self.virtual_root = QTreeWidgetItem(self.tree_folders, [self.tr("Colecciones")])
         self.virtual_root.setIcon(0, get_svg_icon("star.svg"))
         self.virtual_root.setData(0, Qt.UserRole, {"tipo": "root_virtual"})
         self.virtual_root.setExpanded(True)
 
         for col_name in self.controller.collections.keys():
             item = QTreeWidgetItem(self.virtual_root, [col_name])
-            item.setIcon(0, get_svg_icon("star.svg"))
+            color = get_item_color(f"col:{col_name}")
+            if color:
+                item.setIcon(0, get_colored_svg_icon("star.svg", color))
+            else:
+                item.setIcon(0, get_svg_icon("star.svg"))
             item.setData(0, Qt.UserRole, {"tipo": "collection", "nombre": col_name})
 
         # Restaurar selección anterior
@@ -599,9 +609,14 @@ class EditingMediaTab(QWidget):
             for name in sorted(os.listdir(folder_path)):
                 subpath = os.path.join(folder_path, name)
                 if os.path.isdir(subpath):
+                    normalized_path = subpath.replace("\\", "/")
                     child = QTreeWidgetItem(parent_item, [name])
-                    child.setIcon(0, get_folder_icon())
-                    child.setData(0, Qt.UserRole, {"tipo": "subfolder", "ruta": subpath.replace("\\", "/")})
+                    color = get_item_color(f"folder:{normalized_path}")
+                    if color:
+                        child.setIcon(0, get_colored_folder_icon(color))
+                    else:
+                        child.setIcon(0, get_folder_icon())
+                    child.setData(0, Qt.UserRole, {"tipo": "subfolder", "ruta": normalized_path})
                     self._add_folder_subdirs(child, subpath)
         except Exception as e:
             logger.debug(f"EditingMediaTab: Error al buscar subcarpetas en {folder_path}: {e}")
@@ -610,57 +625,73 @@ class EditingMediaTab(QWidget):
         pass
 
     # ── Población y Control de la Lista de Medios ──────────────────────────
+    # Cache de iconos coloreados para evitar recrearlos en cada refresco de lista
+    _icon_cache = {}
+
+    def _get_cached_media_icon(self, icon_name: str, color: str) -> QIcon:
+        """Obtiene un icono coloreado desde la cache o lo crea si no existe."""
+        cache_key = f"{icon_name}:{color}"
+        if cache_key not in EditingMediaTab._icon_cache:
+            EditingMediaTab._icon_cache[cache_key] = get_colored_svg_icon(icon_name, color)
+        return EditingMediaTab._icon_cache[cache_key]
+
     def _update_media_list(self):
         """Refresca la lista central de medios según el ítem activo del árbol y los filtros."""
-        self.media_list.clear()
-        
-        selected = self.tree_folders.currentItem()
-        tipo = None
-        data = None
-        if selected:
-            data = selected.data(0, Qt.UserRole)
-            if data:
-                tipo = data.get("tipo")
+        self.media_list.setUpdatesEnabled(False)
+        try:
+            self.media_list.clear()
+            
+            selected = self.tree_folders.currentItem()
+            tipo = None
+            data = None
+            if selected:
+                data = selected.data(0, Qt.UserRole)
+                if data:
+                    tipo = data.get("tipo")
 
-        media_items = []
+            media_items = []
 
-        if tipo in ["folder", "subfolder"]:
-            ruta = data.get("ruta")
-            media_items = self.controller.get_media_files_in_folder(ruta)
-        elif tipo == "collection":
-            nombre = data.get("nombre")
-            media_items = self.controller.get_media_files_in_collection(nombre)
-        else:
-            # Si no hay selección (o se seleccionó la raíz de carpetas/colecciones), mostrar TODOS los archivos indexados
-            media_items = self.controller.get_all_media_files()
+            if tipo in ["folder", "subfolder"]:
+                ruta = data.get("ruta")
+                media_items = self.controller.get_media_files_in_folder(ruta)
+            elif tipo == "collection":
+                nombre = data.get("nombre")
+                media_items = self.controller.get_media_files_in_collection(nombre)
+            else:
+                media_items = self.controller.get_all_media_files()
 
-        # Aplicar filtros (búsqueda de texto y tipo de medio)
-        search_query = self.search_input.text().lower().strip()
+            # Pre-filtrar por categoría para evitar iterar items innecesarios
+            active_filter = self.active_filter
+            if active_filter == "Imágenes":
+                media_items = [i for i in media_items if i["tipo"] == "imagen"]
+            elif active_filter == "Videos":
+                media_items = [i for i in media_items if i["tipo"] == "video"]
+            elif active_filter == "Audios":
+                media_items = [i for i in media_items if i["tipo"] == "audio"]
 
-        for item in media_items:
-            # 1. Filtro de búsqueda
-            if search_query and search_query not in item["nombre"].lower():
-                continue
+            # Aplicar filtro de búsqueda de texto
+            search_query = self.search_input.text().lower().strip()
+            if search_query:
+                media_items = [i for i in media_items if search_query in i["nombre"].lower()]
 
-            # 2. Filtro de categoría
-            item_type = item["tipo"]
-            if self.active_filter == "Imágenes" and item_type != "imagen":
-                continue
-            elif self.active_filter == "Videos" and item_type != "video":
-                continue
-            elif self.active_filter == "Audios" and item_type != "audio":
-                continue
+            # Obtener iconos cacheados una sola vez
+            icon_video = self._get_cached_media_icon("movie.svg", "#9b59b6")
+            icon_image = self._get_cached_media_icon("image.svg", "#2ecc71")
+            icon_audio = self._get_cached_media_icon("music_note.svg", "#3498db")
 
-            # Construir visual del item con iconos SVG reales
-            list_item = QListWidgetItem(item["nombre"])
-            if item_type == "video":
-                list_item.setIcon(get_svg_icon("movie.svg"))
-            elif item_type == "imagen":
-                list_item.setIcon(get_svg_icon("image.svg"))
-            elif item_type == "audio":
-                list_item.setIcon(get_svg_icon("music_note.svg"))
-            list_item.setData(Qt.UserRole, item)
-            self.media_list.addItem(list_item)
+            for item in media_items:
+                list_item = QListWidgetItem(item["nombre"])
+                item_type = item["tipo"]
+                if item_type == "video":
+                    list_item.setIcon(icon_video)
+                elif item_type == "imagen":
+                    list_item.setIcon(icon_image)
+                elif item_type == "audio":
+                    list_item.setIcon(icon_audio)
+                list_item.setData(Qt.UserRole, item)
+                self.media_list.addItem(list_item)
+        finally:
+            self.media_list.setUpdatesEnabled(True)
 
     # ── Gestión de Señales y Eventos del Controlador ────────────────────────
     def _on_disk_changed(self):
@@ -794,7 +825,7 @@ class EditingMediaTab(QWidget):
             if self.audio_player:
                 try:
                     self.audio_player.setSource(QUrl.fromLocalFile(path))
-                    self.lbl_time.setText("00:00 / " + item_data["duración"])
+                    self.lbl_time.setText("00:00 / " + self.controller.get_media_duration_for_file(path))
                 except Exception as e:
                     logger.error(f"EditingMediaTab: Error cargando fuente de audio: {e}")
         else:
@@ -1071,7 +1102,6 @@ class EditingMediaTab(QWidget):
             
         self._update_media_list()
 
-    # ── Menú Contextual (Click derecho sobre el árbol de carpetas) ────────────
     def _show_tree_context_menu(self, position):
         item = self.tree_folders.itemAt(position)
         menu = QMenu(self)
@@ -1091,15 +1121,118 @@ class EditingMediaTab(QWidget):
         if tipo == "folder":
             act_remove = menu.addAction(self.tr("Desvincular Carpeta Física"))
             act_remove.triggered.connect(self._on_remove_folder_clicked)
+            
+            # Opciones de coloreado
+            menu.addSeparator()
+            act_color = menu.addAction(self.tr("Color Aleatorio"))
+            act_color.triggered.connect(lambda: self._set_random_color_for_item(item))
+            
+            act_choose = menu.addAction(self.tr("Elegir Color..."))
+            act_choose.triggered.connect(lambda: self._choose_color_for_item(item))
+            
+            current_color = get_item_color(f"folder:{data.get('ruta')}")
+            if current_color:
+                act_reset_color = menu.addAction(self.tr("Restablecer Color"))
+                act_reset_color.triggered.connect(lambda: self._reset_color_for_item(item))
+                
+            menu.exec(self.tree_folders.mapToGlobal(position))
+        elif tipo == "subfolder":
+            # Para subcarpetas físicas, no hay acción de desvincular, pero sí de colorear
+            act_color = menu.addAction(self.tr("Color Aleatorio"))
+            act_color.triggered.connect(lambda: self._set_random_color_for_item(item))
+            
+            act_choose = menu.addAction(self.tr("Elegir Color..."))
+            act_choose.triggered.connect(lambda: self._choose_color_for_item(item))
+            
+            current_color = get_item_color(f"folder:{data.get('ruta')}")
+            if current_color:
+                act_reset_color = menu.addAction(self.tr("Restablecer Color"))
+                act_reset_color.triggered.connect(lambda: self._reset_color_for_item(item))
+                
             menu.exec(self.tree_folders.mapToGlobal(position))
         elif tipo == "collection":
             act_remove = menu.addAction(self.tr("Eliminar Colección Virtual"))
             act_remove.triggered.connect(self._on_remove_collection_clicked)
+            
+            # Opciones de coloreado
+            menu.addSeparator()
+            act_color = menu.addAction(self.tr("Color Aleatorio"))
+            act_color.triggered.connect(lambda: self._set_random_color_for_item(item))
+            
+            act_choose = menu.addAction(self.tr("Elegir Color..."))
+            act_choose.triggered.connect(lambda: self._choose_color_for_item(item))
+            
+            current_color = get_item_color(f"col:{data.get('nombre')}")
+            if current_color:
+                act_reset_color = menu.addAction(self.tr("Restablecer Color"))
+                act_reset_color.triggered.connect(lambda: self._reset_color_for_item(item))
+                
             menu.exec(self.tree_folders.mapToGlobal(position))
         elif tipo == "root_virtual":
             act_new_col = menu.addAction(self.tr("Nueva Colección Virtual"))
             act_new_col.triggered.connect(self._on_add_collection_clicked)
             menu.exec(self.tree_folders.mapToGlobal(position))
+
+    def _set_random_color_for_item(self, item):
+        data = item.data(0, Qt.UserRole)
+        if not data:
+            return
+        tipo = data.get("tipo")
+        color = get_random_label_color()
+        
+        if tipo in ["folder", "subfolder"]:
+            ruta = data.get("ruta")
+            set_item_color(f"folder:{ruta}", color)
+        elif tipo == "collection":
+            nombre = data.get("nombre")
+            set_item_color(f"col:{nombre}", color)
+            
+        self._update_tree_view()
+
+    def _choose_color_for_item(self, item):
+        from gui.dialogs.dialogs import AdobeColorPickerDialog
+        data = item.data(0, Qt.UserRole)
+        if not data:
+            return
+        tipo = data.get("tipo")
+        
+        # Obtener el color actual para inicializar el picker
+        current_color = None
+        if tipo in ["folder", "subfolder"]:
+            ruta = data.get("ruta")
+            current_color = get_item_color(f"folder:{ruta}")
+        elif tipo == "collection":
+            nombre = data.get("nombre")
+            current_color = get_item_color(f"col:{nombre}")
+            
+        initial_color = current_color if current_color else "#B9E640"
+        
+        dialog = AdobeColorPickerDialog(initial_color, self)
+        if dialog.exec():
+            color = dialog.get_color()
+            if tipo in ["folder", "subfolder"]:
+                ruta = data.get("ruta")
+                set_item_color(f"folder:{ruta}", color)
+            elif tipo == "collection":
+                nombre = data.get("nombre")
+                set_item_color(f"col:{nombre}", color)
+                
+            self._update_tree_view()
+
+    def _reset_color_for_item(self, item):
+        data = item.data(0, Qt.UserRole)
+        if not data:
+            return
+        tipo = data.get("tipo")
+        
+        if tipo in ["folder", "subfolder"]:
+            ruta = data.get("ruta")
+            set_item_color(f"folder:{ruta}", None)
+        elif tipo == "collection":
+            nombre = data.get("nombre")
+            set_item_color(f"col:{nombre}", None)
+            
+        self._update_tree_view()
 
     # ── Menú Contextual (Click derecho sobre la lista central) ───────────────
     def _show_media_context_menu(self, position):

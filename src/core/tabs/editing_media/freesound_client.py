@@ -31,7 +31,7 @@ class FreesoundClient:
             raise ValueError("Token de Freesound API requerido.")
 
         if not query or query.strip() == "":
-            query = "*"
+            query = ""
             if not sort_order:
                 sort_order = "Mejor calificados"
 

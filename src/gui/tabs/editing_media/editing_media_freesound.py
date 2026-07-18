@@ -100,7 +100,7 @@ class FreesoundMixin:
         self._update_freesound_login_button()
         self.current_page = 1
         self.online_results = []
-        self._update_media_list()
+        self._exec_online_search()
         logger.info(f"EditingMediaTab: Autenticación OAuth2 exitosa para '{auth_data.get('username', '')}'")
 
     def _on_oauth_error(self, error_msg: str):

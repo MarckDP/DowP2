@@ -9,8 +9,8 @@ def get_theme_color(token_key: str, default_value: str = None) -> str:
     config = get_config()
     theme_name = config.get("theme", "dark")
     
-    # Localizar la ruta de temas
-    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+    # Localizar la ruta de temas de forma correcta
+    base_dir = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", ".."))
     json_path = os.path.join(base_dir, "src", "gui", "themes", f"{theme_name}.json")
     
     if os.path.exists(json_path):
@@ -39,15 +39,14 @@ def set_item_color(item_key: str, color_hex: str):
         config["folder_colors"].pop(item_key, None)
     save_config(config)
 
-def get_random_label_color() -> str:
-    """Obtiene un color aleatorio basado en las etiquetas de Ajustes o paleta de temas."""
+def get_random_label_color(exclude_color: str = None) -> str:
+    """Obtiene un color aleatorio para carpetas o colecciones combinando la paleta de temas y etiquetas."""
     config = get_config()
-    # 1. Intentar usar los colores de las etiquetas del usuario en Ajustes
+    
+    # 1. Obtener colores de etiquetas de descarga del usuario
     user_label_colors = [lbl.get("color") for lbl in config.get("labels", []) if lbl.get("color")]
-    if user_label_colors:
-        return random.choice(user_label_colors)
-        
-    # 2. Si no hay etiquetas del usuario, usar la paleta de colores por defecto
+    
+    # 2. Paleta de colores por defecto (agradables y variados)
     default_colors = [
         get_theme_color("etiqueta_combinado", "#3498db"),
         get_theme_color("etiqueta_multi_idioma", "#9b59b6"),
@@ -56,6 +55,16 @@ def get_random_label_color() -> str:
         get_theme_color("acento_primario", "#B9E640"),
         "#2ecc71", # Verde
         "#e67e22", # Naranja
-        "#e84393"  # Rosa/Magenta
+        "#e84393", # Rosa/Magenta
+        "#1abc9c", # Turquesa
+        "#34495e", # Gris azulado
     ]
-    return random.choice(default_colors)
+    
+    # Combinar las listas para tener mayor variedad
+    pool = list(set(default_colors + user_label_colors))
+    
+    # Excluir el color actual para garantizar el cambio
+    if exclude_color and exclude_color in pool and len(pool) > 1:
+        pool.remove(exclude_color)
+        
+    return random.choice(pool)

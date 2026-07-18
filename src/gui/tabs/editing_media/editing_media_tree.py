@@ -440,7 +440,17 @@ class TreeListMixin:
         if not data:
             return
         tipo = data.get("tipo")
-        color = get_random_label_color()
+        
+        # Obtener el color actual para excluirlo y garantizar el cambio de color
+        current_color = None
+        if tipo in ["folder", "subfolder"]:
+            ruta = data.get("ruta")
+            current_color = get_item_color(f"folder:{ruta}")
+        elif tipo == "collection":
+            nombre = data.get("nombre")
+            current_color = get_item_color(f"col:{nombre}")
+            
+        color = get_random_label_color(exclude_color=current_color)
         
         if tipo in ["folder", "subfolder"]:
             ruta = data.get("ruta")

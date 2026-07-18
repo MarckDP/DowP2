@@ -476,117 +476,207 @@ class EditingMediaController(QObject):
         return files
 
 
-def extract_waveform_peaks(audio_path: str, num_peaks: int = 150) -> list:
-    """Extrae las amplitudes reales de un archivo de audio usando ffmpeg de forma rápida."""
-    from core.setup.ffmpeg_setup import get_ffmpeg_dir, get_platform_info, check_ffmpeg
-    if not check_ffmpeg():
-        logger.warning("EditingMediaLogic: ffmpeg no está instalado, no se puede extraer la forma de onda.")
-        return []
-    
-    temp_file = None
-    if audio_path.startswith("http://") or audio_path.startswith("https://"):
-        try:
-            import tempfile
-            import requests
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
-                temp_file = tmp.name
-            
-            logger.debug(f"EditingMediaLogic: Descargando audio remoto temporal: {audio_path} -> {temp_file}")
-            response = requests.get(audio_path, timeout=10)
-            response.raise_for_status()
-            with open(temp_file, "wb") as f:
-                f.write(response.content)
-            audio_path = temp_file
-        except Exception as e:
-            logger.error(f"EditingMediaLogic: Error descargando audio remoto temporal: {e}")
-            if temp_file and os.path.exists(temp_file):
-                try:
-                    os.remove(temp_file)
-                except Exception:
-                    pass
-            return []
-
-    info = get_platform_info()
-    ffmpeg_exe = os.path.join(get_ffmpeg_dir(), info["binary_name"])
-    
-    # Decodificar el archivo como mono, 16 bits, y downsamplear a 1000 Hz.
-    # Esto reduce la cantidad de datos transmitida enormemente para rapidez (1000 muestras/seg).
-    cmd = [
-        ffmpeg_exe,
-        "-y",
-        "-i", audio_path,
-        "-f", "s16le",
-        "-ac", "1",
-        "-ar", "1000",
-        "-"
-    ]
-    
-    try:
-        startupinfo = None
-        if os.name == 'nt':
-            startupinfo = subprocess.STARTUPINFO()
-            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            startupinfo=startupinfo
-        )
-        
-        # Leer el buffer decodificado
-        raw_data, _ = process.communicate()
-        
-        if len(raw_data) < 2:
-            return []
-            
-        # Cada muestra son 2 bytes (16-bit)
-        num_samples = len(raw_data) // 2
-        samples = struct.unpack(f"{num_samples}h", raw_data)
-        
-        # Obtener amplitudes absolutas
-        abs_samples = [abs(s) for s in samples]
-        
-        # Agrupar en la cantidad solicitada de picos (num_peaks)
-        peaks = []
-        chunk_size = max(1, len(abs_samples) // num_peaks)
-        for i in range(num_peaks):
-            start = i * chunk_size
-            end = start + chunk_size
-            chunk = abs_samples[start:end]
-            if chunk:
-                peaks.append(max(chunk))
-            else:
-                peaks.append(0)
-                
-        # Normalizar a rango [0.0, 1.0]
-        max_val = max(peaks) if peaks else 0
-        if max_val > 0:
-            peaks = [float(p) / max_val for p in peaks]
-        else:
-            peaks = [0.0] * num_peaks
-            
-        return peaks
-    except Exception as e:
-        logger.error(f"EditingMediaLogic: Error extrayendo amplitudes de onda: {e}")
-        return []
-    finally:
-        if temp_file and os.path.exists(temp_file):
-            try:
-                os.remove(temp_file)
-            except Exception:
-                pass
-
-
 class WaveformExtractorThread(QThread):
-    """Hilo secundario para extraer de forma asíncrona la forma de onda de audio real sin bloquear la UI."""
+    """Hilo secundario para extraer de forma asíncrona la forma de onda de audio real progresivamente sin bloquear la UI."""
     finished_extraction = Signal(list)
+    peaks_updated = Signal(list)
 
-    def __init__(self, audio_path: str, num_peaks: int = 150, parent=None):
+    def __init__(self, audio_path: str, num_peaks: int = 150, duration_sec: float = 0.0, parent=None):
         super().__init__(parent)
         self.audio_path = audio_path
         self.num_peaks = num_peaks
+        self.duration_sec = duration_sec
+        self.process = None
+        self._is_cancelled = False
 
     def run(self):
-        peaks = extract_waveform_peaks(self.audio_path, self.num_peaks)
-        self.finished_extraction.emit(peaks)
+        from core.setup.ffmpeg_setup import get_ffmpeg_dir, get_platform_info, check_ffmpeg
+        if not check_ffmpeg():
+            logger.warning("EditingMediaLogic: ffmpeg no está instalado, no se puede extraer la forma de onda.")
+            self.finished_extraction.emit([])
+            return
+
+        info = get_platform_info()
+        ffmpeg_exe = os.path.join(get_ffmpeg_dir(), info["binary_name"])
+
+        # Si la duración es 0 o desconocida, usamos 120 segundos por defecto
+        dur = self.duration_sec if self.duration_sec > 0 else 120.0
+
+        # Muestreo dinámico: asegurar que total_samples_est // num_peaks >= 64
+        # Para lograr esto, el sample_rate mínimo debe ser (num_peaks * 64) / dur
+        min_sr = int((self.num_peaks * 64) / dur) + 1
+        sample_rate = max(1000, min(11025, min_sr))
+
+        # Optimizar el arranque y streaming de FFmpeg
+        cmd = [
+            ffmpeg_exe,
+            "-y",
+            "-probesize", "32768",
+            "-analyzeduration", "0",
+            "-i", self.audio_path,
+            "-vn",                     # Desactivar decodificación de video para ir mucho más rápido
+            "-f", "s16le",
+            "-ac", "1",
+            "-ar", str(sample_rate),
+            "-"
+        ]
+
+        try:
+            startupinfo = None
+            if os.name == 'nt':
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+
+            self.process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                startupinfo=startupinfo
+            )
+
+            # Leer todo el stream decodificado de una vez
+            raw_data = self.process.stdout.read()
+            self.process.wait()
+
+            if self._is_cancelled:
+                return
+
+            total_bytes = len(raw_data)
+            num_samples = total_bytes // 2
+            if num_samples == 0:
+                self.finished_extraction.emit([])
+                return
+
+            # Desempaquetar todas las muestras
+            samples = struct.unpack(f"{num_samples}h", raw_data)
+
+            # Dividir exactamente en self.num_peaks bloques usando indexación float
+            peaks = []
+            block_size = num_samples / self.num_peaks
+            for i in range(self.num_peaks):
+                if self._is_cancelled:
+                    return
+                start_idx = int(i * block_size)
+                end_idx = max(start_idx + 1, int((i + 1) * block_size))
+                
+                block_samples = samples[start_idx:end_idx]
+                if block_samples:
+                    block_peak = max(abs(s) for s in block_samples)
+                    peaks.append(block_peak)
+                else:
+                    peaks.append(0.0)
+
+            # Normalizar los picos
+            max_val = max(peaks) if peaks else 0
+            if max_val > 0:
+                final_peaks = [float(p) / max_val for p in peaks]
+            else:
+                final_peaks = [0.0] * self.num_peaks
+
+            # Emitir picos actualizados e indicar finalización
+            self.peaks_updated.emit(final_peaks)
+            self.finished_extraction.emit(final_peaks)
+
+        except Exception as e:
+            logger.error(f"EditingMediaLogic: Error extrayendo amplitudes de onda: {e}")
+            self.finished_extraction.emit([])
+        finally:
+            self.cleanup()
+
+    def cleanup(self):
+        if self.process:
+            try:
+                self.process.stdout.close()
+            except Exception:
+                pass
+            try:
+                self.process.terminate()
+                self.process.wait(timeout=1.0)
+            except Exception:
+                pass
+            self.process = None
+
+    def stop(self):
+        self._is_cancelled = True
+        self.cleanup()
+
+
+class RemoteWaveformLoaderThread(QThread):
+    """Hilo secundario para descargar una imagen de waveform de Freesound y extraer sus picos en milisegundos."""
+    finished = Signal(list)
+
+    def __init__(self, url: str, num_peaks: int, parent=None):
+        super().__init__(parent)
+        self.url = url
+        self.num_peaks = num_peaks
+
+    def run(self):
+        try:
+            import requests
+            from PySide6.QtGui import QImage
+            
+            # Descargar imagen (pequeña y rápida)
+            response = requests.get(self.url, timeout=10)
+            response.raise_for_status()
+
+            # QImage es seguro de utilizar y manipular en hilos secundarios
+            img = QImage.fromData(response.content)
+            if img.isNull():
+                self.finished.emit([])
+                return
+
+            img_w = img.width()
+            img_h = img.height()
+            if img_w <= 0 or img_h <= 0:
+                self.finished.emit([])
+                return
+
+            # Detectar el color de fondo muestreando las esquinas
+            corners = [
+                img.pixelColor(0, 0),
+                img.pixelColor(img_w - 1, 0),
+                img.pixelColor(0, img_h - 1),
+                img.pixelColor(img_w - 1, img_h - 1)
+            ]
+            bg = corners[0]
+            bg_r, bg_g, bg_b, bg_a = bg.red(), bg.green(), bg.blue(), bg.alpha()
+
+            peaks = []
+            for i in range(self.num_peaks):
+                col_x = int(i * (img_w - 1) / (self.num_peaks - 1)) if self.num_peaks > 1 else 0
+
+                y_min = -1
+                y_max = -1
+                for y in range(img_h):
+                    color = img.pixelColor(col_x, y)
+                    # Heurística para ver si el píxel pertenece al waveform (no es fondo)
+                    is_fg = False
+                    if bg_a < 20:  # Fondo transparente
+                        is_fg = color.alpha() > 30
+                    else:  # Fondo sólido
+                        # Distancia euclidiana en el espacio RGB
+                        dist = ((color.red() - bg_r)**2 + (color.green() - bg_g)**2 + (color.blue() - bg_b)**2)**0.5
+                        is_fg = dist > 35
+
+                    if is_fg:
+                        if y_min == -1:
+                            y_min = y
+                        y_max = y
+
+                if y_min != -1 and y_max != -1:
+                    peaks.append(float(y_max - y_min + 1))
+                else:
+                    peaks.append(0.0)
+
+            # Normalizar valores a rango [0.0, 1.0]
+            max_val = max(peaks) if peaks else 0
+            if max_val > 0:
+                normalized_peaks = [p / max_val for p in peaks]
+            else:
+                normalized_peaks = [0.0] * self.num_peaks
+
+            self.finished.emit(normalized_peaks)
+        except Exception as e:
+            logger.error(f"RemoteWaveformLoaderThread: Error cargando waveform remoto: {e}")
+            self.finished.emit([])
+

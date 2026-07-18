@@ -21,16 +21,44 @@ class AudioWaveformWidget(QWidget):
         self._playback_ratio = 0.0
         self.audio_path = ""
         self.peaks = []  # Almacena las amplitudes reales
+        self.is_loading = False
+        self.loading_phase = 0.0
+
+        # Timer para animación de carga
+        from PySide6.QtCore import QTimer
+        self.loading_timer = QTimer(self)
+        self.loading_timer.setInterval(30)  # ~33 FPS
+        self.loading_timer.timeout.connect(self._animate_loading)
+
+    def set_loading(self, loading: bool):
+        """Activa o desactiva la animación de carga."""
+        self.is_loading = loading
+        if loading:
+            self.peaks = []
+            if not self.loading_timer.isActive():
+                self.loading_timer.start()
+        else:
+            self.loading_timer.stop()
+        self.update()
+
+    def _animate_loading(self):
+        self.loading_phase += 0.15
+        if self.loading_phase > 2 * math.pi:
+            self.loading_phase -= 2 * math.pi
+        self.update()
 
     def set_audio_path(self, path: str):
         """Asocia la ruta del archivo de audio."""
         self.audio_path = path or ""
         self.peaks = []  # Reiniciar picos para forzar recálculo asíncrono
+        if not path:
+            self.set_loading(False)
         self.update()
 
     def set_peaks(self, peaks: list):
         """Asigna los picos reales extraídos del audio y repinta."""
         self.peaks = peaks or []
+        self.set_loading(False)  # Detener animación cuando se asignan picos
         self.update()
 
     def set_playback_ratio(self, ratio: float):
@@ -55,16 +83,26 @@ class AudioWaveformWidget(QWidget):
 
         mid_y = height / 2
 
-        # 1. Determinar el set de picos a renderizar (reales o simulados por defecto)
-        if not self.peaks:
-            # Si no hay picos reales cargados aún, dibujar una onda senoidal elegante y simple
+        # Calcular la cantidad objetivo de barras basadas en el ancho para mantener el espaciado constante
+        target_num_bars = max(50, min((width - 24) // 5, 180)) if width > 50 else 80
+
+        # 1. Determinar el set de picos a renderizar (reales o animados de carga)
+        if self.is_loading:
             peaks_to_draw = []
-            num_sim_bars = 80
+            num_sim_bars = target_num_bars
             for i in range(num_sim_bars):
-                val = (math.sin(i * 0.25) * 0.4 + math.cos(i * 0.1) * 0.2 + 0.35)
-                peaks_to_draw.append(max(0.05, min(val, 0.95)))
+                # Onda oscilante dinámica
+                val = math.sin(i * 0.15 + self.loading_phase) * 0.25 + 0.35
+                pulse = math.sin(self.loading_phase * 0.5) * 0.1 + 0.9
+                peaks_to_draw.append(max(0.05, min(val * pulse, 0.95)))
+            num_bars_to_draw = target_num_bars
+        elif not self.peaks:
+            # Si no hay picos y no está cargando, dejar vacío (evita confusión)
+            return
         else:
             peaks_to_draw = self.peaks
+            # Si estamos cargando progresivamente, calculamos el espaciado usando el total esperado
+            num_bars_to_draw = max(target_num_bars, len(peaks_to_draw))
 
         num_bars = len(peaks_to_draw)
         if num_bars == 0:
@@ -75,8 +113,8 @@ class AudioWaveformWidget(QWidget):
         end_x = width - 10
         span = max(1, end_x - start_x)
 
-        # Calcular ancho de barra y espaciado dinámicamente
-        step = span / (num_bars - 1) if num_bars > 1 else span
+        # Calcular ancho de barra y espaciado dinámicamente usando la cantidad total esperada
+        step = span / (num_bars_to_draw - 1) if num_bars_to_draw > 1 else span
         bar_width = max(1, int(step * 0.6))
 
         # Configurar pincel para las barras
@@ -98,7 +136,12 @@ class AudioWaveformWidget(QWidget):
 
             # Color según si ya fue reproducido o no
             col = QColor(acento)
-            if x <= playhead_x:
+            if self.is_loading:
+                # Efecto shimmer/glimmer en la transparencia durante la carga
+                alpha = int(100 + 50 * math.sin(self.loading_phase + i * 0.15))
+                col.setAlpha(max(20, min(alpha, 255)))
+                pen.setColor(col)
+            elif x <= playhead_x:
                 # Ya reproducido: color acento brillante
                 pen.setColor(col)
             else:
@@ -110,7 +153,7 @@ class AudioWaveformWidget(QWidget):
             painter.drawLine(int(x), int(mid_y - wave_h / 2), int(x), int(mid_y + wave_h / 2))
 
         # 3. Dibujar cabezal de reproducción (línea vertical roja)
-        if self.audio_path or self.peaks:
+        if (self.audio_path or self.peaks) and not self.is_loading:
             pen_head = QPen(QColor("#ff6c6b"), 2)
             painter.setPen(pen_head)
             painter.drawLine(int(playhead_x), 4, int(playhead_x), height - 4)

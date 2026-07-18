@@ -12,6 +12,21 @@ from core.tabs.editing_media.editing_media_logic import WaveformExtractorThread
 
 class PlaybackMixin:
     """Mixin que maneja la reproducción de audio, extracción de metadata y waveform."""
+    
+    def _parse_duration_to_seconds(self, dur_str: str) -> float:
+        if not dur_str or dur_str == "-":
+            return 0.0
+        if isinstance(dur_str, (int, float)):
+            return float(dur_str)
+        try:
+            parts = str(dur_str).split(":")
+            if len(parts) == 2:
+                return float(parts[0]) * 60 + float(parts[1])
+            elif len(parts) == 3:
+                return float(parts[0]) * 3600 + float(parts[1]) * 60 + float(parts[2])
+        except Exception:
+            pass
+        return 0.0
 
     def _on_media_clicked(self, list_item):
         item_data = list_item.data(Qt.UserRole)
@@ -22,6 +37,10 @@ class PlaybackMixin:
         tipo = item_data["tipo"]
         path = item_data["ruta"]
         is_remote = path.startswith("http://") or path.startswith("https://")
+
+        # Asegurar metadatos para archivos locales (necesitamos la duración exacta)
+        if not is_remote and path not in self._metadata_cache:
+            self._metadata_cache[path] = self._extract_rich_metadata(path, tipo)
 
         # Detener cualquier audio previo al cambiar de archivo
         self._stop_audio_playback()
@@ -36,23 +55,56 @@ class PlaybackMixin:
             
             # Detener hilo de extracción previo si estuviera corriendo
             if hasattr(self, "waveform_thread") and self.waveform_thread and self.waveform_thread.isRunning():
-                self.waveform_thread.terminate()
+                self.waveform_thread.stop()
                 self.waveform_thread.wait()
+
+            if hasattr(self, "remote_waveform_thread") and self.remote_waveform_thread and self.remote_waveform_thread.isRunning():
+                self.remote_waveform_thread.terminate()
+                self.remote_waveform_thread.wait()
                 
             # Calcular cantidad ideal de picos basándose en el ancho actual del widget
             w_width = self.waveform_widget.width()
             num_peaks = max(50, min((w_width - 24) // 5, 180)) if w_width > 50 else 80
             
-            # Iniciar extracción asíncrona de amplitudes reales (remoto o local)
-            self.waveform_thread = WaveformExtractorThread(path, num_peaks, self)
-            if tipo == "video":
-                # Para videos: si no hay audio, ocultar el panel automáticamente
-                self.waveform_thread.finished_extraction.connect(
-                    lambda peaks: self._on_video_waveform_ready(peaks)
-                )
+            # Activar el estado de carga y animación en el widget
+            self.waveform_widget.set_loading(True)
+
+            # Si es remoto y tiene imágenes del waveform, usarlas
+            if is_remote and "images" in item_data and item_data["images"].get("waveform_m"):
+                waveform_url = item_data["images"]["waveform_m"]
+                from core.tabs.editing_media.editing_media_logic import RemoteWaveformLoaderThread
+                
+                self.remote_waveform_thread = RemoteWaveformLoaderThread(waveform_url, num_peaks, self)
+                self.remote_waveform_thread.finished.connect(self.waveform_widget.set_peaks)
+                self.remote_waveform_thread.start()
             else:
-                self.waveform_thread.finished_extraction.connect(self.waveform_widget.set_peaks)
-            self.waveform_thread.start()
+                # Obtener duración en segundos para el muestreo progresivo
+                dur_str = item_data.get("duración", "-")
+                if not is_remote:
+                    dur_str = self._metadata_cache[path].get("duración", "-")
+                if dur_str == "-":
+                    dur_str = self.controller.get_media_duration_for_file(path)
+                duration_sec = self._parse_duration_to_seconds(dur_str)
+
+                # Iniciar extracción asíncrona progresiva de amplitudes reales
+                self.waveform_thread = WaveformExtractorThread(
+                    audio_path=path,
+                    num_peaks=num_peaks,
+                    duration_sec=duration_sec,
+                    parent=self
+                )
+                
+                # Conectar la señal de actualización progresiva
+                self.waveform_thread.peaks_updated.connect(self.waveform_widget.set_peaks)
+                
+                if tipo == "video":
+                    # Para videos: si no hay audio, ocultar el panel automáticamente
+                    self.waveform_thread.finished_extraction.connect(
+                        lambda peaks: self._on_video_waveform_ready(peaks)
+                    )
+                else:
+                    self.waveform_thread.finished_extraction.connect(self.waveform_widget.set_peaks)
+                self.waveform_thread.start()
 
             # Controles de reproducción de audio solo para archivos de audio puros
             if tipo == "audio" and self.audio_player:

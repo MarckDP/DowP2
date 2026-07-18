@@ -169,7 +169,8 @@ class FreesoundMixin:
                 "license": r.get("license", "-"),
                 "avg_rating": f"{r.get('avg_rating', 0):.1f}",
                 "num_downloads": str(r.get("num_downloads", 0)),
-                "description": r.get("description", "-")
+                "description": r.get("description", "-"),
+                "images": r.get("images", {})
             })
         
         self.online_results.extend(new_items)

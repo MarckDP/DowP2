@@ -14,7 +14,7 @@ from core.logger.logger_manager import logger
 # Enviar los logs de escalado al logger real 
 flush_scaling_logs()
 
-from core.setup.setup_manager import verify_all_dependencies
+
 from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QFontDatabase, QIcon
 from gui.main_window import MainWindow
@@ -73,22 +73,27 @@ def main():
     config = get_config()
     load_language(app, config.get("language", "en"))
     
-    logger.info("Checking dependencies...")
-    status = verify_all_dependencies()
-    if not all(status.values()):
-        logger.info("Some dependencies are missing. Showing installer dialog...")
-        from gui.dialogs.dependency_dialog import DependencyDialog
-        dialog = DependencyDialog()
-        if not dialog.exec():
-            logger.info("Dependency installation cancelled or failed. Exiting.")
-            sys.exit(0)
-        logger.info("Dependencies ready.")
-    else:
-        logger.info("All dependencies found.")
+    # ── Splash Screen con verificación de dependencias integrada ──
+    from gui.splash_screen import SplashScreen
     
-    logger.debug("Initializing MainWindow")
-    window = MainWindow()
-    window.show()
+    splash = SplashScreen()
+    window_holder = [None]  # Usar lista para evitar GC
+    
+    def on_splash_ready(main_window):
+        """Recibe la MainWindow ya construida desde el splash."""
+        window_holder[0] = main_window
+        main_window.show()
+        splash.cleanup()
+        logger.info("Application main window shown")
+    
+    def on_splash_failed():
+        logger.error("Dependency installation failed. Exiting.")
+        splash.cleanup()
+        sys.exit(1)
+    
+    splash.ready.connect(on_splash_ready)
+    splash.failed.connect(on_splash_failed)
+    splash.start()
     
     logger.info("Application event loop started")
     sys.exit(app.exec())

@@ -108,7 +108,8 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
 
         # Cargar los datos en el árbol por primera vez
         self._update_tree_view()
-        self._update_media_list()  # Cargar lista inicial (mostrará todo al no haber selección)
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(150, self._update_media_list)
 
     def init_ui(self):
         # Layout principal

@@ -192,7 +192,10 @@ class TreeListMixin:
                 media_items = self.controller.get_media_files_in_collection(nombre)
             elif tipo == "root_online":
                 # Renderizar resultados de Freesound
-                icon_cloud = self._get_cached_media_icon("travel_explore.svg", "#3498db")
+                icon_cloud_list = self._get_cached_media_icon("travel_explore.svg", "#3498db")
+                icon_cloud_grid = get_placeholder_thumbnail_icon("travel_explore.svg", "#3498db")
+                is_grid = getattr(self, "view_mode", "grid") == "grid"
+
                 if not self.controller.is_freesound_authenticated:
                     list_item = QListWidgetItem(self.tr("Inicia sesión con Freesound para buscar sonidos 🔑"))
                     self.media_list.addItem(list_item)
@@ -209,12 +212,18 @@ class TreeListMixin:
 
                 for item in self.online_results:
                     list_item = QListWidgetItem(item["nombre"])
-                    list_item.setIcon(icon_cloud)
+                    if is_grid:
+                        list_item.setIcon(icon_cloud_grid)
+                    else:
+                        list_item.setIcon(icon_cloud_list)
                     list_item.setData(Qt.UserRole, item)
                     self.media_list.addItem(list_item)
                 return
             else:
-                media_items = self.controller.get_all_media_files()
+                if self.controller.indexed_folders:
+                    media_items = self.controller.get_media_files_in_folder(self.controller.indexed_folders[0])
+                else:
+                    media_items = self.controller.get_all_media_files()
 
             # Obtener iconos cacheados una sola vez
             icon_video_list = self._get_cached_media_icon("movie.svg", "#9b59b6")

@@ -758,7 +758,8 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
 
     def _build_sort_menu(self):
         """Construye el menú desplegable de opciones de ordenación."""
-        from PySide6.QtWidgets import QMenu, QActionGroup
+        from PySide6.QtWidgets import QMenu
+        from PySide6.QtGui import QActionGroup
         menu = QMenu(self)
         menu.setStyleSheet(f"""
             QMenu {{

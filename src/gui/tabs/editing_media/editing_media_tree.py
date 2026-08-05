@@ -462,7 +462,7 @@ class TreeListMixin:
         if self.active_filter != "Todos" and getattr(self, "sort_by", "nombre") == "tipo":
             self.sort_by = "nombre"
             if hasattr(self, "btn_sort_by"):
-                self.btn_sort_by.setText("⇅ Nombre")
+                self.btn_sort_by.setText("Nombre")
 
         for btn in self.filter_buttons:
             if btn != sender:
@@ -750,10 +750,12 @@ class TreeListMixin:
         self.sort_ascending = asc
         if hasattr(self, "btn_sort_dir"):
             if asc:
-                self.btn_sort_dir.setText("⬆")
+                self.btn_sort_dir.setIcon(get_colored_svg_icon("arrow_circle_up.svg", "#FFFFFF", size=16))
+                self.btn_sort_dir.setIconSize(QSize(16, 16))
                 self.btn_sort_dir.setToolTip(self.tr("Orden Ascendente (A-Z, Antiguos primero)"))
             else:
-                self.btn_sort_dir.setText("⬇")
+                self.btn_sort_dir.setIcon(get_colored_svg_icon("arrow_circle_down.svg", "#FFFFFF", size=16))
+                self.btn_sort_dir.setIconSize(QSize(16, 16))
                 self.btn_sort_dir.setToolTip(self.tr("Orden Descendente (Z-A, Recientes primero)"))
         self._apply_active_filters_fast()
         self.preview_box.show_default_state()

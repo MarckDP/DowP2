@@ -306,7 +306,7 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         btn_bar.addWidget(self.icon_size_slider)
 
         # Botón de Ordenar Por
-        self.btn_sort_by = QPushButton(self.tr("⇅ Nombre"))
+        self.btn_sort_by = QPushButton(self.tr("Nombre"))
         self.btn_sort_by.setFixedHeight(26)
         self.btn_sort_by.setStyleSheet(f"""
             QPushButton {{
@@ -325,8 +325,10 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         btn_bar.addWidget(self.btn_sort_by)
 
         # Botón conmutador de Dirección de Orden (Ascendente / Descendente)
-        self.btn_sort_dir = QPushButton("⬆")
+        self.btn_sort_dir = QPushButton()
         self.btn_sort_dir.setFixedSize(26, 26)
+        self.btn_sort_dir.setIcon(get_colored_svg_icon("arrow_circle_up.svg", "#FFFFFF", size=16))
+        self.btn_sort_dir.setIconSize(QSize(16, 16))
         self.btn_sort_dir.setToolTip(self.tr("Orden Ascendente (A-Z, Antiguos primero)"))
         self.btn_sort_dir.setStyleSheet(btn_mode_style)
         self.btn_sort_dir.clicked.connect(self._toggle_sort_direction)
@@ -812,15 +814,8 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
     def _on_sort_option_selected(self, key: str, label: str):
         self.sort_by = key
         short_label = label.split("(")[0].strip()
-        self.btn_sort_by.setText(f"⇅ {short_label}")
+        self.btn_sort_by.setText(short_label)
         self._apply_active_filters_fast()
 
     def _toggle_sort_direction(self):
-        self.sort_ascending = not getattr(self, "sort_ascending", True)
-        if self.sort_ascending:
-            self.btn_sort_dir.setText("⬆")
-            self.btn_sort_dir.setToolTip(self.tr("Orden Ascendente (A-Z, Antiguos primero)"))
-        else:
-            self.btn_sort_dir.setText("⬇")
-            self.btn_sort_dir.setToolTip(self.tr("Orden Descendente (Z-A, Recientes primero)"))
-        self._apply_active_filters_fast()
+        self._set_sort_direction(not getattr(self, "sort_ascending", True))

@@ -89,6 +89,14 @@ class MainWindow(QMainWindow):
             logger.info("MainWindow: Recargando etiquetas en Proceso Avanzado")
             self.tab_single.video_details.load_labels()
 
+        from core.utils.clipboard_monitor import ClipboardURLMonitor
+        ClipboardURLMonitor.instance().check_clipboard(force=True)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        from core.utils.clipboard_monitor import ClipboardURLMonitor
+        ClipboardURLMonitor.instance().check_clipboard(force=True)
+
     def update_theme(self, theme_name):
         logger.info(f"MainWindow: Cambiando tema a {theme_name}")
         self.setStyleSheet(load_stylesheet(theme_name))

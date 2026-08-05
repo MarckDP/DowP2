@@ -23,10 +23,21 @@ class GeneralPage(QWidget):
         self._is_loading = False
 
     def init_ui(self):
-        # El layout principal de la página solo contendrá el QScrollArea
         self.main_layout = QVBoxLayout(self)
         self.main_layout.setContentsMargins(0, 0, 0, 0)
-        self.main_layout.setSpacing(0)
+        self.main_layout.setSpacing(12)
+
+        # Title
+        self.title_label = QLabel(self.tr("Ajustes Generales"))
+        self.title_label.setObjectName("settingsTitle")
+        self.main_layout.addWidget(self.title_label)
+        
+        # Divider
+        line = QFrame()
+        line.setObjectName("settingsDivider")
+        line.setFrameShape(QFrame.HLine)
+        line.setFrameShadow(QFrame.Sunken)
+        self.main_layout.addWidget(line)
 
         # Crear el QScrollArea
         self.scroll_area = QScrollArea()
@@ -39,23 +50,11 @@ class GeneralPage(QWidget):
         self.scroll_content.setObjectName("settingsScrollContent")
         self.scroll_content.setStyleSheet("QWidget#settingsScrollContent { background-color: transparent; }")
         
-        # Layout para el contenido del scroll (aquí va todo lo anterior)
+        # Layout para el contenido del scroll
         self.content_layout = QVBoxLayout(self.scroll_content)
-        self.content_layout.setContentsMargins(0, 0, 10, 0) # Pequeño margen derecho para el scrollbar
+        self.content_layout.setContentsMargins(0, 10, 10, 0)
         self.content_layout.setSpacing(12)
         self.content_layout.setAlignment(Qt.AlignTop)
-
-        # Title
-        self.title_label = QLabel(self.tr("Ajustes Generales"))
-        self.title_label.setObjectName("settingsTitle")
-        self.content_layout.addWidget(self.title_label)
-        
-        # Divider
-        line = QFrame()
-        line.setObjectName("settingsDivider")
-        line.setFrameShape(QFrame.HLine)
-        line.setFrameShadow(QFrame.Sunken)
-        self.content_layout.addWidget(line)
 
         # --- SECCIÓN: ASPECTO ---
         self.aspecto_label = QLabel(self.tr("Aspecto"))
@@ -94,8 +93,8 @@ class GeneralPage(QWidget):
         self.theme_row.addWidget(self.theme_combo)
         self.content_layout.addLayout(self.theme_row)
 
-        # --- SECCIÓN: ANÁLISIS ---
-        self.comp_label = QLabel(self.tr("Análisis y Red"))
+        # --- SECCIÓN: COMPORTAMIENTO ---
+        self.comp_label = QLabel(self.tr("Comportamiento"))
         self.comp_label.setObjectName("settingsSectionTitle")
         self.content_layout.addWidget(self.comp_label)
 
@@ -110,7 +109,7 @@ class GeneralPage(QWidget):
         self.auto_row.addWidget(self.auto_switch)
         self.content_layout.addLayout(self.auto_row)
 
-        # 3b. Switch: Auto-pegar URL del portapapeles
+        # 4. Switch: Auto-pegar URL del portapapeles
         self.paste_row = QHBoxLayout()
         self.paste_vbox = QVBoxLayout()
         
@@ -129,26 +128,6 @@ class GeneralPage(QWidget):
         self.paste_row.addStretch()
         self.paste_row.addWidget(self.paste_switch)
         self.content_layout.addLayout(self.paste_row)
-
-        # 4. Switch: Impersonate
-        self.imp_row = QHBoxLayout()
-        self.imp_vbox = QVBoxLayout()
-        
-        self.imp_label = QLabel(self.tr("Usar Impersonate (Disfraz de Navegador)"))
-        self.imp_label.setObjectName("settingsLabel")
-        
-        self.imp_desc = QLabel(self.tr("Evita bloqueos de YouTube simulando ser Chrome. (Puede ser más lento)"))
-        self.imp_desc.setStyleSheet("color: #888888; font-size: 11px;") # Compact description
-        
-        self.imp_vbox.addWidget(self.imp_label)
-        self.imp_vbox.addWidget(self.imp_desc)
-        
-        self.imp_switch = ToggleSwitch()
-        
-        self.imp_row.addLayout(self.imp_vbox)
-        self.imp_row.addStretch()
-        self.imp_row.addWidget(self.imp_switch)
-        self.content_layout.addLayout(self.imp_row)
 
         # 5. Switch: Compatibilidad Adobe (Selección predeterminada)
         self.adobe_row = QHBoxLayout()
@@ -170,56 +149,6 @@ class GeneralPage(QWidget):
         self.adobe_row.addWidget(self.adobe_switch)
         self.content_layout.addLayout(self.adobe_row)
 
-        # --- SECCIÓN: DESCARGAS ---
-        self.dl_section_label = QLabel(self.tr("Descargas"))
-        self.dl_section_label.setObjectName("settingsSectionTitle")
-        self.content_layout.addWidget(self.dl_section_label)
-
-        # 6. Switch: Incrustar Metadatos
-        self.metadata_row = QHBoxLayout()
-        self.metadata_vbox = QVBoxLayout()
-        self.metadata_label = QLabel(self.tr("Incrustar Metadatos"))
-        self.metadata_label.setObjectName("settingsLabel")
-        self.metadata_desc = QLabel(self.tr("Añade información del video (título, autor, fecha) dentro del archivo multimedia."))
-        self.metadata_desc.setStyleSheet("color: #888888; font-size: 11px;")
-        self.metadata_vbox.addWidget(self.metadata_label)
-        self.metadata_vbox.addWidget(self.metadata_desc)
-        self.metadata_switch = ToggleSwitch()
-        self.metadata_row.addLayout(self.metadata_vbox)
-        self.metadata_row.addStretch()
-        self.metadata_row.addWidget(self.metadata_switch)
-        self.content_layout.addLayout(self.metadata_row)
-
-        # 7. Switch: Incrustar Carátula
-        self.thumb_row = QHBoxLayout()
-        self.thumb_vbox = QVBoxLayout()
-        self.thumb_label = QLabel(self.tr("Incrustar carátula"))
-        self.thumb_label.setObjectName("settingsLabel")
-        self.thumb_desc = QLabel(self.tr("Utiliza la miniatura del video como imagen de portada del archivo descargado."))
-        self.thumb_desc.setStyleSheet("color: #888888; font-size: 11px;")
-        self.thumb_vbox.addWidget(self.thumb_label)
-        self.thumb_vbox.addWidget(self.thumb_desc)
-        self.thumb_switch = ToggleSwitch()
-        self.thumb_row.addLayout(self.thumb_vbox)
-        self.thumb_row.addStretch()
-        self.thumb_row.addWidget(self.thumb_switch)
-        self.content_layout.addLayout(self.thumb_row)
-
-        # 8. Switch: Eliminar Sponsors (SponsorBlock)
-        self.sponsors_row = QHBoxLayout()
-        self.sponsors_vbox = QVBoxLayout()
-        self.sponsors_label = QLabel(self.tr("Eliminar sponsors"))
-        self.sponsors_label.setObjectName("settingsLabel")
-        self.sponsors_desc = QLabel(self.tr("Utiliza SponsorBlock para identificar y omitir segmentos publicitarios dentro del video."))
-        self.sponsors_desc.setStyleSheet("color: #888888; font-size: 11px;")
-        self.sponsors_vbox.addWidget(self.sponsors_label)
-        self.sponsors_vbox.addWidget(self.sponsors_desc)
-        self.sponsors_switch = ToggleSwitch()
-        self.sponsors_row.addLayout(self.sponsors_vbox)
-        self.sponsors_row.addStretch()
-        self.sponsors_row.addWidget(self.sponsors_switch)
-        self.content_layout.addLayout(self.sponsors_row)
-
         # Finalizar setup del scroll area
         self.scroll_area.setWidget(self.scroll_content)
         self.main_layout.addWidget(self.scroll_area)
@@ -232,22 +161,14 @@ class GeneralPage(QWidget):
         self.theme_combo.currentIndexChanged.connect(self.on_theme_selection)
         self.auto_switch.toggled.connect(self.on_auto_analyze_toggled)
         self.paste_switch.toggled.connect(self.on_auto_paste_toggled)
-        self.imp_switch.toggled.connect(self.on_impersonate_toggled)
         self.adobe_switch.toggled.connect(self.on_adobe_compat_toggled)
-        self.metadata_switch.toggled.connect(self.on_embed_metadata_toggled)
-        self.thumb_switch.toggled.connect(self.on_embed_thumbnail_toggled)
-        self.sponsors_switch.toggled.connect(self.on_remove_sponsors_toggled)
 
     def update_switch_colors(self):
         config = get_config()
         accent = "#B9E640" if config.get("theme") == "dark" else "#1DC038"
         self.auto_switch.setTrackColors("#333333", accent)
         self.paste_switch.setTrackColors("#333333", accent)
-        self.imp_switch.setTrackColors("#333333", accent)
         self.adobe_switch.setTrackColors("#333333", accent)
-        self.metadata_switch.setTrackColors("#333333", accent)
-        self.thumb_switch.setTrackColors("#333333", accent)
-        self.sponsors_switch.setTrackColors("#333333", accent)
 
     def load_current_settings(self):
         config = get_config()
@@ -267,11 +188,7 @@ class GeneralPage(QWidget):
         # Load Switches
         self.auto_switch.setChecked(config.get("auto_analyze", True))
         self.paste_switch.setChecked(config.get("auto_paste_url", True))
-        self.imp_switch.setChecked(config.get("use_impersonate", False))
         self.adobe_switch.setChecked(config.get("adobe_compat_default", True))
-        self.metadata_switch.setChecked(config.get("embed_metadata", True))
-        self.thumb_switch.setChecked(config.get("embed_thumbnail", True))
-        self.sponsors_switch.setChecked(config.get("remove_sponsors", False))
 
     def on_language_selection(self, index):
         if self._is_loading: return
@@ -311,37 +228,9 @@ class GeneralPage(QWidget):
         ClipboardURLMonitor.instance().set_enabled(checked)
         logger.info(f"GeneralPage: Auto-pegar URL cambiado a: {checked}")
 
-    def on_impersonate_toggled(self, checked):
-        if self._is_loading: return
-        config = get_config()
-        config["use_impersonate"] = checked
-        save_config(config)
-        logger.info(f"GeneralPage: Uso de Impersonate cambiado a: {checked}")
-
     def on_adobe_compat_toggled(self, checked):
         if self._is_loading: return
         config = get_config()
         config["adobe_compat_default"] = checked
         save_config(config)
         logger.info(f"GeneralPage: Selección Adobe por defecto cambiada a: {checked}")
-
-    def on_embed_metadata_toggled(self, checked):
-        if self._is_loading: return
-        config = get_config()
-        config["embed_metadata"] = checked
-        save_config(config)
-        logger.info(f"GeneralPage: Incrustar metadatos cambiado a: {checked}")
-
-    def on_embed_thumbnail_toggled(self, checked):
-        if self._is_loading: return
-        config = get_config()
-        config["embed_thumbnail"] = checked
-        save_config(config)
-        logger.info(f"GeneralPage: Incrustar carátula cambiado a: {checked}")
-
-    def on_remove_sponsors_toggled(self, checked):
-        if self._is_loading: return
-        config = get_config()
-        config["remove_sponsors"] = checked
-        save_config(config)
-        logger.info(f"GeneralPage: Eliminar sponsors cambiado a: {checked}")

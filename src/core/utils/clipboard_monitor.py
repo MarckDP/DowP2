@@ -79,10 +79,13 @@ class ClipboardURLMonitor(QObject):
         """Llamado cuando cambia el estado de la aplicación (foco, minimizado, etc.)."""
         from PySide6.QtCore import Qt
         if state == Qt.ApplicationActive and self._enabled:
-            self._check_clipboard()
+            self.check_clipboard()
 
-    def _check_clipboard(self):
-        """Comprueba si hay una URL nueva en el portapapeles."""
+    def check_clipboard(self, force: bool = False):
+        """Comprueba si hay una URL nueva en el portapapeles y la pega en el campo activo."""
+        if not self._enabled:
+            return
+
         clipboard = QApplication.clipboard()
         if not clipboard:
             return
@@ -91,25 +94,25 @@ class ClipboardURLMonitor(QObject):
         if not text:
             return
 
-        # Ignorar si es el mismo texto que ya procesamos
-        if text == self._last_clipboard_text:
+        # Ignorar si es el mismo texto que ya procesamos (salvo que se fuerce)
+        if not force and text == self._last_clipboard_text:
             return
-
-        self._last_clipboard_text = text
 
         # Verificar si es una URL válida
         if not _URL_PATTERN.match(text):
             return
 
-        logger.debug(f"ClipboardMonitor: URL detectada en portapapeles: {text[:60]}...")
-
         # Buscar el campo de URL visible y activo para pegar
         target = self._find_target_input(text)
         if target:
+            self._last_clipboard_text = text
             target.setText(text)
             target.setCursorPosition(0)
             logger.info(f"ClipboardMonitor: URL auto-pegada en campo activo")
             self.url_detected.emit(text)
+
+    def _check_clipboard(self):
+        self.check_clipboard(force=False)
 
     def _find_target_input(self, url: str) -> QLineEdit | None:
         """

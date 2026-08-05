@@ -4,9 +4,12 @@ from PySide6.QtCore import Qt, Signal
 from core.utils.i18n import logger
 
 from .pages.general_page import GeneralPage
+from .pages.network_page import NetworkPage
+from .pages.downloads_page import DownloadsPage
 from .pages.cookies_page import CookiesPage
 from .pages.deps_page import DependenciesPage
 from .pages.labels_page import LabelsPage
+from .pages.integrations_page import IntegrationsPage
 
 class SidebarButton(QPushButton):
     """Custom button for sidebar to handle styling via objectName and QSS"""
@@ -54,23 +57,32 @@ class SettingsTab(QWidget):
 
         # Buttons
         self.btn_general = SidebarButton(self.tr("General"))
+        self.btn_network = SidebarButton(self.tr("Conexión y Red"))
+        self.btn_downloads = SidebarButton(self.tr("Descargas"))
         self.btn_cookies = SidebarButton(self.tr("Cookies"))
         self.btn_deps = SidebarButton(self.tr("Dependencias"))
         self.btn_labels = SidebarButton(self.tr("Etiquetas"))
+        self.btn_integrations = SidebarButton(self.tr("Integraciones"))
         self.btn_models = SidebarButton(self.tr("Modelos"))
         self.btn_console = SidebarButton(self.tr("Consola"))
 
         self.btn_group.addButton(self.btn_general, 0)
-        self.btn_group.addButton(self.btn_cookies, 1)
-        self.btn_group.addButton(self.btn_deps, 2)
-        self.btn_group.addButton(self.btn_labels, 3)
-        self.btn_group.addButton(self.btn_models, 4)
-        self.btn_group.addButton(self.btn_console, 5)
+        self.btn_group.addButton(self.btn_network, 1)
+        self.btn_group.addButton(self.btn_downloads, 2)
+        self.btn_group.addButton(self.btn_cookies, 3)
+        self.btn_group.addButton(self.btn_deps, 4)
+        self.btn_group.addButton(self.btn_labels, 5)
+        self.btn_group.addButton(self.btn_integrations, 6)
+        self.btn_group.addButton(self.btn_models, 7)
+        self.btn_group.addButton(self.btn_console, 8)
 
         sidebar_layout.addWidget(self.btn_general)
+        sidebar_layout.addWidget(self.btn_network)
+        sidebar_layout.addWidget(self.btn_downloads)
         sidebar_layout.addWidget(self.btn_cookies)
         sidebar_layout.addWidget(self.btn_deps)
         sidebar_layout.addWidget(self.btn_labels)
+        sidebar_layout.addWidget(self.btn_integrations)
         sidebar_layout.addWidget(self.btn_models)
         sidebar_layout.addWidget(self.btn_console)
         sidebar_layout.addStretch()
@@ -95,18 +107,24 @@ class SettingsTab(QWidget):
         
         # Pages
         self.page_general = GeneralPage()
+        self.page_network = NetworkPage()
+        self.page_downloads = DownloadsPage()
         self.page_cookies = CookiesPage()
         self.page_deps = DependenciesPage()
         self.page_labels = LabelsPage()
-        self.page_placeholder2 = QWidget() # Modelos
-        self.page_placeholder3 = QWidget() # Consola
+        self.page_integrations = IntegrationsPage()
+        self.page_placeholder_models = QWidget()  # Modelos
+        self.page_placeholder_console = QWidget()  # Consola
 
-        self.stacked_widget.addWidget(self.page_general)
-        self.stacked_widget.addWidget(self.page_cookies)
-        self.stacked_widget.addWidget(self.page_deps)
-        self.stacked_widget.addWidget(self.page_labels)
-        self.stacked_widget.addWidget(self.page_placeholder2)
-        self.stacked_widget.addWidget(self.page_placeholder3)
+        self.stacked_widget.addWidget(self.page_general)       # 0
+        self.stacked_widget.addWidget(self.page_network)       # 1
+        self.stacked_widget.addWidget(self.page_downloads)     # 2
+        self.stacked_widget.addWidget(self.page_cookies)       # 3
+        self.stacked_widget.addWidget(self.page_deps)          # 4
+        self.stacked_widget.addWidget(self.page_labels)        # 5
+        self.stacked_widget.addWidget(self.page_integrations)  # 6
+        self.stacked_widget.addWidget(self.page_placeholder_models)   # 7
+        self.stacked_widget.addWidget(self.page_placeholder_console)  # 8
 
         content_layout.addWidget(self.stacked_widget)
         self.main_layout.addWidget(self.content_area, 1)
@@ -121,4 +139,5 @@ class SettingsTab(QWidget):
         # Default selection
         self.btn_general.setChecked(True)
         self.stacked_widget.setCurrentIndex(0)
+
 

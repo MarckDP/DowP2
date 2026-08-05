@@ -22,6 +22,7 @@ from gui.widgets.animated_button import AnimatedButton
 
 from gui.tabs.quick_mode.activity_panel import ActivityPanel
 from gui.tabs.quick_mode.download_controller import QuickDownloadController
+from core.logger.logger_manager import logger
 from core.tabs.quick_mode.quick_mode_logic import reveal_in_file_manager
 
 
@@ -92,6 +93,13 @@ class QuickModeTab(QWidget):
         self.url_input = QLineEdit()
         self.url_input.setPlaceholderText(self.tr("Pega una URL para descargar directamente"))
         self.url_input.returnPressed.connect(self._on_download_clicked)
+        self.url_input.textEdited.connect(self._on_text_edited)
+
+        # Registrar el campo de URL en el monitor de portapapeles
+        from core.utils.clipboard_monitor import ClipboardURLMonitor
+        monitor = ClipboardURLMonitor.instance()
+        monitor.register(self.url_input)
+        monitor.url_detected.connect(self._on_clipboard_url_detected)
 
         # Botón circular conmutable para activar el recorte de fragmentos
         self.btn_cut = QPushButton()
@@ -295,3 +303,37 @@ class QuickModeTab(QWidget):
     def _set_download_text(self, text):
         self.btn_download.setText(text)
         self.output_options.btn_start_download.setText(text)
+
+    def _on_clipboard_url_detected(self, url):
+        """Llamado cuando el monitor de portapapeles pega una URL en nuestro campo."""
+        if self.url_input.text().strip() != url:
+            return
+        if self.controller.is_downloading:
+            return
+        from core.utils.config_manager import get_config
+        if get_config().get("auto_analyze", False):
+            logger.info("QuickModeTab: Auto-inicio por pegado automático de URL")
+            self._on_download_clicked()
+
+    def _on_text_edited(self, text):
+        """Llamado cuando el usuario edita el texto manualmente (incluyendo pegar)."""
+        url = text.strip()
+        if not url:
+            return
+        if self.controller.is_downloading:
+            return
+            
+        from core.utils.config_manager import get_config
+        if not get_config().get("auto_analyze", False):
+            return
+            
+        if not url.startswith(("http://", "https://")):
+            return
+            
+        from PySide6.QtWidgets import QApplication
+        clipboard = QApplication.clipboard()
+        if clipboard:
+            clip_text = clipboard.text().strip()
+            if url == clip_text:
+                logger.info("QuickModeTab: Detección de pegado manual. Iniciando descarga...")
+                self._on_download_clicked()

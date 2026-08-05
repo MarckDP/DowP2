@@ -4,12 +4,32 @@ import hashlib
 import subprocess
 import re
 from PySide6.QtCore import QObject, Signal, QRunnable, QThreadPool, Qt
-from PySide6.QtGui import QImage, QPixmap, QIcon, QImageReader
+from PySide6.QtGui import QImage, QPixmap, QIcon, QImageReader, QPainter, QColor
 from core.logger.logger_manager import logger
 from core.setup.ffmpeg_setup import get_ffmpeg_dir, get_platform_info, check_ffmpeg
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 CACHE_DIR = os.path.join(BASE_DIR, "bin", "cache", "thumbnails")
+
+def make_square_thumbnail_pixmap(src_pixmap: QPixmap, size=256) -> QPixmap:
+    """Garantiza que la miniatura sea un lienzo cuadrado uniforme de 256x256 px centrado."""
+    if src_pixmap.isNull():
+        return src_pixmap
+    if src_pixmap.width() == size and src_pixmap.height() == size:
+        return src_pixmap
+
+    out = QPixmap(size, size)
+    out.fill(QColor("#1c1c1e"))
+
+    scaled = src_pixmap.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+    painter = QPainter(out)
+    painter.setRenderHint(QPainter.Antialiasing)
+    x = (size - scaled.width()) // 2
+    y = (size - scaled.height()) // 2
+    painter.drawPixmap(x, y, scaled)
+    painter.end()
+
+    return out
 
 class ThumbnailWorkerSignals(QObject):
     """Señales para el trabajador de miniaturas en segundo plano."""
@@ -78,15 +98,18 @@ class ThumbnailCacheManager(QObject):
         return hash_val
 
     def get_cached_qicon(self, file_path: str) -> QIcon | None:
-        """Obtiene directamente el QIcon desde la memoria RAM (super rápido)."""
+        """Obtiene directamente el QIcon desde la memoria RAM (super rápido y 100% cuadrado)."""
         if file_path in self._qicon_cache:
             return self._qicon_cache[file_path]
 
         thumb_path = self.get_cached_thumbnail_path(file_path)
         if thumb_path:
-            icon = QIcon(thumb_path)
-            self._qicon_cache[file_path] = icon
-            return icon
+            pix = QPixmap(thumb_path)
+            if not pix.isNull():
+                sq_pix = make_square_thumbnail_pixmap(pix, 256)
+                icon = QIcon(sq_pix)
+                self._qicon_cache[file_path] = icon
+                return icon
 
         return None
 
@@ -119,7 +142,13 @@ class ThumbnailCacheManager(QObject):
         self.thread_pool.start(worker)
 
     def _on_worker_finished(self, file_path: str, thumb_path: str):
-        self._qicon_cache[file_path] = QIcon(thumb_path)
+        pix = QPixmap(thumb_path)
+        if not pix.isNull():
+            sq_pix = make_square_thumbnail_pixmap(pix, 256)
+            icon = QIcon(sq_pix)
+        else:
+            icon = QIcon(thumb_path)
+        self._qicon_cache[file_path] = icon
         self.thumbnail_loaded.emit(file_path, thumb_path)
 
     def _on_worker_failed(self, file_path: str):

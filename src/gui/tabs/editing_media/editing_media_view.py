@@ -309,6 +309,8 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         self.media_list.setObjectName("mediaListWidget")
         self.media_list.setSpacing(0)
         self.media_list.setIconSize(QSize(16, 16))
+        self.media_list.setVerticalScrollMode(QListWidget.ScrollPerPixel)
+        self.media_list.verticalScrollBar().setSingleStep(30)
         self.media_list.itemClicked.connect(self._on_media_clicked)
         self.media_list.currentItemChanged.connect(self._on_current_item_changed)
         

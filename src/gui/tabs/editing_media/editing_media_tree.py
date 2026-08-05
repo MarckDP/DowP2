@@ -216,20 +216,6 @@ class TreeListMixin:
             else:
                 media_items = self.controller.get_all_media_files()
 
-            # Pre-filtrar por categoría para evitar iterar items innecesarios
-            active_filter = self.active_filter
-            if active_filter == "Imágenes":
-                media_items = [i for i in media_items if i["tipo"] == "imagen"]
-            elif active_filter == "Videos":
-                media_items = [i for i in media_items if i["tipo"] == "video"]
-            elif active_filter == "Audios":
-                media_items = [i for i in media_items if i["tipo"] == "audio"]
-
-            # Aplicar filtro de búsqueda de texto
-            search_query = self.search_input.text().lower().strip()
-            if search_query:
-                media_items = [i for i in media_items if search_query in i["nombre"].lower()]
-
             # Obtener iconos cacheados una sola vez
             icon_video_list = self._get_cached_media_icon("movie.svg", "#9b59b6")
             icon_image_list = self._get_cached_media_icon("image.svg", "#2ecc71")
@@ -271,6 +257,9 @@ class TreeListMixin:
 
                 list_item.setData(Qt.UserRole, item)
                 self.media_list.addItem(list_item)
+
+            # Aplicar filtro activo y texto de búsqueda sin destruir la lista
+            self._apply_active_filters_fast()
         finally:
             self.media_list.setUpdatesEnabled(True)
 

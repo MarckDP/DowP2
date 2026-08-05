@@ -1,3 +1,4 @@
+import os
 from PySide6.QtCore import Qt, QSize, QTimer, QRectF
 from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor, QPen
 from PySide6.QtWidgets import QWidget

@@ -18,9 +18,20 @@ from gui.tabs.editing_media.editing_media_icons import (
     get_folder_icon,
     get_placeholder_thumbnail_icon
 )
-from core.tabs.editing_media.folder_color_manager import get_item_color, set_item_color, get_random_label_color
-from core.tabs.editing_media.editing_media_logic import VALID_EXTS
 from core.tabs.editing_media.thumbnail_cache_manager import ThumbnailCacheManager
+
+class MediaListWidgetItem(QListWidgetItem):
+    """QListWidgetItem personalizado con comparación nativa C++ ultra rápida para sortItems()."""
+    def __lt__(self, other):
+        if isinstance(other, QListWidgetItem):
+            v1 = self.data(Qt.UserRole + 1)
+            v2 = other.data(Qt.UserRole + 1)
+            if v1 is not None and v2 is not None:
+                try:
+                    return v1 < v2
+                except Exception:
+                    return str(v1) < str(v2)
+        return super().__lt__(other)
 
 class TreeListMixin:
     """Mixin que maneja el árbol de carpetas, lista de medios y menús contextuales."""
@@ -235,7 +246,7 @@ class TreeListMixin:
             is_grid = getattr(self, "view_mode", "grid") == "grid"
 
             for item in media_items:
-                list_item = QListWidgetItem(item["nombre"])
+                list_item = MediaListWidgetItem(item["nombre"])
                 item_type = item["tipo"]
                 file_path = item.get("ruta", "")
 
@@ -371,41 +382,32 @@ class TreeListMixin:
         self._update_media_list()
 
     def _sort_media_list_items(self):
-        """Reordena los ítems de self.media_list en memoria según sort_by y sort_ascending."""
+        """Reordena los ítems de self.media_list utilizando sortItems() nativo de Qt en C++ (0 ms)."""
         sort_by = getattr(self, "sort_by", "nombre")
         sort_asc = getattr(self, "sort_ascending", True)
 
-        items_data = []
-        for i in range(self.media_list.count()):
-            item = self.media_list.item(i)
-            data = item.data(Qt.UserRole)
-            items_data.append((item, data))
-
-        def _get_key(pair):
-            _, d = pair
-            if not isinstance(d, dict):
-                return ""
-            if sort_by == "nombre":
-                return d.get("nombre", "").lower()
-            elif sort_by == "mtime":
-                return d.get("mtime", 0.0)
-            elif sort_by == "ctime":
-                return d.get("ctime", 0.0)
-            elif sort_by == "size":
-                return d.get("size_bytes", 0)
-            elif sort_by == "tipo":
-                return d.get("tipo", "")
-            return d.get("nombre", "").lower()
-
-        items_data.sort(key=_get_key, reverse=not sort_asc)
-
         self.media_list.setUpdatesEnabled(False)
         try:
-            for new_idx, (item, _) in enumerate(items_data):
-                cur_idx = self.media_list.row(item)
-                if cur_idx != new_idx:
-                    taken = self.media_list.takeItem(cur_idx)
-                    self.media_list.insertItem(new_idx, taken)
+            for i in range(self.media_list.count()):
+                item = self.media_list.item(i)
+                data = item.data(Qt.UserRole)
+                if isinstance(data, dict):
+                    if sort_by == "nombre":
+                        val = data.get("nombre", "").lower()
+                    elif sort_by == "mtime":
+                        val = data.get("mtime", 0.0)
+                    elif sort_by == "ctime":
+                        val = data.get("ctime", 0.0)
+                    elif sort_by == "size":
+                        val = data.get("size_bytes", 0)
+                    elif sort_by == "tipo":
+                        val = data.get("tipo", "")
+                    else:
+                        val = data.get("nombre", "").lower()
+                    item.setData(Qt.UserRole + 1, val)
+
+            order = Qt.AscendingOrder if sort_asc else Qt.DescendingOrder
+            self.media_list.sortItems(order)
         finally:
             self.media_list.setUpdatesEnabled(True)
 

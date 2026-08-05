@@ -64,3 +64,39 @@ def get_folder_icon() -> QIcon:
         icon.addFile(path_open, QSize(), QIcon.Mode.Normal, QIcon.State.On)
     return icon
 
+_PLACEHOLDER_CACHE = {}
+
+def get_placeholder_thumbnail_icon(svg_name: str, color_hex: str, canvas_size=256) -> QIcon:
+    """Genera un QIcon con un lienzo cuadrado uniforme para evitar desajustes en el GridMode."""
+    cache_key = f"{svg_name}:{color_hex}:{canvas_size}"
+    if cache_key in _PLACEHOLDER_CACHE:
+        return _PLACEHOLDER_CACHE[cache_key]
+
+    pixmap = QPixmap(canvas_size, canvas_size)
+    pixmap.fill(Qt.transparent)
+
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing)
+
+    # Dibujar fondo rectangular redondeado
+    bg_color = QColor("#1c1c1e")
+    border_color = QColor("#2d2d32")
+    painter.setBrush(bg_color)
+    painter.setPen(border_color)
+    painter.drawRoundedRect(4, 4, canvas_size - 8, canvas_size - 8, 12, 12)
+
+    # Dibujar el icono central
+    svg_icon = get_colored_svg_icon(svg_name, color_hex, size=64)
+    if not svg_icon.isNull():
+        icon_pixmap = svg_icon.pixmap(64, 64)
+        x = (canvas_size - 64) // 2
+        y = (canvas_size - 64) // 2
+        painter.drawPixmap(x, y, icon_pixmap)
+
+    painter.end()
+
+    icon = QIcon(pixmap)
+    _PLACEHOLDER_CACHE[cache_key] = icon
+    return icon
+
+

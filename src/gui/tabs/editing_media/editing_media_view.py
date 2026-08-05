@@ -277,10 +277,7 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         self.btn_view_list.setFixedSize(26, 26)
         self.btn_view_list.setCheckable(True)
         self.btn_view_list.setToolTip(self.tr("Vista de Lista"))
-        list_icon = get_svg_icon("list_alt.svg")
-        if list_icon.isNull():
-            list_icon = get_svg_icon("view_list.svg")
-        self.btn_view_list.setIcon(list_icon)
+        self.btn_view_list.setIcon(get_colored_svg_icon("view_list.svg", "#FFFFFF", size=14))
         self.btn_view_list.setIconSize(QSize(14, 14))
         self.btn_view_list.setStyleSheet(btn_mode_style)
         self.btn_view_list.clicked.connect(lambda: self.set_view_mode("list"))
@@ -290,7 +287,7 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         self.btn_view_grid.setFixedSize(26, 26)
         self.btn_view_grid.setCheckable(True)
         self.btn_view_grid.setToolTip(self.tr("Vista de Cuadrícula"))
-        self.btn_view_grid.setIcon(get_svg_icon("grid_view.svg"))
+        self.btn_view_grid.setIcon(get_colored_svg_icon("grid_view.svg", "#000000", size=14))
         self.btn_view_grid.setIconSize(QSize(14, 14))
         self.btn_view_grid.setStyleSheet(btn_mode_style)
         self.btn_view_grid.clicked.connect(lambda: self.set_view_mode("grid"))
@@ -665,29 +662,49 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
     def set_view_mode(self, mode: str):
         """Alterna entre vista de lista y vista de cuadrícula/miniaturas."""
         self.view_mode = mode
-        if mode == "grid":
-            self.btn_view_grid.setChecked(True)
-            self.btn_view_list.setChecked(False)
-            self.icon_size_slider.setVisible(True)
-            self.media_list.setViewMode(QListWidget.IconMode)
-            self.media_list.setResizeMode(QListWidget.Adjust)
-            self.media_list.setMovement(QListWidget.Static)
-            self.media_list.setWordWrap(True)
-            self.media_list.setSpacing(8)
-            self._apply_icon_size(self.icon_size_slider.value())
-        else:
-            self.btn_view_list.setChecked(True)
-            self.btn_view_grid.setChecked(False)
-            self.icon_size_slider.setVisible(False)
-            self.media_list.setViewMode(QListWidget.ListMode)
-            self.media_list.setWordWrap(False)
-            self.media_list.setSpacing(2)
-            self.media_list.setGridSize(QSize())
-            self.media_list.setIconSize(QSize(24, 24))
+        self.media_list.setUpdatesEnabled(False)
+        try:
+            if mode == "grid":
+                self.btn_view_grid.setChecked(True)
+                self.btn_view_list.setChecked(False)
+                self.btn_view_grid.setIcon(get_colored_svg_icon("grid_view.svg", "#000000", size=14))
+                self.btn_view_list.setIcon(get_colored_svg_icon("view_list.svg", "#FFFFFF", size=14))
+                self.icon_size_slider.setVisible(True)
+                self.media_list.setViewMode(QListWidget.IconMode)
+                self.media_list.setResizeMode(QListWidget.Adjust)
+                self.media_list.setMovement(QListWidget.Static)
+                self.media_list.setWordWrap(True)
+                self.media_list.setSpacing(8)
+                self.media_list.setUniformItemSizes(True)
+                self.media_list.setBatchSize(50)
+                self._apply_icon_size(self.icon_size_slider.value())
+            else:
+                self.btn_view_list.setChecked(True)
+                self.btn_view_grid.setChecked(False)
+                self.btn_view_list.setIcon(get_colored_svg_icon("view_list.svg", "#000000", size=14))
+                self.btn_view_grid.setIcon(get_colored_svg_icon("grid_view.svg", "#FFFFFF", size=14))
+                self.icon_size_slider.setVisible(False)
+                self.media_list.setViewMode(QListWidget.ListMode)
+                self.media_list.setWordWrap(False)
+                self.media_list.setSpacing(2)
+                self.media_list.setGridSize(QSize())
+                self.media_list.setIconSize(QSize(24, 24))
+                self.media_list.setUniformItemSizes(True)
+
+            self._update_media_list()
+            self.media_list.doItemsLayout()
+            self.media_list.update()
+        finally:
+            self.media_list.setUpdatesEnabled(True)
 
     def _on_icon_size_changed(self, val: int):
         if self.view_mode == "grid":
-            self._apply_icon_size(val)
+            self.media_list.setUpdatesEnabled(False)
+            try:
+                self._apply_icon_size(val)
+                self.media_list.doItemsLayout()
+            finally:
+                self.media_list.setUpdatesEnabled(True)
 
     def _apply_icon_size(self, size: int):
         self.media_list.setIconSize(QSize(size, size))
@@ -695,7 +712,11 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
 
     def _on_thumbnail_loaded(self, file_path: str, thumb_path: str):
         """Callback asíncrono cuando una miniatura en segundo plano finaliza su generación."""
-        icon = QIcon(thumb_path)
+        if not thumb_path or not os.path.exists(thumb_path):
+            return
+        icon = ThumbnailCacheManager.get_instance().get_cached_qicon(file_path)
+        if not icon:
+            icon = QIcon(thumb_path)
         for i in range(self.media_list.count()):
             item = self.media_list.item(i)
             data = item.data(Qt.UserRole)

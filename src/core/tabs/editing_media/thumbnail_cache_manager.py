@@ -4,7 +4,7 @@ import hashlib
 import subprocess
 import re
 from PySide6.QtCore import QObject, Signal, QRunnable, QThreadPool, Qt
-from PySide6.QtGui import QImage, QPixmap
+from PySide6.QtGui import QImage, QPixmap, QIcon, QImageReader
 from core.logger.logger_manager import logger
 from core.setup.ffmpeg_setup import get_ffmpeg_dir, get_platform_info, check_ffmpeg
 
@@ -40,7 +40,7 @@ class ThumbnailRunnable(QRunnable):
 
 
 class ThumbnailCacheManager(QObject):
-    """Gestor de caché de miniaturas en disco y cola de subprocesos."""
+    """Gestor de caché de miniaturas en disco y memoria (RAM) con cola optimizada."""
     thumbnail_loaded = Signal(str, str)  # (file_path, thumbnail_path)
 
     _instance = None
@@ -55,19 +55,40 @@ class ThumbnailCacheManager(QObject):
         super().__init__(parent)
         os.makedirs(CACHE_DIR, exist_ok=True)
         self.thread_pool = QThreadPool.globalInstance()
-        # Limitar hilos para mantener uso de CPU optimizado
-        if self.thread_pool.maxThreadCount() > 4:
-            self.thread_pool.setMaxThreadCount(4)
+        # Limitar a máximo 2 hilos para evitar saturación de CPU y I/O de disco
+        self.thread_pool.setMaxThreadCount(2)
+        
+        # Caché en RAM para acceso instantáneo (0ms I/O)
+        self._qicon_cache: dict[str, QIcon] = {}
+        self._hash_cache: dict[str, str] = {}
         self._pending_files = set()
+        self._failed_files = set()
 
     def _get_hash_key(self, file_path: str) -> str:
-        """Genera un hash SHA256 único basado en la ruta, tiempo de modificación y tamaño."""
+        """Genera un hash SHA256 único y lo mantiene en memoria para evitar os.stat repetidos."""
+        if file_path in self._hash_cache:
+            return self._hash_cache[file_path]
         try:
             stat = os.stat(file_path)
-            raw = f"{os.path.abspath(file_path)}_{stat.st_mtime}_{stat.st_size}_v2"
+            raw = f"{os.path.abspath(file_path)}_{stat.st_mtime}_{stat.st_size}_v3"
         except Exception:
-            raw = f"{os.path.abspath(file_path)}_v2"
-        return hashlib.sha256(raw.encode('utf-8')).hexdigest()
+            raw = f"{os.path.abspath(file_path)}_v3"
+        hash_val = hashlib.sha256(raw.encode('utf-8')).hexdigest()
+        self._hash_cache[file_path] = hash_val
+        return hash_val
+
+    def get_cached_qicon(self, file_path: str) -> QIcon | None:
+        """Obtiene directamente el QIcon desde la memoria RAM (super rápido)."""
+        if file_path in self._qicon_cache:
+            return self._qicon_cache[file_path]
+
+        thumb_path = self.get_cached_thumbnail_path(file_path)
+        if thumb_path:
+            icon = QIcon(thumb_path)
+            self._qicon_cache[file_path] = icon
+            return icon
+
+        return None
 
     def get_cached_thumbnail_path(self, file_path: str) -> str | None:
         """Devuelve la ruta de la miniatura en disco si ya existe y es válida."""
@@ -78,13 +99,17 @@ class ThumbnailCacheManager(QObject):
         return None
 
     def request_thumbnail(self, file_path: str, media_type: str):
-        """Solicita una miniatura. Si existe en disco emite la señal; si no, la encola en background."""
-        cached_path = self.get_cached_thumbnail_path(file_path)
-        if cached_path:
-            self.thumbnail_loaded.emit(file_path, cached_path)
+        """Solicita una miniatura de forma no bloqueante."""
+        if file_path in self._qicon_cache:
             return
 
-        if file_path in self._pending_files:
+        if file_path in self._pending_files or file_path in self._failed_files:
+            return
+
+        cached_path = self.get_cached_thumbnail_path(file_path)
+        if cached_path:
+            self._qicon_cache[file_path] = QIcon(cached_path)
+            self.thumbnail_loaded.emit(file_path, cached_path)
             return
 
         self._pending_files.add(file_path)
@@ -94,10 +119,11 @@ class ThumbnailCacheManager(QObject):
         self.thread_pool.start(worker)
 
     def _on_worker_finished(self, file_path: str, thumb_path: str):
+        self._qicon_cache[file_path] = QIcon(thumb_path)
         self.thumbnail_loaded.emit(file_path, thumb_path)
 
     def _on_worker_failed(self, file_path: str):
-        pass
+        self._failed_files.add(file_path)
 
     def _task_finished(self, file_path: str):
         self._pending_files.discard(file_path)
@@ -117,11 +143,19 @@ class ThumbnailCacheManager(QObject):
 
     def _generate_image_thumbnail(self, src_path: str, target_path: str) -> str | None:
         try:
-            img = QImage(src_path)
+            reader = QImageReader(src_path)
+            reader.setAutoTransform(True)
+            orig_size = reader.size()
+            if orig_size.isValid() and orig_size.width() > 0 and orig_size.height() > 0:
+                # Escalar durante la lectura para ahorrar memoria y tiempo de procesamiento
+                if orig_size.width() > 256 or orig_size.height() > 256:
+                    scaled_size = orig_size.scaled(256, 256, Qt.AspectRatioMode.KeepAspectRatio)
+                    reader.setScaledSize(scaled_size)
+            
+            img = reader.read()
             if img.isNull():
                 return None
-            scaled = img.scaled(256, 256, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-            if scaled.save(target_path, "JPG", 85):
+            if img.save(target_path, "JPG", 85):
                 return target_path
         except Exception as e:
             logger.error(f"ThumbnailCacheManager: Error en miniatura de imagen {src_path}: {e}")
@@ -136,11 +170,9 @@ class ThumbnailCacheManager(QObject):
             info = get_platform_info()
             ffmpeg_exe = os.path.join(get_ffmpeg_dir(), info["binary_name"])
 
-            # 1. Obtener duración del video usando FFmpeg -i
             duration_secs = self._get_video_duration_seconds(ffmpeg_exe, src_path)
             target_time = max(0.5, duration_secs * 0.10) if duration_secs > 0 else 1.0
 
-            # Formatear timestamp HH:MM:SS.mmm
             hours = int(target_time // 3600)
             mins = int((target_time % 3600) // 60)
             secs = target_time % 60
@@ -169,7 +201,7 @@ class ThumbnailCacheManager(QObject):
                 encoding='utf-8',
                 errors='ignore'
             )
-            process.communicate(timeout=10)
+            process.communicate(timeout=8)
 
             if os.path.exists(target_path) and os.path.getsize(target_path) > 0:
                 return target_path
@@ -195,7 +227,7 @@ class ThumbnailCacheManager(QObject):
                 encoding='utf-8',
                 errors='ignore'
             )
-            _, stderr = process.communicate(timeout=4)
+            _, stderr = process.communicate(timeout=3)
             match = re.search(r"Duration:\s*(\d+):(\d+):(\d+\.\d+)", stderr)
             if match:
                 hours = float(match.group(1))
@@ -213,12 +245,10 @@ class ThumbnailCacheManager(QObject):
             audio = MutagenFile(src_path)
             if audio is not None and hasattr(audio, 'tags') and audio.tags:
                 image_data = None
-                # ID3 (MP3)
                 for key in audio.tags.keys():
                     if key.startswith("APIC"):
                         image_data = audio.tags[key].data
                         break
-                # FLAC / MP4
                 if not image_data and hasattr(audio, 'pictures') and audio.pictures:
                     image_data = audio.pictures[0].data
 
@@ -233,8 +263,11 @@ class ThumbnailCacheManager(QObject):
         return None
 
     def clear_cache(self) -> int:
-        """Borra todos los archivos de caché de miniaturas y retorna la cantidad de archivos eliminados."""
+        """Borra todos los archivos de caché de miniaturas y vacía las memorias en RAM."""
         count = 0
+        self._qicon_cache.clear()
+        self._hash_cache.clear()
+        self._failed_files.clear()
         if os.path.exists(CACHE_DIR):
             for fname in os.listdir(CACHE_DIR):
                 fpath = os.path.join(CACHE_DIR, fname)

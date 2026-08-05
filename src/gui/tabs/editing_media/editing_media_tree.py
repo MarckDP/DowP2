@@ -15,7 +15,8 @@ from gui.tabs.editing_media.editing_media_icons import (
     get_colored_svg_icon,
     get_colored_folder_icon,
     get_svg_icon,
-    get_folder_icon
+    get_folder_icon,
+    get_placeholder_thumbnail_icon
 )
 from core.tabs.editing_media.folder_color_manager import get_item_color, set_item_color, get_random_label_color
 from core.tabs.editing_media.editing_media_logic import VALID_EXTS
@@ -230,27 +231,41 @@ class TreeListMixin:
                 media_items = [i for i in media_items if search_query in i["nombre"].lower()]
 
             # Obtener iconos cacheados una sola vez
-            icon_video = self._get_cached_media_icon("movie.svg", "#9b59b6")
-            icon_image = self._get_cached_media_icon("image.svg", "#2ecc71")
-            icon_audio = self._get_cached_media_icon("music_note.svg", "#3498db")
+            icon_video_list = self._get_cached_media_icon("movie.svg", "#9b59b6")
+            icon_image_list = self._get_cached_media_icon("image.svg", "#2ecc71")
+            icon_audio_list = self._get_cached_media_icon("music_note.svg", "#3498db")
+
+            icon_video_grid = get_placeholder_thumbnail_icon("movie.svg", "#9b59b6")
+            icon_image_grid = get_placeholder_thumbnail_icon("image.svg", "#2ecc71")
+            icon_audio_grid = get_placeholder_thumbnail_icon("music_note.svg", "#3498db")
 
             thumb_mgr = ThumbnailCacheManager.get_instance()
+            is_grid = getattr(self, "view_mode", "grid") == "grid"
 
             for item in media_items:
                 list_item = QListWidgetItem(item["nombre"])
                 item_type = item["tipo"]
                 file_path = item.get("ruta", "")
 
-                cached_thumb = thumb_mgr.get_cached_thumbnail_path(file_path) if file_path else None
-                if cached_thumb:
-                    list_item.setIcon(QIcon(cached_thumb))
+                cached_icon = thumb_mgr.get_cached_qicon(file_path) if file_path else None
+                if cached_icon:
+                    list_item.setIcon(cached_icon)
                 else:
-                    if item_type == "video":
-                        list_item.setIcon(icon_video)
-                    elif item_type == "imagen":
-                        list_item.setIcon(icon_image)
-                    elif item_type == "audio":
-                        list_item.setIcon(icon_audio)
+                    if is_grid:
+                        if item_type == "video":
+                            list_item.setIcon(icon_video_grid)
+                        elif item_type == "imagen":
+                            list_item.setIcon(icon_image_grid)
+                        elif item_type == "audio":
+                            list_item.setIcon(icon_audio_grid)
+                    else:
+                        if item_type == "video":
+                            list_item.setIcon(icon_video_list)
+                        elif item_type == "imagen":
+                            list_item.setIcon(icon_image_list)
+                        elif item_type == "audio":
+                            list_item.setIcon(icon_audio_list)
+
                     if file_path:
                         thumb_mgr.request_thumbnail(file_path, item_type)
 
@@ -360,6 +375,44 @@ class TreeListMixin:
                 
         self._update_media_list()
 
+    def _apply_active_filters_fast(self):
+        """Aplica filtros de tipo y búsqueda en 0ms ocultando/mostrando ítems de la lista."""
+        selected = self.tree_folders.currentItem()
+        data = selected.data(0, Qt.UserRole) if selected else None
+        if data and data.get("tipo") == "root_online":
+            self._update_media_list()
+            return
+
+        active_filter = self.active_filter
+        search_query = self.search_input.text().lower().strip()
+
+        self.media_list.setUpdatesEnabled(False)
+        try:
+            for i in range(self.media_list.count()):
+                item = self.media_list.item(i)
+                item_data = item.data(Qt.UserRole)
+                if not isinstance(item_data, dict):
+                    continue
+
+                item_type = item_data.get("tipo", "")
+                item_name = item_data.get("nombre", "").lower()
+
+                type_match = True
+                if active_filter == "Imágenes" and item_type != "imagen":
+                    type_match = False
+                elif active_filter == "Videos" and item_type != "video":
+                    type_match = False
+                elif active_filter == "Audios" and item_type != "audio":
+                    type_match = False
+
+                search_match = True
+                if search_query and search_query not in item_name:
+                    search_match = False
+
+                item.setHidden(not (type_match and search_match))
+        finally:
+            self.media_list.setUpdatesEnabled(True)
+
     def _on_filter_button_clicked(self):
         """Maneja el cambio de filtro y deselecciona los otros botones."""
         sender = self.sender()
@@ -374,7 +427,7 @@ class TreeListMixin:
             self.filter_buttons[0].setChecked(True)
             self.active_filter = "Todos"
             
-        self._update_media_list()
+        self._apply_active_filters_fast()
 
     def _show_tree_context_menu(self, position):
         item = self.tree_folders.itemAt(position)

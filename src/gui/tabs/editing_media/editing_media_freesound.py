@@ -40,7 +40,7 @@ class FreesoundMixin:
             self.online_results = []
             self.search_timer.start(600)
         else:
-            self._update_media_list()
+            self._apply_active_filters_fast()
 
     def _update_freesound_login_button(self):
         """Actualiza el icono y tooltip del botón de login de Freesound según el estado de autenticación."""

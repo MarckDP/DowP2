@@ -18,6 +18,8 @@ from gui.tabs.editing_media.editing_media_icons import (
     get_folder_icon,
     get_placeholder_thumbnail_icon
 )
+from core.tabs.editing_media.folder_color_manager import get_item_color, set_item_color, get_random_label_color
+from core.tabs.editing_media.editing_media_logic import VALID_EXTS
 from core.tabs.editing_media.thumbnail_cache_manager import ThumbnailCacheManager
 
 class MediaListWidgetItem(QListWidgetItem):

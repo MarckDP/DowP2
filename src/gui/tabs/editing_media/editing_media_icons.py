@@ -1,7 +1,46 @@
-# src/gui/tabs/editing_media/editing_media_icons.py
-import os
-from PySide6.QtCore import Qt, QSize
-from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor
+from PySide6.QtCore import Qt, QSize, QTimer, QRectF
+from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor, QPen
+from PySide6.QtWidgets import QWidget
+
+class LoadingSpinnerWidget(QWidget):
+    """Widget vectorial de spinner de carga animado a 30 FPS dibujado dinámicamente con QPainter."""
+    def __init__(self, parent=None, size=16, color="#B9E640"):
+        super().__init__(parent)
+        self.setFixedSize(size, size)
+        self.color = QColor(color)
+        self._angle = 0
+        self._timer = QTimer(self)
+        self._timer.setInterval(33)  # ~30 FPS
+        self._timer.timeout.connect(self._rotate)
+        self.hide()
+
+    def set_color(self, color_hex: str):
+        self.color = QColor(color_hex)
+        self.update()
+
+    def _rotate(self):
+        self._angle = (self._angle + 30) % 360
+        self.update()
+
+    def start(self):
+        self.show()
+        if not self._timer.isActive():
+            self._timer.start()
+
+    def stop(self):
+        self._timer.stop()
+        self.hide()
+
+    def paintEvent(self, event):
+        if not self.isVisible():
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        rect = QRectF(2, 2, self.width() - 4, self.height() - 4)
+        pen = QPen(self.color, 2.0)
+        pen.setCapStyle(Qt.RoundCap)
+        painter.setPen(pen)
+        painter.drawArc(rect, int(-self._angle * 16), int(270 * 16))
 
 _SVG_DIR = os.path.normpath(os.path.join(
     os.path.dirname(__file__), "..", "..", "..", "assets", "icons", "svg"

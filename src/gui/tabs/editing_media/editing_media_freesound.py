@@ -28,6 +28,9 @@ class FreesoundMixin:
     """Mixin que maneja la búsqueda y descarga remota de Freesound, así como la autenticación OAuth2."""
 
     def _update_media_input_changed(self, text):
+        if hasattr(self, "search_spinner"):
+            self.search_spinner.start()
+
         selected = self.tree_folders.currentItem()
         is_online = False
         if selected:
@@ -40,7 +43,12 @@ class FreesoundMixin:
             self.online_results = []
             self.search_timer.start(600)
         else:
-            self._apply_active_filters_fast()
+            if hasattr(self, "local_search_timer"):
+                self.local_search_timer.start(250)
+            else:
+                self._apply_active_filters_fast()
+                if hasattr(self, "search_spinner"):
+                    self.search_spinner.stop()
 
     def _update_freesound_login_button(self):
         """Actualiza el icono y tooltip del botón de login de Freesound según el estado de autenticación."""
@@ -78,45 +86,24 @@ class FreesoundMixin:
     def _start_freesound_oauth(self):
         """Inicia el flujo OAuth2 con Freesound."""
         from core.tabs.editing_media.freesound_auth import FreesoundAuth
-        
-        self._oauth_handler = FreesoundAuth()
-        self._oauth_handler.signals.auth_success.connect(self._on_oauth_success)
-        self._oauth_handler.signals.auth_error.connect(self._on_oauth_error)
-        self._oauth_handler.start_oauth_flow()
-        
-        # Mostrar feedback visual al usuario
-        QMessageBox.information(
-            self,
-            self.tr("Iniciar Sesión en Freesound"),
-            self.tr("Se ha abierto tu navegador para iniciar sesión en Freesound.\n\n"
-                    "Inicia sesión y autoriza la aplicación. "
-                    "Esta ventana se actualizará automáticamente cuando completes el proceso.")
-        )
+        dialog = FreesoundAuth(self.controller.client_id, self.controller.client_secret, self)
+        if dialog.exec():
+            tokens = dialog.get_tokens()
+            if tokens:
+                self.controller.save_freesound_tokens(tokens)
+                self._update_freesound_login_button()
+                self.online_results = []
+                self.current_page = 1
+                self._update_media_list()
 
-    def _on_oauth_success(self, auth_data: dict):
-        """Callback cuando la autenticación OAuth2 es exitosa."""
-        self.controller.freesound_auth.update(auth_data)
-        self.controller.save_data()
-        self._update_freesound_login_button()
-        self.current_page = 1
-        self.online_results = []
-        self._exec_online_search()
-        logger.info(f"EditingMediaTab: Autenticación OAuth2 exitosa para '{auth_data.get('username', '')}'")
-
-    def _on_oauth_error(self, error_msg: str):
-        """Callback cuando la autenticación OAuth2 falla."""
-        logger.error(f"EditingMediaTab: Error OAuth2: {error_msg}")
-        QMessageBox.warning(
-            self,
-            self.tr("Error de Autenticación"),
-            self.tr(f"No se pudo completar la autenticación con Freesound:\n{error_msg}")
-        )
-
-    def _exec_online_search(self):
-        token = self.controller.freesound_token
+    def _on_search_timer_timeout(self):
+        """Callback del temporizador de búsqueda diferida en Freesound."""
         query = self.search_input.text().strip()
+        token = self.controller.freesound_access_token
         
-        if not token:
+        if not query:
+            if hasattr(self, "search_spinner"):
+                self.search_spinner.stop()
             self.online_results = []
             self._update_media_list()
             return
@@ -134,6 +121,8 @@ class FreesoundMixin:
 
     def _on_online_search_success(self, data):
         self.loading_next_page = False
+        if hasattr(self, "search_spinner"):
+            self.search_spinner.stop()
         results = data.get("results", [])
         
         if self.current_page == 1:
@@ -178,6 +167,8 @@ class FreesoundMixin:
 
     def _on_online_search_error(self, error_msg):
         self.loading_next_page = False
+        if hasattr(self, "search_spinner"):
+            self.search_spinner.stop()
         logger.error(f"EditingMediaTab: Error en búsqueda online: {error_msg}")
         if self.current_page == 1:
             self.online_results = []

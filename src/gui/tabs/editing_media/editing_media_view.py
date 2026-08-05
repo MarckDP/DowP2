@@ -43,6 +43,7 @@ from gui.tabs.editing_media.editing_media_icons import (
 from gui.tabs.editing_media.editing_media_tree import TreeListMixin
 from gui.tabs.editing_media.editing_media_playback import PlaybackMixin
 from gui.tabs.editing_media.editing_media_freesound import FreesoundMixin
+from gui.tabs.editing_media.editing_media_icons import LoadingSpinnerWidget
 from core.tabs.editing_media.thumbnail_cache_manager import ThumbnailCacheManager
 
 class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
@@ -67,9 +68,15 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         # Conectar señal del cargador de miniaturas en segundo plano
         ThumbnailCacheManager.get_instance().thumbnail_loaded.connect(self._on_thumbnail_loaded)
         
+        # Temporizador de retardo (debounce) para búsquedas locales (250ms)
+        from PySide6.QtCore import QTimer
+        self.local_search_timer = QTimer(self)
+        self.local_search_timer.setSingleShot(True)
+        self.local_search_timer.setInterval(250)
+        self.local_search_timer.timeout.connect(self._on_local_search_timer_timeout)
+
         # Inicializar cliente de Freesound y timer para debouncing de búsqueda
         from core.tabs.editing_media.freesound_client import FreesoundClient
-        from PySide6.QtCore import QTimer
         self.freesound_client = FreesoundClient()
         self.search_timer = QTimer(self)
         self.search_timer.setSingleShot(True)
@@ -209,6 +216,15 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
 
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText(self.tr("Buscar medios..."))
+        self.search_input.setStyleSheet("QLineEdit { padding-right: 28px; }")
+
+        # Integrar spinner de carga animado a la derecha de search_input
+        self.search_spinner = LoadingSpinnerWidget(self.search_input, size=16, color=get_theme_token('acento_primario', '#B9E640'))
+        spin_layout = QHBoxLayout(self.search_input)
+        spin_layout.setContentsMargins(0, 0, 8, 0)
+        spin_layout.addStretch()
+        spin_layout.addWidget(self.search_spinner)
+
         self.search_input.textChanged.connect(self._update_media_input_changed)
         search_layout.addWidget(self.search_input)
 
@@ -819,3 +835,11 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
 
     def _toggle_sort_direction(self):
         self._set_sort_direction(not getattr(self, "sort_ascending", True))
+
+    def _on_local_search_timer_timeout(self):
+        """Callback cuando vence el timer de retardo (250ms) para búsquedas locales."""
+        try:
+            self._apply_active_filters_fast()
+        finally:
+            if hasattr(self, "search_spinner"):
+                self.search_spinner.stop()

@@ -19,6 +19,7 @@ from gui.tabs.editing_media.editing_media_icons import (
 )
 from core.tabs.editing_media.folder_color_manager import get_item_color, set_item_color, get_random_label_color
 from core.tabs.editing_media.editing_media_logic import VALID_EXTS
+from core.tabs.editing_media.thumbnail_cache_manager import ThumbnailCacheManager
 
 class TreeListMixin:
     """Mixin que maneja el árbol de carpetas, lista de medios y menús contextuales."""
@@ -233,15 +234,26 @@ class TreeListMixin:
             icon_image = self._get_cached_media_icon("image.svg", "#2ecc71")
             icon_audio = self._get_cached_media_icon("music_note.svg", "#3498db")
 
+            thumb_mgr = ThumbnailCacheManager.get_instance()
+
             for item in media_items:
                 list_item = QListWidgetItem(item["nombre"])
                 item_type = item["tipo"]
-                if item_type == "video":
-                    list_item.setIcon(icon_video)
-                elif item_type == "imagen":
-                    list_item.setIcon(icon_image)
-                elif item_type == "audio":
-                    list_item.setIcon(icon_audio)
+                file_path = item.get("ruta", "")
+
+                cached_thumb = thumb_mgr.get_cached_thumbnail_path(file_path) if file_path else None
+                if cached_thumb:
+                    list_item.setIcon(QIcon(cached_thumb))
+                else:
+                    if item_type == "video":
+                        list_item.setIcon(icon_video)
+                    elif item_type == "imagen":
+                        list_item.setIcon(icon_image)
+                    elif item_type == "audio":
+                        list_item.setIcon(icon_audio)
+                    if file_path:
+                        thumb_mgr.request_thumbnail(file_path, item_type)
+
                 list_item.setData(Qt.UserRole, item)
                 self.media_list.addItem(list_item)
         finally:

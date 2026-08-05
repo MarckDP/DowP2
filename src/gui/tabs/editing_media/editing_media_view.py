@@ -43,6 +43,7 @@ from gui.tabs.editing_media.editing_media_icons import (
 from gui.tabs.editing_media.editing_media_tree import TreeListMixin
 from gui.tabs.editing_media.editing_media_playback import PlaybackMixin
 from gui.tabs.editing_media.editing_media_freesound import FreesoundMixin
+from core.tabs.editing_media.thumbnail_cache_manager import ThumbnailCacheManager
 
 class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
     """Pestaña 'Medios de Edición' con una distribución visual de tres paneles de 20/40/40."""
@@ -56,9 +57,13 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         
         self.selected_tree_item_data = None
         self.active_filter = "Todos"
+        self.view_mode = "grid"
         self._metadata_cache = {}
         self.waveform_thread = None
         self._icon_cache = {}
+        
+        # Conectar señal del cargador de miniaturas en segundo plano
+        ThumbnailCacheManager.get_instance().thumbnail_loaded.connect(self._on_thumbnail_loaded)
         
         # Inicializar cliente de Freesound y timer para debouncing de búsqueda
         from core.tabs.editing_media.freesound_client import FreesoundClient
@@ -223,7 +228,7 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
 
         layout.addLayout(search_layout)
 
-        # Botones de filtro rápido
+        # Botones de filtro rápido + Selector de vista
         btn_bar = QHBoxLayout()
         btn_bar.setSpacing(4)
         self.filter_buttons = []
@@ -249,6 +254,57 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
             btn.clicked.connect(self._on_filter_button_clicked)
             btn_bar.addWidget(btn)
             self.filter_buttons.append(btn)
+
+        btn_bar.addStretch(1)
+
+        # Botones de Modo de Vista (Lista / Cuadrícula)
+        btn_mode_style = f"""
+            QPushButton {{
+                background-color: {get_theme_token('fondo_elemento', '#2d2d2d')};
+                border: 1px solid {get_theme_token('borde_normal', '#2d2d2d')};
+                border-radius: 6px;
+            }}
+            QPushButton:hover {{
+                background-color: {get_theme_token('seleccion_fondo', '#3d3d3d')};
+            }}
+            QPushButton:checked {{
+                background-color: {get_theme_token('acento_primario', '#B9E640')};
+                border-color: {get_theme_token('acento_primario', '#B9E640')};
+            }}
+        """
+
+        self.btn_view_list = QPushButton()
+        self.btn_view_list.setFixedSize(26, 26)
+        self.btn_view_list.setCheckable(True)
+        self.btn_view_list.setToolTip(self.tr("Vista de Lista"))
+        list_icon = get_svg_icon("list_alt.svg")
+        if list_icon.isNull():
+            list_icon = get_svg_icon("view_list.svg")
+        self.btn_view_list.setIcon(list_icon)
+        self.btn_view_list.setIconSize(QSize(14, 14))
+        self.btn_view_list.setStyleSheet(btn_mode_style)
+        self.btn_view_list.clicked.connect(lambda: self.set_view_mode("list"))
+        btn_bar.addWidget(self.btn_view_list)
+
+        self.btn_view_grid = QPushButton()
+        self.btn_view_grid.setFixedSize(26, 26)
+        self.btn_view_grid.setCheckable(True)
+        self.btn_view_grid.setToolTip(self.tr("Vista de Cuadrícula"))
+        self.btn_view_grid.setIcon(get_svg_icon("grid_view.svg"))
+        self.btn_view_grid.setIconSize(QSize(14, 14))
+        self.btn_view_grid.setStyleSheet(btn_mode_style)
+        self.btn_view_grid.clicked.connect(lambda: self.set_view_mode("grid"))
+        btn_bar.addWidget(self.btn_view_grid)
+
+        # Slider para ajustar el tamaño de iconos/miniaturas
+        self.icon_size_slider = QSlider(Qt.Horizontal)
+        self.icon_size_slider.setRange(48, 200)
+        self.icon_size_slider.setValue(112)
+        self.icon_size_slider.setFixedWidth(80)
+        self.icon_size_slider.setToolTip(self.tr("Tamaño de Miniaturas"))
+        self.icon_size_slider.valueChanged.connect(self._on_icon_size_changed)
+        btn_bar.addWidget(self.icon_size_slider)
+
         layout.addLayout(btn_bar)
 
         # Lista de archivos multimedia
@@ -265,6 +321,9 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         self.media_list.verticalScrollBar().valueChanged.connect(self._on_list_scroll)
         
         layout.addWidget(self.media_list, 1)
+
+        # Aplicar modo de vista por defecto (cuadrícula)
+        self.set_view_mode("grid")
 
         # ── ESPECTRO DE AUDIO INTEGRADO (A pie de columna, oculto por defecto) ──
         self.audio_panel = QFrame()
@@ -542,17 +601,21 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
                 padding: 5px;
             }}
             QListWidget::item {{
-                padding: 2px 6px;
-                margin: 0px;
-                border-radius: 4px;
+                padding: 4px;
+                margin: 2px;
+                border-radius: 8px;
                 color: {get_theme_token('texto_principal', '#cdd6f4')};
+                background-color: {get_theme_token('fondo_elemento', '#1c1c1e')};
+                border: 1px solid transparent;
             }}
             QListWidget::item:hover {{
                 background-color: {get_theme_token('seleccion_fondo', '#2d2d2d')};
+                border-color: {get_theme_token('borde_normal', '#3d3d3d')};
             }}
             QListWidget::item:selected {{
-                background-color: {get_theme_token('acento_primario', '#B9E640')};
-                color: {get_theme_token('fondo_principal', '#0a0a0a')};
+                background-color: {get_theme_token('seleccion_fondo', '#2d2d2d')};
+                border: 1.5px solid {get_theme_token('acento_primario', '#B9E640')};
+                color: {get_theme_token('acento_primario', '#B9E640')};
                 font-weight: bold;
             }}
         """
@@ -598,3 +661,44 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
             }}
         """
         self.tree_folders.setStyleSheet(tree_style)
+
+    def set_view_mode(self, mode: str):
+        """Alterna entre vista de lista y vista de cuadrícula/miniaturas."""
+        self.view_mode = mode
+        if mode == "grid":
+            self.btn_view_grid.setChecked(True)
+            self.btn_view_list.setChecked(False)
+            self.icon_size_slider.setVisible(True)
+            self.media_list.setViewMode(QListWidget.IconMode)
+            self.media_list.setResizeMode(QListWidget.Adjust)
+            self.media_list.setMovement(QListWidget.Static)
+            self.media_list.setWordWrap(True)
+            self.media_list.setSpacing(8)
+            self._apply_icon_size(self.icon_size_slider.value())
+        else:
+            self.btn_view_list.setChecked(True)
+            self.btn_view_grid.setChecked(False)
+            self.icon_size_slider.setVisible(False)
+            self.media_list.setViewMode(QListWidget.ListMode)
+            self.media_list.setWordWrap(False)
+            self.media_list.setSpacing(2)
+            self.media_list.setGridSize(QSize())
+            self.media_list.setIconSize(QSize(24, 24))
+
+    def _on_icon_size_changed(self, val: int):
+        if self.view_mode == "grid":
+            self._apply_icon_size(val)
+
+    def _apply_icon_size(self, size: int):
+        self.media_list.setIconSize(QSize(size, size))
+        self.media_list.setGridSize(QSize(size + 24, size + 46))
+
+    def _on_thumbnail_loaded(self, file_path: str, thumb_path: str):
+        """Callback asíncrono cuando una miniatura en segundo plano finaliza su generación."""
+        icon = QIcon(thumb_path)
+        for i in range(self.media_list.count()):
+            item = self.media_list.item(i)
+            data = item.data(Qt.UserRole)
+            if isinstance(data, dict) and data.get("ruta") == file_path:
+                item.setIcon(icon)
+                break

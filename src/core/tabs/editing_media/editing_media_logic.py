@@ -352,15 +352,25 @@ class EditingMediaController(QObject):
         """Construye un diccionario de archivo multimedia SIN llamar a mutagen (duración diferida)."""
         tipo = get_media_type(ext)
         is_remote = path.startswith("http://") or path.startswith("https://")
-        try:
-            size_val = 0 if is_remote else os.path.getsize(path)
-        except Exception:
-            size_val = 0
+        size_val = 0
+        mtime_val = 0.0
+        ctime_val = 0.0
+        if not is_remote:
+            try:
+                st = os.stat(path)
+                size_val = st.st_size
+                mtime_val = st.st_mtime
+                ctime_val = st.st_ctime
+            except Exception:
+                pass
         return {
             "nombre": name,
             "ruta": path if is_remote else path.replace("\\", "/"),
             "tipo": tipo,
             "tamaño": "-" if is_remote else format_size(size_val),
+            "size_bytes": size_val,
+            "mtime": mtime_val,
+            "ctime": ctime_val,
             "duración": "-",  # Se calcula de forma diferida al seleccionar el archivo
             "es_remoto": is_remote
         }

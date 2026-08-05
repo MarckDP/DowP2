@@ -58,6 +58,8 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         self.selected_tree_item_data = None
         self.active_filter = "Todos"
         self.view_mode = "grid"
+        self.sort_by = "nombre"
+        self.sort_ascending = True
         self._metadata_cache = {}
         self.waveform_thread = None
         self._icon_cache = {}
@@ -302,6 +304,33 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         self.icon_size_slider.setToolTip(self.tr("Tamaño de Miniaturas"))
         self.icon_size_slider.valueChanged.connect(self._on_icon_size_changed)
         btn_bar.addWidget(self.icon_size_slider)
+
+        # Botón de Ordenar Por
+        self.btn_sort_by = QPushButton(self.tr("⇅ Nombre"))
+        self.btn_sort_by.setFixedHeight(26)
+        self.btn_sort_by.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {get_theme_token('fondo_elemento', '#2d2d2d')};
+                border: 1px solid {get_theme_token('borde_normal', '#2d2d2d')};
+                border-radius: 6px;
+                padding: 2px 8px;
+                font-size: 11px;
+                color: {get_theme_token('texto_principal', '#cdd6f4')};
+            }}
+            QPushButton:hover {{
+                background-color: {get_theme_token('seleccion_fondo', '#3d3d3d')};
+            }}
+        """)
+        self._build_sort_menu()
+        btn_bar.addWidget(self.btn_sort_by)
+
+        # Botón conmutador de Dirección de Orden (Ascendente / Descendente)
+        self.btn_sort_dir = QPushButton("⬆")
+        self.btn_sort_dir.setFixedSize(26, 26)
+        self.btn_sort_dir.setToolTip(self.tr("Orden Ascendente (A-Z, Antiguos primero)"))
+        self.btn_sort_dir.setStyleSheet(btn_mode_style)
+        self.btn_sort_dir.clicked.connect(self._toggle_sort_direction)
+        btn_bar.addWidget(self.btn_sort_dir)
 
         layout.addLayout(btn_bar)
 
@@ -726,3 +755,71 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
             if isinstance(data, dict) and data.get("ruta") == file_path:
                 item.setIcon(icon)
                 break
+
+    def _build_sort_menu(self):
+        """Construye el menú desplegable de opciones de ordenación."""
+        from PySide6.QtWidgets import QMenu, QActionGroup
+        menu = QMenu(self)
+        menu.setStyleSheet(f"""
+            QMenu {{
+                background-color: {get_theme_token('fondo_elemento', '#1e1e1e')};
+                border: 1px solid {get_theme_token('borde_normal', '#3d3d3d')};
+                padding: 4px;
+                border-radius: 6px;
+            }}
+            QMenu::item {{
+                padding: 6px 20px 6px 20px;
+                border-radius: 4px;
+                color: {get_theme_token('texto_principal', '#cdd6f4')};
+                font-size: 11px;
+            }}
+            QMenu::item:selected {{
+                background-color: {get_theme_token('acento_primario', '#B9E640')};
+                color: {get_theme_token('fondo_principal', '#0a0a0a')};
+                font-weight: bold;
+            }}
+            QMenu::item:disabled {{
+                color: #555555;
+            }}
+        """)
+
+        group = QActionGroup(menu)
+        options = [
+            ("nombre", self.tr("Nombre (Alfabético)")),
+            ("mtime", self.tr("Fecha de Modificación")),
+            ("ctime", self.tr("Fecha de Creación")),
+            ("size", self.tr("Tamaño de Archivo")),
+            ("tipo", self.tr("Tipo de Medio")),
+        ]
+
+        curr_sort = getattr(self, "sort_by", "nombre")
+        active_filter = getattr(self, "active_filter", "Todos")
+
+        for key, label in options:
+            action = menu.addAction(label)
+            action.setCheckable(True)
+            if key == curr_sort:
+                action.setChecked(True)
+            # Deshabilitar "Tipo de Medio" si se está filtrando por una categoría específica
+            if key == "tipo" and active_filter != "Todos":
+                action.setEnabled(False)
+            action.setActionGroup(group)
+            action.triggered.connect(lambda checked, k=key, l=label: self._on_sort_option_selected(k, l))
+
+        self.btn_sort_by.setMenu(menu)
+
+    def _on_sort_option_selected(self, key: str, label: str):
+        self.sort_by = key
+        short_label = label.split("(")[0].strip()
+        self.btn_sort_by.setText(f"⇅ {short_label}")
+        self._apply_active_filters_fast()
+
+    def _toggle_sort_direction(self):
+        self.sort_ascending = not getattr(self, "sort_ascending", True)
+        if self.sort_ascending:
+            self.btn_sort_dir.setText("⬆")
+            self.btn_sort_dir.setToolTip(self.tr("Orden Ascendente (A-Z, Antiguos primero)"))
+        else:
+            self.btn_sort_dir.setText("⬇")
+            self.btn_sort_dir.setToolTip(self.tr("Orden Descendente (Z-A, Recientes primero)"))
+        self._apply_active_filters_fast()

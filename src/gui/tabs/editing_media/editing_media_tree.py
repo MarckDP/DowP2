@@ -373,8 +373,47 @@ class TreeListMixin:
                 
         self._update_media_list()
 
+    def _sort_media_list_items(self):
+        """Reordena los ítems de self.media_list en memoria según sort_by y sort_ascending."""
+        sort_by = getattr(self, "sort_by", "nombre")
+        sort_asc = getattr(self, "sort_ascending", True)
+
+        items_data = []
+        for i in range(self.media_list.count()):
+            item = self.media_list.item(i)
+            data = item.data(Qt.UserRole)
+            items_data.append((item, data))
+
+        def _get_key(pair):
+            _, d = pair
+            if not isinstance(d, dict):
+                return ""
+            if sort_by == "nombre":
+                return d.get("nombre", "").lower()
+            elif sort_by == "mtime":
+                return d.get("mtime", 0.0)
+            elif sort_by == "ctime":
+                return d.get("ctime", 0.0)
+            elif sort_by == "size":
+                return d.get("size_bytes", 0)
+            elif sort_by == "tipo":
+                return d.get("tipo", "")
+            return d.get("nombre", "").lower()
+
+        items_data.sort(key=_get_key, reverse=not sort_asc)
+
+        self.media_list.setUpdatesEnabled(False)
+        try:
+            for new_idx, (item, _) in enumerate(items_data):
+                cur_idx = self.media_list.row(item)
+                if cur_idx != new_idx:
+                    taken = self.media_list.takeItem(cur_idx)
+                    self.media_list.insertItem(new_idx, taken)
+        finally:
+            self.media_list.setUpdatesEnabled(True)
+
     def _apply_active_filters_fast(self):
-        """Aplica filtros de tipo y búsqueda en 0ms ocultando/mostrando ítems de la lista."""
+        """Aplica filtros de tipo, ordenación y búsqueda en 0ms ocultando/mostrando/reordenando ítems."""
         selected = self.tree_folders.currentItem()
         data = selected.data(0, Qt.UserRole) if selected else None
         if data and data.get("tipo") == "root_online":
@@ -383,6 +422,9 @@ class TreeListMixin:
 
         active_filter = self.active_filter
         search_query = self.search_input.text().lower().strip()
+
+        # Re-ordenar ítems en RAM primero
+        self._sort_media_list_items()
 
         self.media_list.setUpdatesEnabled(False)
         try:
@@ -416,15 +458,20 @@ class TreeListMixin:
         sender = self.sender()
         self.active_filter = sender.text()
         
+        # Si filtramos por categoría específica y el modo actual de ordenación es "tipo", revertir a "nombre"
+        if self.active_filter != "Todos" and getattr(self, "sort_by", "nombre") == "tipo":
+            self.sort_by = "nombre"
+            if hasattr(self, "btn_sort_by"):
+                self.btn_sort_by.setText("⇅ Nombre")
+
         for btn in self.filter_buttons:
             if btn != sender:
                 btn.setChecked(False)
+        sender.setChecked(True)
         
-        # Si se desmarca a sí mismo, por defecto vuelve a "Todos"
-        if not sender.isChecked():
-            self.filter_buttons[0].setChecked(True)
-            self.active_filter = "Todos"
-            
+        if hasattr(self, "_build_sort_menu"):
+            self._build_sort_menu()
+
         self._apply_active_filters_fast()
 
     def _show_tree_context_menu(self, position):
@@ -572,6 +619,72 @@ class TreeListMixin:
     def _show_media_context_menu(self, position):
         item = self.media_list.itemAt(position)
         if not item:
+            menu = QMenu(self)
+            menu.setStyleSheet(f"""
+                QMenu {{
+                    background-color: {get_theme_token('fondo_elemento', '#1e1e1e')};
+                    border: 1px solid {get_theme_token('borde_normal', '#3d3d3d')};
+                    padding: 4px;
+                    border-radius: 6px;
+                }}
+                QMenu::item {{
+                    padding: 6px 20px 6px 20px;
+                    border-radius: 4px;
+                    color: {get_theme_token('texto_principal', '#cdd6f4')};
+                    font-size: 11px;
+                }}
+                QMenu::item:selected {{
+                    background-color: {get_theme_token('acento_primario', '#B9E640')};
+                    color: {get_theme_token('fondo_principal', '#0a0a0a')};
+                    font-weight: bold;
+                }}
+                QMenu::item:disabled {{
+                    color: #555555;
+                }}
+            """)
+            sort_sub = menu.addMenu(self.tr("Ordenar por"))
+            options = [
+                ("nombre", self.tr("Nombre")),
+                ("mtime", self.tr("Fecha de Modificación")),
+                ("ctime", self.tr("Fecha de Creación")),
+                ("size", self.tr("Tamaño")),
+                ("tipo", self.tr("Tipo de Medio")),
+            ]
+            curr_sort = getattr(self, "sort_by", "nombre")
+            active_filter = getattr(self, "active_filter", "Todos")
+
+            for key, label in options:
+                act = sort_sub.addAction(label)
+                act.setCheckable(True)
+                if key == curr_sort:
+                    act.setChecked(True)
+                if key == "tipo" and active_filter != "Todos":
+                    act.setEnabled(False)
+                act.triggered.connect(lambda checked, k=key, l=label: self._on_sort_option_selected(k, l))
+
+            sort_sub.addSeparator()
+            act_asc = sort_sub.addAction(self.tr("Ascendente (A-Z, Antiguos)"))
+            act_asc.setCheckable(True)
+            act_asc.setChecked(getattr(self, "sort_ascending", True))
+            act_asc.triggered.connect(lambda: self._set_sort_direction(True))
+
+            act_desc = sort_sub.addAction(self.tr("Descendente (Z-A, Recientes)"))
+            act_desc.setCheckable(True)
+            act_desc.setChecked(not getattr(self, "sort_ascending", True))
+            act_desc.triggered.connect(lambda: self._set_sort_direction(False))
+
+            view_sub = menu.addMenu(self.tr("Vista"))
+            act_grid = view_sub.addAction(self.tr("Cuadrícula"))
+            act_grid.setCheckable(True)
+            act_grid.setChecked(getattr(self, "view_mode", "grid") == "grid")
+            act_grid.triggered.connect(lambda: self.set_view_mode("grid"))
+
+            act_list = view_sub.addAction(self.tr("Lista"))
+            act_list.setCheckable(True)
+            act_list.setChecked(getattr(self, "view_mode", "grid") == "list")
+            act_list.triggered.connect(lambda: self.set_view_mode("list"))
+
+            menu.exec(self.media_list.mapToGlobal(position))
             return
 
         item_data = item.data(Qt.UserRole)
@@ -632,6 +745,17 @@ class TreeListMixin:
     def _remove_file_from_collection(self, col_name, file_path):
         self.controller.remove_from_collection(col_name, file_path)
         self._update_media_list()
+
+    def _set_sort_direction(self, asc: bool):
+        self.sort_ascending = asc
+        if hasattr(self, "btn_sort_dir"):
+            if asc:
+                self.btn_sort_dir.setText("⬆")
+                self.btn_sort_dir.setToolTip(self.tr("Orden Ascendente (A-Z, Antiguos primero)"))
+            else:
+                self.btn_sort_dir.setText("⬇")
+                self.btn_sort_dir.setToolTip(self.tr("Orden Descendente (Z-A, Recientes primero)"))
+        self._apply_active_filters_fast()
         self.preview_box.show_default_state()
         self._clear_metadata()
 

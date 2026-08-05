@@ -327,7 +327,7 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         # Botón conmutador de Dirección de Orden (Ascendente / Descendente)
         self.btn_sort_dir = QPushButton()
         self.btn_sort_dir.setFixedSize(26, 26)
-        self.btn_sort_dir.setIcon(get_colored_svg_icon("arrow_circle_up.svg", "#FFFFFF", size=16))
+        self.btn_sort_dir.setIcon(get_colored_svg_icon("arrow_upward_alt.svg", "#FFFFFF", size=16))
         self.btn_sort_dir.setIconSize(QSize(16, 16))
         self.btn_sort_dir.setToolTip(self.tr("Orden Ascendente (A-Z, Antiguos primero)"))
         self.btn_sort_dir.setStyleSheet(btn_mode_style)

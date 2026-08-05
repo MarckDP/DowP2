@@ -1,6 +1,6 @@
 # src/gui/tabs/editing_media/editing_media_tree.py
 import os
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QTreeWidgetItem,
@@ -750,7 +750,7 @@ class TreeListMixin:
         self.sort_ascending = asc
         if hasattr(self, "btn_sort_dir"):
             if asc:
-                self.btn_sort_dir.setIcon(get_colored_svg_icon("arrow_circle_up.svg", "#FFFFFF", size=16))
+                self.btn_sort_dir.setIcon(get_colored_svg_icon("arrow_upward_alt.svg", "#FFFFFF", size=16))
                 self.btn_sort_dir.setIconSize(QSize(16, 16))
                 self.btn_sort_dir.setToolTip(self.tr("Orden Ascendente (A-Z, Antiguos primero)"))
             else:

@@ -191,14 +191,22 @@ class PreviewContainerWidget(QFrame):
         super().resizeEvent(event)
         w = self.width()
         if w > 0:
-            if hasattr(self, "_last_width") and self._last_width == w:
-                return
-            self._last_width = w
-            # Altura panorámica reducida verticalmente (60% del ancho)
-            self.setFixedHeight(int(w * 0.6))
+            avail_h = int(w * 0.6)
+            self.setFixedHeight(avail_h)
+            if hasattr(self, "_current_image_path") and self._current_image_path and self.placeholder_label.isVisible():
+                pixmap = QPixmap(self._current_image_path)
+                if not pixmap.isNull():
+                    scaled = pixmap.scaled(
+                        max(50, w - 10),
+                        max(50, avail_h - 10),
+                        Qt.KeepAspectRatio,
+                        Qt.SmoothTransformation
+                    )
+                    self.placeholder_label.setPixmap(scaled)
 
     def stop_media(self):
         """Detiene cualquier reproducción de video activa."""
+        self._current_image_path = None
         if self.media_player:
             try:
                 self.media_player.stop()
@@ -220,6 +228,7 @@ class PreviewContainerWidget(QFrame):
 
     def show_image_preview(self, path: str):
         self.stop_media()
+        self._current_image_path = path
         if self.video_widget:
             self.video_widget.setVisible(False)
         if hasattr(self, "controls_widget"):
@@ -230,9 +239,11 @@ class PreviewContainerWidget(QFrame):
         
         pixmap = QPixmap(path)
         if not pixmap.isNull():
+            avail_w = max(50, self.width() - 10)
+            avail_h = max(50, self.height() - 10)
             scaled = pixmap.scaled(
-                self.width() - 10,
-                self.height() - 10,
+                avail_w,
+                avail_h,
                 Qt.KeepAspectRatio,
                 Qt.SmoothTransformation
             )

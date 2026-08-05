@@ -220,10 +220,7 @@ class TreeListMixin:
                     self.media_list.addItem(list_item)
                 return
             else:
-                if self.controller.indexed_folders:
-                    media_items = self.controller.get_media_files_in_folder(self.controller.indexed_folders[0])
-                else:
-                    media_items = self.controller.get_all_media_files()
+                media_items = self.controller.get_all_media_files()
 
             # Obtener iconos cacheados una sola vez
             icon_video_list = self._get_cached_media_icon("movie.svg", "#9b59b6")

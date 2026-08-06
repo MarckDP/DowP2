@@ -185,6 +185,7 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         self.tree_folders.setIndentation(14)
         self.tree_folders.itemClicked.connect(self._on_tree_item_clicked)
         self.tree_folders.currentItemChanged.connect(self._on_tree_current_item_changed)
+        self.tree_folders.itemExpanded.connect(self._on_tree_item_expanded)
         self.tree_folders.setContextMenuPolicy(Qt.CustomContextMenu)
         self.tree_folders.customContextMenuRequested.connect(self._show_tree_context_menu)
         layout.addWidget(self.tree_folders, 1)
@@ -725,7 +726,7 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
                 self.media_list.setMovement(QListWidget.Static)
                 self.media_list.setWordWrap(True)
                 self.media_list.setSpacing(8)
-                self.media_list.setUniformItemSizes(True)
+                self.media_list.setUniformItemSizes(False)
                 self.media_list.setBatchSize(50)
                 self._apply_icon_size(self.icon_size_slider.value())
             else:
@@ -758,7 +759,13 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
 
     def _apply_icon_size(self, size: int):
         self.media_list.setIconSize(QSize(size, size))
-        self.media_list.setGridSize(QSize(size + 24, size + 46))
+        cell_w = size + 32
+        cell_h = size + 46
+        self.media_list.setGridSize(QSize(cell_w, cell_h))
+        # Forzar sizeHint en cada ítem existente para que Qt no recorte
+        hint = QSize(cell_w, cell_h)
+        for i in range(self.media_list.count()):
+            self.media_list.item(i).setSizeHint(hint)
 
     def _on_thumbnail_loaded(self, file_path: str, thumb_path: str):
         """Callback asíncrono cuando una miniatura en segundo plano finaliza su generación."""

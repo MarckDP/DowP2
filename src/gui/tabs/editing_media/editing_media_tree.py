@@ -39,8 +39,9 @@ class TreeListMixin:
     """Mixin que maneja el árbol de carpetas, lista de medios y menús contextuales."""
 
     # ── Población y Control de Vistas del Árbol ──────────────────────────────
+    # ── Población y Control de Vistas del Árbol ──────────────────────────────
     def _update_tree_view(self):
-        """Reconstruye el árbol de carpetas lógicas y físicas de forma jerárquica."""
+        """Reconstruye el árbol de carpetas lógicas y físicas de forma jerárquica con Lazy Loading."""
         selected = self.tree_folders.currentItem()
         selected_data = None
         if selected:
@@ -70,7 +71,7 @@ class TreeListMixin:
                 item.setIcon(0, get_folder_icon())
             item.setData(0, Qt.UserRole, {"tipo": "folder", "ruta": folder})
             item.setExpanded(True)
-            self._add_folder_subdirs(item, folder)
+            self._populate_folder_children(item, folder)
 
         # 3. Nodo Raíz de Colecciones Virtuales
         self.virtual_root = QTreeWidgetItem(self.tree_folders, [self.tr("Colecciones")])
@@ -121,25 +122,58 @@ class TreeListMixin:
                 return True
         return False
 
-    def _add_folder_subdirs(self, parent_item, folder_path):
-        """Busca y añade recursivamente subcarpetas al árbol."""
+    def _on_tree_item_expanded(self, item):
+        """Carga bajo demanda (Lazy Loading) las subcarpetas del nodo expandido."""
+        data = item.data(0, Qt.UserRole)
+        if not data or data.get("tipo") not in ["folder", "subfolder"]:
+            return
+
+        # Si el primer hijo es un placeholder/dummy, poblar subcarpetas reales
+        if item.childCount() == 1 and item.child(0).data(0, Qt.UserRole) == {"tipo": "dummy"}:
+            item.removeChild(item.child(0))
+            folder_path = data.get("ruta")
+            self._populate_folder_children(item, folder_path)
+
+    def _populate_folder_children(self, parent_item, folder_path):
+        """Puebla solo las subcarpetas directas (1 nivel) de forma eficiente."""
         try:
-            if not os.path.exists(folder_path):
+            if not (os.path.exists(folder_path) and os.path.isdir(folder_path)):
                 return
-            for name in sorted(os.listdir(folder_path)):
-                subpath = os.path.join(folder_path, name)
-                if os.path.isdir(subpath):
-                    normalized_path = subpath.replace("\\", "/")
-                    child = QTreeWidgetItem(parent_item, [name])
-                    color = get_item_color(f"folder:{normalized_path}")
-                    if color:
-                        child.setIcon(0, get_colored_folder_icon(color))
-                    else:
-                        child.setIcon(0, get_folder_icon())
-                    child.setData(0, Qt.UserRole, {"tipo": "subfolder", "ruta": normalized_path})
-                    self._add_folder_subdirs(child, subpath)
+
+            subdirs = []
+            with os.scandir(folder_path) as it:
+                for entry in it:
+                    if entry.is_dir(follow_symlinks=False):
+                        subdirs.append((entry.name, entry.path.replace("\\", "/")))
+
+            subdirs.sort(key=lambda x: x[0].lower())
+
+            for name, normalized_path in subdirs:
+                child = QTreeWidgetItem(parent_item, [name])
+                color = get_item_color(f"folder:{normalized_path}")
+                if color:
+                    child.setIcon(0, get_colored_folder_icon(color))
+                else:
+                    child.setIcon(0, get_folder_icon())
+                child.setData(0, Qt.UserRole, {"tipo": "subfolder", "ruta": normalized_path})
+                
+                # Si esta subcarpeta tiene a su vez subcarpetas, añadir placeholder para expandir
+                if self._has_subdirs(normalized_path):
+                    dummy = QTreeWidgetItem(child, ["..."])
+                    dummy.setData(0, Qt.UserRole, {"tipo": "dummy"})
         except Exception as e:
             logger.debug(f"EditingMediaTab: Error al buscar subcarpetas en {folder_path}: {e}")
+
+    def _has_subdirs(self, folder_path: str) -> bool:
+        """Comprueba rápidamente (O(1)) si una carpeta contiene al menos una subcarpeta."""
+        try:
+            with os.scandir(folder_path) as it:
+                for entry in it:
+                    if entry.is_dir(follow_symlinks=False):
+                        return True
+        except Exception:
+            pass
+        return False
 
     def _update_button_states(self):
         selected = self.tree_folders.currentItem()
@@ -181,8 +215,33 @@ class TreeListMixin:
             self._icon_cache[cache_key] = get_colored_svg_icon(icon_name, color)
         return self._icon_cache[cache_key]
 
+    def _request_visible_thumbnails(self):
+        """Solicita miniaturas únicamente para los elementos visibles en el viewport de self.media_list."""
+        if not hasattr(self, "media_list") or self.media_list.count() == 0:
+            return
+
+        thumb_mgr = ThumbnailCacheManager.get_instance()
+        vp_rect = self.media_list.viewport().rect()
+
+        for i in range(self.media_list.count()):
+            item = self.media_list.item(i)
+            if not item:
+                continue
+            item_rect = self.media_list.visualItemRect(item)
+            if vp_rect.intersects(item_rect):
+                item_data = item.data(Qt.UserRole)
+                if isinstance(item_data, dict):
+                    file_path = item_data.get("ruta")
+                    item_type = item_data.get("tipo")
+                    if file_path and item_type and not thumb_mgr.get_cached_qicon(file_path):
+                        thumb_mgr.request_thumbnail(file_path, item_type)
+
     def _update_media_list(self):
-        """Refresca la lista central de medios según el ítem activo del árbol y los filtros."""
+        """Refresca la lista central de medios con pre-filtrado en RAM, limite de paginación y miniaturas bajo demanda."""
+        # Detener lote anterior si aún estaba procesándose
+        if hasattr(self, "_batch_timer") and self._batch_timer and self._batch_timer.isActive():
+            self._batch_timer.stop()
+
         self.media_list.setUpdatesEnabled(False)
         try:
             self.media_list.clear()
@@ -235,6 +294,51 @@ class TreeListMixin:
             else:
                 media_items = self.controller.get_all_media_files()
 
+            # 1. Pre-filtrado rápido en RAM (0ms)
+            active_filter = getattr(self, "active_filter", "Todos")
+            search_query = self.search_input.text().lower().strip() if hasattr(self, "search_input") else ""
+
+            filtered_items = []
+            for item in media_items:
+                item_type = item.get("tipo", "")
+                item_name = item.get("nombre", "").lower()
+
+                if active_filter == "Imágenes" and item_type != "imagen":
+                    continue
+                if active_filter == "Videos" and item_type != "video":
+                    continue
+                if active_filter == "Audios" and item_type != "audio":
+                    continue
+
+                if search_query and search_query not in item_name:
+                    continue
+
+                filtered_items.append(item)
+
+            # 2. Pre-ordenación ultrarrápida en RAM (0ms)
+            sort_by = getattr(self, "sort_by", "nombre")
+            sort_asc = getattr(self, "sort_ascending", True)
+
+            def sort_key(item):
+                if sort_by == "nombre":
+                    return item.get("nombre", "").lower()
+                elif sort_by in ["mtime", "ctime"]:
+                    return item.get(sort_by, 0.0)
+                elif sort_by == "size":
+                    return item.get("size_bytes", 0)
+                elif sort_by == "tipo":
+                    return item.get("tipo", "")
+                return item.get("nombre", "").lower()
+
+            filtered_items.sort(key=sort_key, reverse=not sort_asc)
+
+            # 3. Paginación / Límite de vista para mantener 60 FPS fluidez absoluta
+            max_count = getattr(self, "_max_display_count", 500)
+            total_count = len(filtered_items)
+            has_more = total_count > max_count
+
+            display_items = filtered_items[:max_count] if has_more else filtered_items
+
             # Obtener iconos cacheados una sola vez
             icon_video_list = self._get_cached_media_icon("movie.svg", "#9b59b6")
             icon_image_list = self._get_cached_media_icon("image.svg", "#2ecc71")
@@ -247,43 +351,84 @@ class TreeListMixin:
             thumb_mgr = ThumbnailCacheManager.get_instance()
             is_grid = getattr(self, "view_mode", "grid") == "grid"
 
-            for item in media_items:
-                list_item = MediaListWidgetItem(item["nombre"])
-                item_type = item["tipo"]
-                file_path = item.get("ruta", "")
+            # Población optimizada por lotes (150 ítems por tick)
+            BATCH_SIZE = 150
 
-                cached_icon = thumb_mgr.get_cached_qicon(file_path) if file_path else None
-                if cached_icon:
-                    list_item.setIcon(cached_icon)
-                else:
+            def add_batch(start_idx):
+                end_idx = min(start_idx + BATCH_SIZE, len(display_items))
+                self.media_list.setUpdatesEnabled(False)
+                try:
+                    # Precalcular sizeHint del grid para evitar recorte
+                    grid_hint = None
                     if is_grid:
-                        if item_type == "video":
-                            list_item.setIcon(icon_video_grid)
-                        elif item_type == "imagen":
-                            list_item.setIcon(icon_image_grid)
-                        elif item_type == "audio":
-                            list_item.setIcon(icon_audio_grid)
-                    else:
-                        if item_type == "video":
-                            list_item.setIcon(icon_video_list)
-                        elif item_type == "imagen":
-                            list_item.setIcon(icon_image_list)
-                        elif item_type == "audio":
-                            list_item.setIcon(icon_audio_list)
+                        icon_sz = self.media_list.iconSize().width()
+                        grid_hint = QSize(icon_sz + 32, icon_sz + 46)
 
-                    if file_path:
-                        thumb_mgr.request_thumbnail(file_path, item_type)
+                    for i in range(start_idx, end_idx):
+                        item = display_items[i]
+                        list_item = MediaListWidgetItem(item["nombre"])
+                        item_type = item["tipo"]
+                        file_path = item.get("ruta", "")
 
-                list_item.setData(Qt.UserRole, item)
-                self.media_list.addItem(list_item)
+                        cached_icon = thumb_mgr.get_cached_qicon(file_path) if file_path else None
+                        if cached_icon:
+                            list_item.setIcon(cached_icon)
+                        else:
+                            if is_grid:
+                                if item_type == "video":
+                                    list_item.setIcon(icon_video_grid)
+                                elif item_type == "imagen":
+                                    list_item.setIcon(icon_image_grid)
+                                elif item_type == "audio":
+                                    list_item.setIcon(icon_audio_grid)
+                            else:
+                                if item_type == "video":
+                                    list_item.setIcon(icon_video_list)
+                                elif item_type == "imagen":
+                                    list_item.setIcon(icon_image_list)
+                                elif item_type == "audio":
+                                    list_item.setIcon(icon_audio_list)
 
-            # Aplicar filtro activo y texto de búsqueda sin destruir la lista
-            self._apply_active_filters_fast()
+                        list_item.setData(Qt.UserRole, item)
+                        if grid_hint:
+                            list_item.setSizeHint(grid_hint)
+                        self.media_list.addItem(list_item)
+                finally:
+                    self.media_list.setUpdatesEnabled(True)
+
+                if end_idx < len(display_items):
+                    from PySide6.QtCore import QTimer
+                    self._batch_timer = QTimer(self)
+                    self._batch_timer.setSingleShot(True)
+                    self._batch_timer.timeout.connect(lambda: add_batch(end_idx))
+                    self._batch_timer.start(5)
+                else:
+                    # Si hay más elementos disponibles que sobrepasan el límite actual, agregar botón "Cargar más"
+                    if has_more:
+                        more_item = QListWidgetItem(self.tr(f"⚡ Cargar más elementos... (Mostrando {max_count} de {total_count})"))
+                        more_item.setData(Qt.UserRole, {"tipo": "load_more"})
+                        self.media_list.addItem(more_item)
+
+                    # Solicitar miniaturas únicamente para los elementos visibles en el viewport
+                    from PySide6.QtCore import QTimer
+                    QTimer.singleShot(50, self._request_visible_thumbnails)
+
+            add_batch(0)
         finally:
             self.media_list.setUpdatesEnabled(True)
 
     def _on_disk_changed(self):
-        """Callback del watchdog cuando hay cambios en las carpetas vigiladas."""
+        """Callback del watchdog cuando hay cambios en las carpetas vigiladas (con debounce de 500ms)."""
+        if not hasattr(self, "_disk_change_timer") or self._disk_change_timer is None:
+            from PySide6.QtCore import QTimer
+            self._disk_change_timer = QTimer(self)
+            self._disk_change_timer.setSingleShot(True)
+            self._disk_change_timer.setInterval(500)
+            self._disk_change_timer.timeout.connect(self._do_disk_changed_refresh)
+        
+        self._disk_change_timer.start()
+
+    def _do_disk_changed_refresh(self):
         self._update_tree_view()
         self._update_media_list()
 

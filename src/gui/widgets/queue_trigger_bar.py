@@ -1,7 +1,7 @@
 # src/gui/widgets/queue_trigger_bar.py
 from PySide6.QtWidgets import QWidget
 from PySide6.QtCore import Qt, Signal, QRect
-from PySide6.QtGui import QPainter, QColor, QFont, QPen, QPainterPath
+from PySide6.QtGui import QPainter, QColor, QFont, QPen, QPainterPath, QFontDatabase
 from gui.styles import get_theme_token
 
 class QueueTriggerBar(QWidget):
@@ -107,9 +107,8 @@ class QueueTriggerBar(QWidget):
         painter.rotate(-90.0)
         
         # Configurar fuente
-        font = QFont("Raleway" if "Raleway" in QFont().families() else "Segoe UI")
+        font = QFont("Raleway" if "Raleway" in QFontDatabase.families() else "Segoe UI", 9)
         font.setBold(True)
-        font.setPointSize(9)
         painter.setFont(font)
         
         # Configurar color de texto

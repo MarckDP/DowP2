@@ -231,6 +231,7 @@ class EditingMediaController(QObject):
             self.stop_watcher()
 
         self.observer = Observer()
+        self._observer_started = False
         handler = MediaFolderWatcherHandler(self._on_disk_modified)
         
         active_watches = 0
@@ -245,19 +246,26 @@ class EditingMediaController(QObject):
         if active_watches > 0:
             try:
                 self.observer.start()
+                self._observer_started = True
                 logger.info(f"EditingMediaLogic: Watchdog iniciado con {active_watches} carpetas vigiladas.")
             except Exception as e:
+                self._observer_started = False
                 logger.error(f"EditingMediaLogic: Error iniciando Watchdog: {e}")
 
     def stop_watcher(self):
-        """Detiene el watchdog observer."""
+        """Detiene el watchdog observer de forma segura."""
         if self.observer:
             try:
-                self.observer.stop()
-                self.observer.join()
+                if getattr(self, "_observer_started", False):
+                    self.observer.stop()
+                    self.observer.join(timeout=2.0)
+            except RuntimeError as e:
+                logger.debug(f"EditingMediaLogic: Watchdog no estaba corriendo: {e}")
             except Exception as e:
                 logger.error(f"EditingMediaLogic: Error deteniendo Watchdog: {e}")
-            self.observer = None
+            finally:
+                self.observer = None
+                self._observer_started = False
 
     def _on_disk_modified(self):
         """Callback ejecutado cuando watchdog detecta cambios en disco."""
@@ -348,7 +356,7 @@ class EditingMediaController(QObject):
             self._media_cache = {}
         self._media_cache.clear()
 
-    def _build_file_entry(self, path: str, name: str, ext: str) -> dict:
+    def _build_file_entry(self, path: str, name: str, ext: str, st=None) -> dict:
         """Construye un diccionario de archivo multimedia SIN llamar a mutagen (duración diferida)."""
         tipo = get_media_type(ext)
         is_remote = path.startswith("http://") or path.startswith("https://")
@@ -357,7 +365,8 @@ class EditingMediaController(QObject):
         ctime_val = 0.0
         if not is_remote:
             try:
-                st = os.stat(path)
+                if st is None:
+                    st = os.stat(path)
                 size_val = st.st_size
                 mtime_val = st.st_mtime
                 ctime_val = st.st_ctime
@@ -375,32 +384,51 @@ class EditingMediaController(QObject):
             "es_remoto": is_remote
         }
 
+    def _scan_folder_fast(self, folder_path: str, recursive: bool = True) -> list:
+        """Escanea una carpeta (y opcionalmente sus subcarpetas) iterativamente usando os.scandir."""
+        files = []
+        if not (os.path.exists(folder_path) and os.path.isdir(folder_path)):
+            return files
+
+        dirs_to_visit = [folder_path]
+        while dirs_to_visit:
+            curr_dir = dirs_to_visit.pop()
+            try:
+                with os.scandir(curr_dir) as it:
+                    for entry in it:
+                        try:
+                            if entry.is_dir(follow_symlinks=False):
+                                if recursive:
+                                    dirs_to_visit.append(entry.path)
+                            elif entry.is_file(follow_symlinks=False):
+                                ext = os.path.splitext(entry.name)[1].lower()
+                                if ext in VALID_EXTS:
+                                    try:
+                                        st = entry.stat()
+                                    except Exception:
+                                        st = None
+                                    files.append(self._build_file_entry(entry.path, entry.name, ext, st=st))
+                        except Exception:
+                            continue
+            except Exception:
+                continue
+        return files
+
     def get_media_duration_for_file(self, path: str) -> str:
         """Obtiene la duración de un archivo de audio de forma diferida (solo al seleccionarlo)."""
         ext = os.path.splitext(path)[1].lower()
         return get_media_duration(path, ext)
 
-    def get_media_files_in_folder(self, folder_path: str) -> list:
-        """Retorna la lista de archivos multimedia en la carpeta y sus subcarpetas de forma recursiva (con cache)."""
-        cache_key = f"folder:{folder_path}"
+    def get_media_files_in_folder(self, folder_path: str, recursive: bool = True) -> list:
+        """Retorna la lista de archivos multimedia en la carpeta (con cache)."""
+        cache_key = f"folder:{folder_path}:{recursive}"
         if hasattr(self, "_media_cache") and cache_key in self._media_cache:
             return self._media_cache[cache_key]
         
         if not hasattr(self, "_media_cache"):
             self._media_cache = {}
 
-        files = []
-        if os.path.exists(folder_path) and os.path.isdir(folder_path):
-            try:
-                for root, dirs, filenames in os.walk(folder_path):
-                    for name in filenames:
-                        ext = os.path.splitext(name)[1].lower()
-                        if ext in VALID_EXTS:
-                            path = os.path.join(root, name)
-                            files.append(self._build_file_entry(path, name, ext))
-            except Exception as e:
-                logger.error(f"EditingMediaLogic: Error listando archivos de {folder_path}: {e}")
-        
+        files = self._scan_folder_fast(folder_path, recursive=recursive)
         self._media_cache[cache_key] = files
         return files
 
@@ -456,20 +484,14 @@ class EditingMediaController(QObject):
         files = []
         seen_paths = set()
         
-        # 1. Escanear carpetas físicas indexadas de forma recursiva
+        # 1. Escanear carpetas físicas indexadas de forma recursiva con os.scandir
         for folder in self.indexed_folders:
-            if os.path.exists(folder) and os.path.isdir(folder):
-                try:
-                    for root, dirs, filenames in os.walk(folder):
-                        for name in filenames:
-                            ext = os.path.splitext(name)[1].lower()
-                            if ext in VALID_EXTS:
-                                path = os.path.join(root, name).replace("\\", "/")
-                                if path not in seen_paths:
-                                    seen_paths.add(path)
-                                    files.append(self._build_file_entry(path, name, ext))
-                except Exception as e:
-                    logger.error(f"EditingMediaLogic: Error en escaneo general de {folder}: {e}")
+            folder_files = self._scan_folder_fast(folder)
+            for f_entry in folder_files:
+                norm = f_entry["ruta"]
+                if norm not in seen_paths:
+                    seen_paths.add(norm)
+                    files.append(f_entry)
 
         # 2. Agregar archivos en colecciones
         for col_name in self.collections.keys():

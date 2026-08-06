@@ -206,19 +206,21 @@ class FreesoundMixin:
 
     def _on_list_scroll(self, value):
         selected = self.tree_folders.currentItem()
-        if not selected:
-            return
-        data = selected.data(0, Qt.UserRole)
-        if not data or data.get("tipo") != "root_online":
-            return
-            
-        max_scroll = self.media_list.verticalScrollBar().maximum()
-        # Si llega casi al final y no hay búsqueda activa, cargar la siguiente página
-        if value >= max_scroll - 5 and max_scroll > 0:
-            if not self.loading_next_page:
-                self.loading_next_page = True
-                self.current_page += 1
-                self._exec_online_search()
+        if selected:
+            data = selected.data(0, Qt.UserRole)
+            if data and data.get("tipo") == "root_online":
+                max_scroll = self.media_list.verticalScrollBar().maximum()
+                # Si llega casi al final y no hay búsqueda activa, cargar la siguiente página
+                if value >= max_scroll - 5 and max_scroll > 0:
+                    if not self.loading_next_page:
+                        self.loading_next_page = True
+                        self.current_page += 1
+                        self._exec_online_search()
+                return
+
+        # Solicitar miniaturas para los elementos actualmente visibles al desplazarse
+        if hasattr(self, "_request_visible_thumbnails"):
+            self._request_visible_thumbnails()
 
     def _on_download_clicked(self):
         selected_item = self.media_list.currentItem()

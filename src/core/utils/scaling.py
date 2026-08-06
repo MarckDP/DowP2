@@ -40,6 +40,10 @@ def _detect_windows() -> tuple[int, int, float]:
     import ctypes.wintypes
     native_w, native_h, dpi_scale = 1920, 1080, 1.0
 
+    # Silenciar advertencia benigna de Qt al configurar DPI context en Windows
+    if "QT_LOGGING_RULES" not in os.environ:
+        os.environ["QT_LOGGING_RULES"] = "qt.qpa.window.warning=false"
+
     # Hacer DPI-aware para obtener metricas reales
     try:
         ctypes.windll.shcore.SetProcessDpiAwareness(2)

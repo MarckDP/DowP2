@@ -33,6 +33,11 @@ class PlaybackMixin:
         if not item_data:
             return
 
+        if item_data.get("tipo") == "load_more":
+            self._max_display_count = getattr(self, "_max_display_count", 500) + 500
+            self._update_media_list()
+            return
+
         name = item_data["nombre"]
         tipo = item_data["tipo"]
         path = item_data["ruta"]

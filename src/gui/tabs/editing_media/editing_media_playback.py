@@ -50,11 +50,42 @@ class PlaybackMixin:
         # Detener cualquier audio previo al cambiar de archivo
         self._stop_audio_playback()
 
-        # 1. Controlar la visualización del espectro de audio
+        self.current_playing_path = path
+        self.current_playing_type = tipo
+
+        # 1. Controlar la visualización del espectro de audio y header de carátula
         if tipo in ("audio", "video"):
             self.audio_panel.setVisible(True)
-            # Los controles de reproducción solo se muestran para archivos de audio puros
             self.audio_controls_widget.setVisible(tipo == "audio")
+            
+            # Header de carátula e información solo para audios
+            if hasattr(self, "audio_header_widget"):
+                self.audio_header_widget.setVisible(tipo == "audio")
+                if tipo == "audio":
+                    self.lbl_audio_name.setText(name)
+                    dur_str = item_data.get("duración", "-")
+                    if not is_remote and path in self._metadata_cache:
+                        dur_str = self._metadata_cache[path].get("duración", dur_str)
+                    self.lbl_audio_sub.setText(f"AUDIO • {dur_str}")
+
+                    # Cargar carátula incrustada si existe o icono por defecto
+                    from core.tabs.editing_media.thumbnail_cache_manager import ThumbnailCacheManager
+                    from gui.styles import get_theme_token
+                    from gui.tabs.editing_media.editing_media_icons import get_colored_svg_icon
+                    from PySide6.QtGui import QPixmap
+
+                    accent_color = get_theme_token("acento_primario", "#B9E640")
+                    fallback_icon = get_colored_svg_icon("music_note.svg", accent_color, size=32)
+
+                    thumb_path = ThumbnailCacheManager.get_instance().get_cached_thumbnail_path(path)
+                    if thumb_path and os.path.exists(thumb_path):
+                        pix = QPixmap(thumb_path).scaled(64, 64, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+                        self.lbl_cover_art.setPixmap(pix)
+                    else:
+                        self.lbl_cover_art.setPixmap(fallback_icon.pixmap(32, 32))
+                        if not is_remote:
+                            ThumbnailCacheManager.get_instance().request_thumbnail(path, "audio")
+
             self.waveform_widget.set_audio_path(path)
             self.waveform_widget.set_playback_ratio(0.0)
             
@@ -125,13 +156,17 @@ class PlaybackMixin:
         else:
             self.audio_panel.setVisible(False)
 
-        # 2. Actualizar Vista Previa (Columna Derecha - Superior) con reproducción real
+        # 2. Actualizar Vista Previa (Columna Derecha - Superior)
         if tipo == "imagen":
+            self.preview_box.setVisible(True)
             self.preview_box.show_image_preview(path)
         elif tipo == "video":
+            self.preview_box.setVisible(True)
             self.preview_box.show_video_preview(path)
         elif tipo == "audio":
-            self.preview_box.show_audio_preview(path)
+            # Para audios ocultamos el cuadro superior inútil de video
+            self.preview_box.stop_media()
+            self.preview_box.setVisible(False)
 
         # 3. Actualizar Detalles e Info Técnica (Columna Derecha - Inferior)
         self.metadata_labels["nombre"].setText(name)

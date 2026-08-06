@@ -378,13 +378,48 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         self.audio_panel.setObjectName("audioSpectrumPanel")
         self.audio_panel.setVisible(False)
         audio_layout = QVBoxLayout(self.audio_panel)
-        audio_layout.setContentsMargins(8, 8, 8, 8)
+        audio_layout.setContentsMargins(10, 10, 10, 10)
         audio_layout.setSpacing(6)
 
+        # Header superior con Carátula e información de título para archivos de audio
+        self.audio_header_widget = QWidget()
+        header_layout = QHBoxLayout(self.audio_header_widget)
+        header_layout.setContentsMargins(0, 0, 0, 4)
+        header_layout.setSpacing(12)
+
+        self.lbl_cover_art = QLabel()
+        self.lbl_cover_art.setFixedSize(64, 64)
+        self.lbl_cover_art.setStyleSheet(f"""
+            QLabel {{
+                background-color: {get_theme_token('fondo_elemento', '#1c1c1e')};
+                border: 1px solid {get_theme_token('borde_normal', '#2d2d2d')};
+                border-radius: 8px;
+            }}
+        """)
+        self.lbl_cover_art.setAlignment(Qt.AlignCenter)
+        header_layout.addWidget(self.lbl_cover_art)
+
+        header_info_v = QVBoxLayout()
+        header_info_v.setSpacing(2)
+        header_info_v.addStretch()
+
+        self.lbl_audio_name = QLabel()
+        self.lbl_audio_name.setStyleSheet(f"font-weight: bold; font-size: 13px; color: {get_theme_token('acento_primario', '#B9E640')};")
+        self.lbl_audio_name.setWordWrap(True)
+        header_info_v.addWidget(self.lbl_audio_name)
+
+        self.lbl_audio_sub = QLabel()
+        self.lbl_audio_sub.setStyleSheet("font-size: 11px; color: #a6adc8;")
+        header_info_v.addWidget(self.lbl_audio_sub)
+        header_info_v.addStretch()
+
+        header_layout.addLayout(header_info_v, 1)
+        audio_layout.addWidget(self.audio_header_widget)
+
         # Título interno
-        lbl_audio_title = QLabel(self.tr("Visualizador de Espectro"))
-        lbl_audio_title.setStyleSheet("font-size: 11px; font-weight: bold; color: #f5c2e7;")
-        audio_layout.addWidget(lbl_audio_title)
+        self.lbl_audio_title = QLabel(self.tr("Visualizador de Espectro"))
+        self.lbl_audio_title.setStyleSheet("font-size: 11px; font-weight: bold; color: #f5c2e7;")
+        audio_layout.addWidget(self.lbl_audio_title)
 
         # El widget gráfico del espectro
         self.waveform_widget = AudioWaveformWidget()
@@ -780,6 +815,12 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
             if isinstance(data, dict) and data.get("ruta") == file_path:
                 item.setIcon(icon)
                 break
+
+        # Actualizar carátula en el panel de audio si el archivo coincide
+        if hasattr(self, "current_playing_path") and self.current_playing_path == file_path:
+            if hasattr(self, "lbl_cover_art") and hasattr(self, "current_playing_type") and self.current_playing_type == "audio":
+                pix = QPixmap(thumb_path).scaled(64, 64, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+                self.lbl_cover_art.setPixmap(pix)
 
     def _build_sort_menu(self):
         """Construye el menú desplegable de opciones de ordenación."""

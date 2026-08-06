@@ -135,9 +135,8 @@ class EditingMediaController(QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
         
-        # Calcular ruta del archivo de persistencia
-        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-        self.db_path = os.path.join(base_dir, "bin", "indexed_media.json")
+        from core.utils.paths import get_indexed_media_path
+        self.db_path = get_indexed_media_path()
         
         self.indexed_folders = []
         self.collections = {

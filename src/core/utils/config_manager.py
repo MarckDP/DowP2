@@ -2,10 +2,9 @@
 import os
 import json
 from core.logger.logger_manager import logger
+from core.utils.paths import get_config_path
 
-# Calcular ruta absoluta del proyecto para que la config sea persistente
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-CONFIG_FILE = os.path.join(BASE_DIR, "bin", "config.json")
+CONFIG_FILE = get_config_path()
 
 _cached_config = None
 

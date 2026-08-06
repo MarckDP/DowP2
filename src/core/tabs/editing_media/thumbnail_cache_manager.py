@@ -7,9 +7,9 @@ from PySide6.QtCore import QObject, Signal, QRunnable, QThreadPool, Qt
 from PySide6.QtGui import QImage, QPixmap, QIcon, QImageReader, QPainter, QColor
 from core.logger.logger_manager import logger
 from core.setup.ffmpeg_setup import get_ffmpeg_dir, get_platform_info, check_ffmpeg
+from core.utils.paths import get_thumbnail_cache_dir
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-CACHE_DIR = os.path.join(BASE_DIR, "bin", "cache", "thumbnails")
+CACHE_DIR = get_thumbnail_cache_dir()
 
 def make_square_thumbnail_pixmap(src_pixmap: QPixmap, size=256) -> QPixmap:
     """Garantiza que la miniatura sea un lienzo cuadrado uniforme de 256x256 px centrado."""

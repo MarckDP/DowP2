@@ -647,12 +647,12 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
                 background-color: {get_theme_token('fondo_principal', '#0a0a0a')};
                 border: 1px solid {borde_color};
                 padding: 5px;
+                color: {get_theme_token('texto_principal', '#cdd6f4')};
             }}
             QListWidget::item {{
                 padding: 4px;
                 margin: 2px;
                 border-radius: 8px;
-                color: {get_theme_token('texto_principal', '#cdd6f4')};
                 background-color: {get_theme_token('fondo_elemento', '#1c1c1e')};
                 border: 1px solid transparent;
             }}

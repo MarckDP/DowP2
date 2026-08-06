@@ -406,7 +406,7 @@ class TreeListMixin:
                 else:
                     # Si hay más elementos disponibles que sobrepasan el límite actual, agregar botón "Mostrar todo"
                     if has_more:
-                        more_item = QListWidgetItem(self.tr(f"Mostrar todo ({total_count})"))
+                        more_item = MediaListWidgetItem(self.tr(f"Mostrar todo ({total_count})"))
                         more_item.setData(Qt.UserRole, {"tipo": "load_more"})
                         
                         # Resaltado verde acento del programa (#B9E640)
@@ -416,6 +416,14 @@ class TreeListMixin:
                         f.setBold(True)
                         more_item.setFont(f)
                         more_item.setTextAlignment(Qt.AlignCenter)
+
+                        # Icono verde llamativo
+                        btn_icon = get_colored_svg_icon("arrow_circle_down.svg", accent_color, size=32 if is_grid else 18)
+                        if not btn_icon.isNull():
+                            more_item.setIcon(btn_icon)
+
+                        if grid_hint:
+                            more_item.setSizeHint(grid_hint)
 
                         self.media_list.addItem(more_item)
 

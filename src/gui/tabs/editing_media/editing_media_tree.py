@@ -446,6 +446,8 @@ class TreeListMixin:
             add_batch(0)
         finally:
             self.media_list.setUpdatesEnabled(True)
+            if hasattr(self, "_recalculate_grid_spacing"):
+                self._recalculate_grid_spacing()
 
     def _create_load_more_card_icon(self, total_count: int, size: int, accent_color: str) -> QIcon:
         """Genera una tarjeta visual para 'Mostrar todo' en cuadrícula con el texto arriba y el icono directamente abajo."""

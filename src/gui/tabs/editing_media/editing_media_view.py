@@ -410,6 +410,7 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         self.media_list.setContextMenuPolicy(Qt.CustomContextMenu)
         self.media_list.customContextMenuRequested.connect(self._show_media_context_menu)
         self.media_list.verticalScrollBar().valueChanged.connect(self._on_list_scroll)
+        self.media_list.viewport().installEventFilter(self)
         
         layout.addWidget(self.media_list, 1)
 
@@ -824,7 +825,45 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
             if event.type() == QEvent.Enter:
                 if getattr(self, "view_mode", "grid") == "grid":
                     self._show_grid_scale_popup()
+        elif hasattr(self, "media_list") and self.media_list and obj == self.media_list.viewport():
+            if event.type() == QEvent.Resize:
+                if getattr(self, "view_mode", "grid") == "grid":
+                    self._recalculate_grid_spacing()
         return super().eventFilter(obj, event)
+
+    def _recalculate_grid_spacing(self):
+        """Calcula el ancho fluido adaptable de las tarjetas para rellenar el 100% del contenedor sin espacio muerto a la derecha."""
+        if getattr(self, "view_mode", "list") != "grid":
+            return
+        
+        viewport_w = self.media_list.viewport().width()
+        if viewport_w <= 50:
+            return
+        
+        icon_size = self.icon_size_slider.value() if hasattr(self, "icon_size_slider") else 112
+        base_cell_w = icon_size + 32
+        cell_h = icon_size + 46
+        
+        spacing = 4
+        # Ancho efectivo reservado para columnas (considerando márgenes laterales)
+        avail_w = max(10, viewport_w - (spacing * 2))
+        
+        # Número exacto de columnas que caben confortablemente
+        num_cols = max(1, avail_w // base_cell_w)
+        
+        # Ancho fluido exacto por celda
+        fluid_cell_w = avail_w // num_cols
+        
+        # Ajuste de espaciado para absorber residuos de división entera
+        leftover = avail_w - (fluid_cell_w * num_cols)
+        final_spacing = spacing + (leftover // (num_cols + 1))
+        
+        self.media_list.setSpacing(max(1, final_spacing))
+        self.media_list.setGridSize(QSize(fluid_cell_w, cell_h))
+        
+        hint = QSize(fluid_cell_w, cell_h)
+        for i in range(self.media_list.count()):
+            self.media_list.item(i).setSizeHint(hint)
 
     def _show_grid_scale_popup(self):
         if hasattr(self, "grid_scale_popup") and hasattr(self, "btn_view_grid"):
@@ -861,6 +900,7 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         hint = QSize(cell_w, cell_h)
         for i in range(self.media_list.count()):
             self.media_list.item(i).setSizeHint(hint)
+        self._recalculate_grid_spacing()
 
     def _on_thumbnail_loaded(self, file_path: str, thumb_path: str):
         """Callback asíncrono cuando una miniatura en segundo plano finaliza su generación."""

@@ -7,7 +7,7 @@ from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QImageReader, QImage
 from PySide6.QtMultimedia import QMediaPlayer
 from core.logger.logger_manager import logger
-from gui.tabs.editing_media.editing_media_icons import get_svg_icon
+from gui.tabs.editing_media.editing_media_icons import get_svg_icon, get_colored_svg_icon
 from core.tabs.editing_media.editing_media_logic import WaveformExtractorThread
 
 class PlaybackMixin:
@@ -151,6 +151,15 @@ class PlaybackMixin:
                     else:
                         self.audio_player.setSource(QUrl.fromLocalFile(path))
                         self.lbl_time.setText("00:00 / " + self.controller.get_media_duration_for_file(path))
+                    
+                    # Aplicar bucle según configuración actual (por defecto activo)
+                    loops = QMediaPlayer.Infinite if getattr(self, "_audio_loop_active", True) else 1
+                    self.audio_player.setLoops(loops)
+                    
+                    # Auto-reproducir audio al hacer clic (igual que en video)
+                    self.audio_player.play()
+                    from gui.styles import apply_player_play_button_style
+                    apply_player_play_button_style(self.btn_play, is_playing=True, icon_size=14)
                 except Exception as e:
                     logger.error(f"EditingMediaTab: Error cargando fuente de audio: {e}")
         else:
@@ -404,20 +413,22 @@ class PlaybackMixin:
 
     # ── Métodos de Control para el Reproductor de Audio Central ─────────────
     def _on_play_clicked(self):
+        from gui.styles import apply_player_play_button_style
         if not self.audio_player:
             return
         
         state = self.audio_player.playbackState()
         if state == QMediaPlayer.PlaybackState.PlayingState:
             self.audio_player.pause()
-            self.btn_play.setIcon(get_svg_icon("play_arrow.svg"))
+            apply_player_play_button_style(self.btn_play, is_playing=False, icon_size=14)
         else:
             self.audio_player.play()
-            self.btn_play.setIcon(get_svg_icon("pause.svg"))
+            apply_player_play_button_style(self.btn_play, is_playing=True, icon_size=14)
 
     def _on_volume_changed(self, value):
+        float_val = value if isinstance(value, float) else value / 100.0
         if self.audio_output:
-            self.audio_output.setVolume(value / 100.0)
+            self.audio_output.setVolume(float_val)
 
     def _on_waveform_seek_requested(self, ratio):
         selected_item = self.media_list.currentItem()
@@ -475,10 +486,11 @@ class PlaybackMixin:
             self.lbl_time.setText(f"00:00 / {dur_min:02d}:{dur_sec:02d}")
 
     def _stop_audio_playback(self):
+        from gui.styles import apply_player_play_button_style
         if self.audio_player:
             try:
                 self.audio_player.stop()
-                self.btn_play.setIcon(get_svg_icon("play_arrow.svg"))
+                apply_player_play_button_style(self.btn_play, is_playing=False, icon_size=14)
             except Exception:
                 pass
 
@@ -503,3 +515,15 @@ class PlaybackMixin:
                     from PySide6.QtGui import QDesktopServices
                     from PySide6.QtCore import QUrl
                     QDesktopServices.openUrl(QUrl.fromLocalFile(os.path.dirname(path)))
+
+    def _on_toggle_audio_loop(self):
+        """Alterna el modo de repetición del reproductor de audio."""
+        from gui.styles import apply_player_loop_button_style
+
+        self._audio_loop_active = not self._audio_loop_active
+        if self.audio_player:
+            if self._audio_loop_active:
+                self.audio_player.setLoops(QMediaPlayer.Infinite)
+            else:
+                self.audio_player.setLoops(1)
+        apply_player_loop_button_style(self.btn_loop_audio, is_active=self._audio_loop_active, icon_size=14)

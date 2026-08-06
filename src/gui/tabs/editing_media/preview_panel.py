@@ -5,7 +5,9 @@ from PySide6.QtCore import Qt, QUrl, QSize
 from PySide6.QtGui import QPixmap, QIcon
 
 from core.logger.logger_manager import logger
-from gui.styles import get_theme_token
+from gui.styles import get_theme_token, apply_player_play_button_style, apply_player_loop_button_style
+from gui.tabs.editing_media.editing_media_icons import get_colored_svg_icon
+from gui.widgets.volume_control import VolumeControlWidget
 
 try:
     from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
@@ -121,21 +123,20 @@ class PreviewContainerWidget(QFrame):
 
         # Botón Play/Pausa
         self.btn_play_pause = QPushButton()
-        self.btn_play_pause.setIcon(get_svg_icon("pause.svg"))
         self.btn_play_pause.setIconSize(QSize(14, 14))
         self.btn_play_pause.setFixedSize(26, 26)
-        self.btn_play_pause.setStyleSheet("""
-            QPushButton {
-                background-color: #1DC038;
-                border: none;
-                border-radius: 13px;
-            }
-            QPushButton:hover {
-                background-color: #B9E640;
-            }
-        """)
+        apply_player_play_button_style(self.btn_play_pause, is_playing=True, icon_size=14)
         self.btn_play_pause.clicked.connect(self.toggle_play_pause)
         btn_layout.addWidget(self.btn_play_pause)
+
+        # Botón Loop/Repetir
+        self._video_loop_active = True  # Por defecto en loop (ya se setea Infinite arriba)
+        self.btn_loop = QPushButton()
+        self.btn_loop.setIconSize(QSize(14, 14))
+        self.btn_loop.setFixedSize(26, 26)
+        apply_player_loop_button_style(self.btn_loop, is_active=True, icon_size=14)
+        self.btn_loop.clicked.connect(self._toggle_video_loop)
+        btn_layout.addWidget(self.btn_loop)
 
         # Etiqueta de tiempo
         self.lbl_video_time = QLabel("00:00 / 00:00")
@@ -144,38 +145,10 @@ class PreviewContainerWidget(QFrame):
 
         btn_layout.addStretch(1)
 
-        # Icono de volumen (botón silenciador)
-        self.btn_vol = QPushButton("🔊")
-        self.btn_vol.setFixedSize(22, 22)
-        self.btn_vol.setStyleSheet("background: transparent; border: none; font-size: 12px; color: #a6adc8;")
-        self.btn_vol.clicked.connect(self.toggle_mute)
-        btn_layout.addWidget(self.btn_vol)
-
-        # Slider de volumen
-        self.vol_slider = QSlider(Qt.Horizontal)
-        self.vol_slider.setFixedWidth(60)
-        self.vol_slider.setRange(0, 100)
-        self.vol_slider.setValue(10) # 10%
-        self.vol_slider.valueChanged.connect(self._on_volume_changed)
-        self.vol_slider.setStyleSheet("""
-            QSlider::groove:horizontal {
-                border-radius: 2px;
-                height: 4px;
-                background: #444;
-            }
-            QSlider::sub-page:horizontal {
-                background: #1DC038;
-                border-radius: 2px;
-            }
-            QSlider::handle:horizontal {
-                background: #fff;
-                width: 8px;
-                margin-top: -2px;
-                margin-bottom: -2px;
-                border-radius: 4px;
-            }
-        """)
-        btn_layout.addWidget(self.vol_slider)
+        # Control de Volumen Unificado
+        self.volume_control = VolumeControlWidget(initial_volume=10, slider_width=60)
+        self.volume_control.volume_changed.connect(self._on_volume_changed)
+        btn_layout.addWidget(self.volume_control)
 
         controls_v.addLayout(btn_layout)
         self.layout.addWidget(self.controls_widget)
@@ -260,6 +233,8 @@ class PreviewContainerWidget(QFrame):
                 self.controls_widget.setVisible(True)
             try:
                 self.media_player.setSource(QUrl.fromLocalFile(path))
+                loops = QMediaPlayer.Infinite if getattr(self, "_video_loop_active", True) else 1
+                self.media_player.setLoops(loops)
                 self.media_player.play()
                 logger.debug(f"PreviewPanel: Reproduciendo video preview: {path}")
             except Exception as e:
@@ -302,25 +277,14 @@ class PreviewContainerWidget(QFrame):
             self.media_player.play()
 
     def toggle_mute(self):
-        if not self.audio_output:
-            return
-        if self.vol_slider.value() > 0:
-            self._last_volume = self.vol_slider.value()
-            self.vol_slider.setValue(0)
-        else:
-            self.vol_slider.setValue(self._last_volume if self._last_volume > 0 else 10)
+        if hasattr(self, "volume_control"):
+            self.volume_control.toggle_mute()
 
     def _on_volume_changed(self, value):
+        # value puede ser flotante (0.0 a 1.0) o entero (0 a 100)
+        float_val = value if isinstance(value, float) else value / 100.0
         if self.audio_output:
-            self.audio_output.setVolume(value / 100.0)
-            if value == 0:
-                self.btn_vol.setText("🔇")
-            elif value < 40:
-                self.btn_vol.setText("🔈")
-            elif value < 80:
-                self.btn_vol.setText("🔉")
-            else:
-                self.btn_vol.setText("🔊")
+            self.audio_output.setVolume(float_val)
 
     def _on_position_changed(self, position):
         if not self._is_dragging_slider and self.media_player:
@@ -361,7 +325,15 @@ class PreviewContainerWidget(QFrame):
             self.media_player.setPosition(self.time_slider.value())
 
     def _on_playback_state_changed(self, state):
-        if state == QMediaPlayer.PlayingState:
-            self.btn_play_pause.setIcon(get_svg_icon("pause.svg"))
-        else:
-            self.btn_play_pause.setIcon(get_svg_icon("play_arrow.svg"))
+        is_playing = (state == QMediaPlayer.PlayingState)
+        apply_player_play_button_style(self.btn_play_pause, is_playing=is_playing, icon_size=14)
+
+    def _toggle_video_loop(self):
+        """Alterna entre reproducción en bucle infinito y reproducción única."""
+        self._video_loop_active = not self._video_loop_active
+        if self.media_player:
+            if self._video_loop_active:
+                self.media_player.setLoops(QMediaPlayer.Infinite)
+            else:
+                self.media_player.setLoops(1)
+        apply_player_loop_button_style(self.btn_loop, is_active=self._video_loop_active, icon_size=14)

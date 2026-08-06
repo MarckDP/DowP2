@@ -15,13 +15,14 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QIcon
 
-from gui.styles import get_theme_token
+from gui.styles import get_theme_token, apply_cut_button_style
 from gui.tabs.advanced_process.output_options import OutputOptionsWidget
 from gui.tabs.advanced_process.video_details_components import RichComboBox, RichTextDelegate
 from gui.widgets.animated_button import AnimatedButton
 
 from gui.tabs.quick_mode.activity_panel import ActivityPanel
 from gui.tabs.quick_mode.download_controller import QuickDownloadController
+from gui.tabs.editing_media.editing_media_icons import get_colored_svg_icon
 from core.logger.logger_manager import logger
 from core.tabs.quick_mode.quick_mode_logic import reveal_in_file_manager
 
@@ -107,38 +108,9 @@ class QuickModeTab(QWidget):
         self.btn_cut.setFixedSize(34, 34)
         self.btn_cut.setToolTip(self.tr("Activar recorte de fragmento"))
         
-        _icon_path = os.path.join(
-            os.path.dirname(__file__), "..", "..", "..",
-            "assets", "icons", "svg", "content_cut.svg"
-        )
-        _icon_path = os.path.normpath(_icon_path)
-        if os.path.exists(_icon_path):
-            self.btn_cut.setIcon(QIcon(_icon_path))
-            self.btn_cut.setIconSize(QSize(18, 18))
-        else:
-            self.btn_cut.setText("✂")
-            
-        self.btn_cut.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {get_theme_token('fondo_secundario', '#1e1e1e')};
-                border: 1px solid {get_theme_token('borde', '#2d2d2d')};
-                border-radius: 17px;
-                padding: 0px;
-            }}
-            QPushButton:hover {{
-                background-color: {get_theme_token('fondo_hover', '#2a2a2a')};
-            }}
-            QPushButton:checked {{
-                background-color: #2e7d32;
-                border-color: #4caf50;
-            }}
-            QPushButton:checked:hover {{
-                background-color: #388e3c;
-            }}
-            QPushButton:disabled {{
-                background-color: #555;
-            }}
-        """)
+        self.btn_cut.setIconSize(QSize(18, 18))
+        self.btn_cut.toggled.connect(self._on_cut_toggled)
+        apply_cut_button_style(self.btn_cut, "normal", icon_size=18)
 
         self.btn_download = AnimatedButton(self.tr("Descargar"))
         self.btn_download.setObjectName("analyzeButton")
@@ -337,3 +309,7 @@ class QuickModeTab(QWidget):
             if url == clip_text:
                 logger.info("QuickModeTab: Detección de pegado manual. Iniciando descarga...")
                 self._on_download_clicked()
+
+    def _on_cut_toggled(self, checked: bool):
+        status = "saved" if checked else "normal"
+        apply_cut_button_style(self.btn_cut, status, icon_size=18)

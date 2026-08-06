@@ -195,3 +195,193 @@ def load_stylesheet(theme_name: str = "dark") -> str:
     
     logger.info(f"Temas: Tema '{theme_name}' cargado exitosamente")
     return result
+
+
+def apply_cut_button_style(btn, status="normal", icon_size=18):
+    """
+    Aplica el estilo unificado del botón de recorte de fragmentos
+    basado en los tokens del tema actual.
+    
+    Status:
+      - 'normal': gris elegante (#2d2d2d / fondo_elemento) con hover claro
+      - 'saved': verde (#1DC038 / acento_secundario)
+      - 'unsaved': amarillo (#ffc107 / estado_aviso)
+    """
+    from gui.tabs.editing_media.editing_media_icons import get_colored_svg_icon
+    
+    colors = {
+        "normal":  {
+            "bg": get_theme_token('fondo_elemento', '#2d2d2d'),
+            "hover": get_theme_token('seleccion_fondo', '#3d3d3d'),
+            "border": f"1px solid {get_theme_token('borde_normal', '#3d3d3d')}",
+            "icon": "#FFFFFF"
+        },
+        "saved":   {
+            "bg": get_theme_token('acento_secundario', '#1DC038'),
+            "hover": get_theme_token('acento_primario', '#B9E640'),
+            "border": "none",
+            "icon": "#000000"
+        },
+        "unsaved": {
+            "bg": get_theme_token('estado_aviso', '#ffc107'),
+            "hover": "#ffdb58",
+            "border": "none",
+            "icon": "#000000"
+        }
+    }
+    
+    cfg = colors.get(status, colors["normal"])
+    btn.setIcon(get_colored_svg_icon("content_cut.svg", cfg["icon"], size=icon_size))
+    
+    # Calcular radio del borde redondeado para botón circular perfecto
+    radius = 17
+    if hasattr(btn, 'height') and btn.height() > 0:
+        radius = btn.height() // 2
+    elif hasattr(btn, 'fixedSize') and btn.fixedSize().height() > 0:
+        radius = btn.fixedSize().height() // 2
+        
+    btn.setStyleSheet(f"""
+        QPushButton {{
+            background-color: {cfg['bg']};
+            border: {cfg['border']};
+            border-radius: {radius}px;
+            padding: 0px;
+        }}
+        QPushButton:hover {{
+            background-color: {cfg['hover']};
+        }}
+        QPushButton:disabled {{
+            background-color: #555;
+        }}
+    """)
+
+
+def apply_player_play_button_style(btn, is_playing: bool = False, icon_size: int = 14):
+    """
+    Aplica el estilo unificado al botón de Play/Pausa de los reproductores.
+    - Icono: pause.svg si is_playing=True, play_arrow.svg si is_playing=False (en #000000).
+    - Fondo: verde acento (#1DC038), hover verde claro (#B9E640).
+    """
+    from gui.tabs.editing_media.editing_media_icons import get_colored_svg_icon
+    
+    icon_name = "pause.svg" if is_playing else "play_arrow.svg"
+    btn.setIcon(get_colored_svg_icon(icon_name, "#000000", size=icon_size))
+    
+    radius = 13
+    if hasattr(btn, 'height') and btn.height() > 0:
+        radius = btn.height() // 2
+    elif hasattr(btn, 'fixedSize') and btn.fixedSize().height() > 0:
+        radius = btn.fixedSize().height() // 2
+        
+    btn.setStyleSheet(f"""
+        QPushButton {{
+            background-color: {get_theme_token('acento_secundario', '#1DC038')};
+            border: none;
+            border-radius: {radius}px;
+            padding: 0px;
+        }}
+        QPushButton:hover {{
+            background-color: {get_theme_token('acento_primario', '#B9E640')};
+        }}
+        QPushButton:disabled {{
+            background-color: #555;
+        }}
+    """)
+
+
+def apply_player_loop_button_style(btn, is_active: bool = False, icon_size: int = 14):
+    """
+    Aplica el estilo unificado al botón de Repetir (Loop) de los reproductores.
+    - is_active=True: Fondo verde acento (#1DC038), hover (#B9E640), icono repeat.svg en #000000.
+    - is_active=False: Fondo gris (#2d2d2d), border (#2d2d2d), hover (#3d3d3d), icono repeat.svg en #6c7086.
+    """
+    from gui.tabs.editing_media.editing_media_icons import get_colored_svg_icon
+    
+    radius = 13
+    if hasattr(btn, 'height') and btn.height() > 0:
+        radius = btn.height() // 2
+    elif hasattr(btn, 'fixedSize') and btn.fixedSize().height() > 0:
+        radius = btn.fixedSize().height() // 2
+        
+    if is_active:
+        btn.setIcon(get_colored_svg_icon("repeat.svg", "#000000", size=icon_size))
+        btn.setToolTip("Repetir: Activado")
+        btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {get_theme_token('acento_secundario', '#1DC038')};
+                border: none;
+                border-radius: {radius}px;
+                padding: 0px;
+            }}
+            QPushButton:hover {{
+                background-color: {get_theme_token('acento_primario', '#B9E640')};
+            }}
+            QPushButton:disabled {{
+                background-color: #555;
+            }}
+        """)
+    else:
+        btn.setIcon(get_colored_svg_icon("repeat.svg", "#6c7086", size=icon_size))
+        btn.setToolTip("Repetir: Desactivado")
+        btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {get_theme_token('fondo_elemento', '#2d2d2d')};
+                border: 1px solid {get_theme_token('borde_normal', '#2d2d2d')};
+                border-radius: {radius}px;
+                padding: 0px;
+            }}
+            QPushButton:hover {{
+                background-color: {get_theme_token('seleccion_fondo', '#3d3d3d')};
+            }}
+            QPushButton:disabled {{
+                background-color: #555;
+            }}
+        """)
+
+
+def apply_volume_control_style(btn_mute, slider):
+    """
+    Aplica el estilo unificado basado en tokens de tema para el botón Mute
+    y el Slider de Volumen en cualquier reproductor.
+    """
+    bg_hover = get_theme_token('seleccion_fondo', '#3d3d3d')
+    border_color = get_theme_token('borde_normal', '#444444')
+    accent_sec = get_theme_token('acento_secundario', '#1DC038')
+    accent_pri = get_theme_token('acento_primario', '#B9E640')
+
+    btn_mute.setStyleSheet(f"""
+        QPushButton {{
+            background-color: transparent;
+            border: none;
+            border-radius: 12px;
+            padding: 0px;
+        }}
+        QPushButton:hover {{
+            background-color: {bg_hover};
+        }}
+    """)
+
+    slider.setStyleSheet(f"""
+        QSlider::groove:horizontal {{
+            border-radius: 2px;
+            height: 4px;
+            background: {border_color};
+        }}
+        QSlider::sub-page:horizontal {{
+            background: {accent_sec};
+            border-radius: 2px;
+        }}
+        QSlider::handle:horizontal {{
+            background: #ffffff;
+            width: 8px;
+            margin-top: -2px;
+            margin-bottom: -2px;
+            border-radius: 4px;
+        }}
+        QSlider::handle:horizontal:hover {{
+            background: {accent_pri};
+        }}
+    """)
+
+
+

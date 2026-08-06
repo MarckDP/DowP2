@@ -8,12 +8,13 @@ from PySide6.QtWidgets import (
     QRadioButton, QButtonGroup
 )
 from PySide6.QtCore import Qt, QUrl, QPoint, QSize, QRegularExpression, QEvent, QTimer
-from PySide6.QtGui import QPixmap, QIcon, QRegularExpressionValidator, QPainter
+from PySide6.QtGui import QPixmap, QIcon, QRegularExpressionValidator, QPainter, QColor
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtSvg import QSvgRenderer
 
 from gui.widgets.range_slider import RangeSlider
+from gui.widgets.volume_control import VolumeControlWidget
 from core.tabs.advanced_process.fragment_logic import FragmentManager, FragmentState
 
 # ── Icon helpers ────────────────────────────────────────────
@@ -21,9 +22,21 @@ _SVG_DIR = os.path.normpath(os.path.join(
     os.path.dirname(__file__), "..", "..", "assets", "icons", "svg"
 ))
 
-def _icon(name):
+def _icon(name, color_hex=None, size=None):
     path = os.path.join(_SVG_DIR, name)
-    return QIcon(path) if os.path.exists(path) else QIcon()
+    if not os.path.exists(path):
+        return QIcon()
+    pix = QPixmap(path)
+    if pix.isNull():
+        return QIcon()
+    if size:
+        pix = pix.scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+    if color_hex:
+        painter = QPainter(pix)
+        painter.setCompositionMode(QPainter.CompositionMode_SourceIn)
+        painter.fillRect(pix.rect(), QColor(color_hex))
+        painter.end()
+    return QIcon(pix)
 
 
 # ── Custom widgets ────────────────────────────────────────────
@@ -263,7 +276,7 @@ class FragmentDialog(QDialog):
         # Overlay play button (centered, always visible, changes icon)
         self.btn_play_overlay = QPushButton(self.preview_container)
         self.btn_play_overlay.setFixedSize(58, 58)
-        self.btn_play_overlay.setIcon(_icon("play_arrow.svg"))
+        self.btn_play_overlay.setIcon(_icon("play_arrow.svg", "#000000", 30))
         self.btn_play_overlay.setIconSize(QSize(30, 30))
         self.btn_play_overlay.setObjectName("overlayPlay")
         self.btn_play_overlay.setStyleSheet("""
@@ -300,47 +313,20 @@ class FragmentDialog(QDialog):
             QPushButton:hover {{ background-color: #B9E640; }}
         """
         self.btn_play_ctrl = QPushButton()
-        self.btn_play_ctrl.setIcon(_icon("play_arrow.svg"))
         self.btn_play_ctrl.setIconSize(QSize(18, 18))
         self.btn_play_ctrl.setFixedSize(34, 34)
         self.btn_play_ctrl.setToolTip(self.tr("Reproducir"))
-        self.btn_play_ctrl.setStyleSheet(_btn_style.format(c="#1DC038", r=17))
+        from gui.styles import apply_player_play_button_style
+        apply_player_play_button_style(self.btn_play_ctrl, is_playing=False, icon_size=18)
         self.btn_play_ctrl.clicked.connect(self.toggle_play)
-
-        # Volume slider
-        self.volume_slider = QSlider(Qt.Horizontal)
-        self.volume_slider.setRange(0, 100)
-        self.volume_slider.setValue(100)
-        self.volume_slider.setFixedWidth(60)
-        self.volume_slider.setToolTip(self.tr("Volumen"))
-        self.volume_slider.setStyleSheet("""
-            QSlider::groove:horizontal {
-                border-radius: 2px;
-                height: 4px;
-                background: #444;
-            }
-            QSlider::sub-page:horizontal {
-                background: #1DC038;
-                border-radius: 2px;
-            }
-            QSlider::handle:horizontal {
-                background: #fff;
-                width: 10px;
-                margin-top: -3px;
-                margin-bottom: -3px;
-                border-radius: 5px;
-            }
-        """)
-        self.volume_slider.valueChanged.connect(self._on_volume_changed)
 
         ctrl_row.addWidget(self.btn_play_ctrl)
         ctrl_row.addSpacing(8)
         
-        # Icono volumen
-        vol_icon = QLabel()
-        vol_icon.setPixmap(_icon("volume_up.svg").pixmap(16, 16))
-        ctrl_row.addWidget(vol_icon)
-        ctrl_row.addWidget(self.volume_slider)
+        # Control de Volumen Unificado
+        self.volume_control = VolumeControlWidget(initial_volume=100, slider_width=60)
+        self.volume_control.volume_changed.connect(self._on_volume_changed)
+        ctrl_row.addWidget(self.volume_control)
         
         ctrl_row.addStretch()
 
@@ -366,7 +352,7 @@ class FragmentDialog(QDialog):
         self.input_time_end.editingFinished.connect(self._on_time_input_changed)
 
         self.btn_add_ctrl = QPushButton()
-        self.btn_add_ctrl.setIcon(_icon("add.svg"))
+        self.btn_add_ctrl.setIcon(_icon("add.svg", "#000000", 18))
         self.btn_add_ctrl.setIconSize(QSize(18, 18))
         self.btn_add_ctrl.setFixedSize(34, 34)
         self.btn_add_ctrl.setToolTip(self.tr("Añadir fragmento"))
@@ -696,7 +682,8 @@ class FragmentDialog(QDialog):
         self.info_label.raise_()
 
     def _on_volume_changed(self, value):
-        self.audio_output.setVolume(value / 100.0)
+        float_val = value if isinstance(value, float) else value / 100.0
+        self.audio_output.setVolume(float_val)
 
     def _update_error_background(self):
         """Escala la miniatura para cubrir el contenedor (preservando aspecto)
@@ -729,8 +716,9 @@ class FragmentDialog(QDialog):
         icon_name = "pause.svg" if playing else "play_arrow.svg"
         tooltip = self.tr("Pausar") if playing else self.tr("Reproducir")
         
-        self.btn_play_overlay.setIcon(_icon(icon_name))
-        self.btn_play_ctrl.setIcon(_icon(icon_name))
+        self.btn_play_overlay.setIcon(_icon(icon_name, "#000000", 30))
+        from gui.styles import apply_player_play_button_style
+        apply_player_play_button_style(self.btn_play_ctrl, is_playing=playing, icon_size=18)
         self.btn_play_ctrl.setToolTip(tooltip)
         
         # Al pausar/detener: restaurar los campos al valor actual del slider y ocultar playhead

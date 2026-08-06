@@ -25,13 +25,14 @@ except ImportError:
     MULTIMEDIA_AVAILABLE = False
 
 from core.logger.logger_manager import logger
-from gui.styles import get_theme_token
+from gui.styles import get_theme_token, apply_player_play_button_style, apply_player_loop_button_style
 from gui.widgets.animated_button import AnimatedButton
 from core.tabs.editing_media.editing_media_logic import EditingMediaController
 
 # Importar los widgets que fueron extraídos a sus propios archivos
 from gui.tabs.editing_media.waveform_widget import AudioWaveformWidget
 from gui.tabs.editing_media.preview_panel import PreviewContainerWidget
+from gui.widgets.volume_control import VolumeControlWidget
 from gui.tabs.editing_media.editing_media_icons import (
     get_colored_svg_icon,
     get_colored_folder_icon,
@@ -95,6 +96,7 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
                 self.audio_output = QAudioOutput(self)
                 self.audio_player.setAudioOutput(self.audio_output)
                 self.audio_output.setVolume(0.7)  # Volumen por defecto al 70%
+                self.audio_player.setLoops(QMediaPlayer.Infinite)  # Bucle por defecto
                 
                 # Conectar señales del reproductor
                 self.audio_player.positionChanged.connect(self._on_audio_position_changed)
@@ -433,21 +435,20 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         controls_layout.setSpacing(8)
 
         self.btn_play = QPushButton()
-        self.btn_play.setIcon(get_svg_icon("play_arrow.svg"))
         self.btn_play.setIconSize(QSize(14, 14))
         self.btn_play.setFixedSize(26, 26)
-        self.btn_play.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {get_theme_token('acento_secundario', '#1DC038')};
-                border: none;
-                border-radius: 13px;
-            }}
-            QPushButton:hover {{
-                background-color: {get_theme_token('acento_primario', '#B9E640')};
-            }}
-        """)
+        apply_player_play_button_style(self.btn_play, is_playing=False, icon_size=14)
         self.btn_play.clicked.connect(self._on_play_clicked)
         controls_layout.addWidget(self.btn_play)
+
+        # Botón Loop/Repetir para audio
+        self._audio_loop_active = True  # Por defecto EN loop
+        self.btn_loop_audio = QPushButton()
+        self.btn_loop_audio.setIconSize(QSize(14, 14))
+        self.btn_loop_audio.setFixedSize(26, 26)
+        apply_player_loop_button_style(self.btn_loop_audio, is_active=True, icon_size=14)
+        self.btn_loop_audio.clicked.connect(self._on_toggle_audio_loop)
+        controls_layout.addWidget(self.btn_loop_audio)
 
         self.lbl_time = QLabel("00:00 / 00:00")
         self.lbl_time.setStyleSheet("font-size: 11px; color: #a6adc8;")
@@ -455,16 +456,10 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
 
         controls_layout.addStretch(1)
 
-        lbl_vol = QLabel("Vol:")
-        lbl_vol.setStyleSheet("font-size: 11px; color: #a6adc8;")
-        controls_layout.addWidget(lbl_vol)
-
-        self.vol_slider = QSlider(Qt.Horizontal)
-        self.vol_slider.setFixedWidth(80)
-        self.vol_slider.setRange(0, 100)
-        self.vol_slider.setValue(70)
-        self.vol_slider.valueChanged.connect(self._on_volume_changed)
-        controls_layout.addWidget(self.vol_slider)
+        # Control de Volumen Unificado
+        self.volume_control = VolumeControlWidget(initial_volume=70, slider_width=80)
+        self.volume_control.volume_changed.connect(self._on_volume_changed)
+        controls_layout.addWidget(self.volume_control)
 
         audio_layout.addWidget(self.audio_controls_widget)
 

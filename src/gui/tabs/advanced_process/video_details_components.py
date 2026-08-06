@@ -7,7 +7,8 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QThread, QSize
 from PySide6.QtGui import QPixmap, QImage, QIcon, QPainter, QColor, QFontMetrics
 from PySide6.QtSvg import QSvgRenderer
-from gui.styles import get_theme_token
+from gui.styles import get_theme_token, apply_cut_button_style
+from gui.tabs.editing_media.editing_media_icons import get_colored_svg_icon
 
 class ThumbnailLoaderThread(QThread):
     finished = Signal(bytes, str) # content, error
@@ -162,54 +163,11 @@ class ResponsiveThumbnail(QWidget):
         self.btn_cut.setToolTip(self.tr("Recortar fragmento"))
         self.btn_cut.hide()
         self.btn_cut.clicked.connect(self.clicked_cut)
-        self.btn_cut.setStyleSheet("""
-            QPushButton {
-                background-color: #e53935;
-                border: none;
-                border-radius: 20px;
-                padding: 6px;
-            }
-            QPushButton:hover {
-                background-color: #ff6b6b;
-            }
-            QPushButton:disabled {
-                background-color: #555;
-            }
-        """)
-        
-        _icon_path = os.path.join(
-            os.path.dirname(__file__), "..", "..", "..",
-            "assets", "icons", "svg", "content_cut.svg"
-        )
-        _icon_path = os.path.normpath(_icon_path)
-        if os.path.exists(_icon_path):
-            self.btn_cut.setIcon(QIcon(_icon_path))
-            self.btn_cut.setIconSize(QSize(22, 22))
-        else:
-            self.btn_cut.setText("✂")
+        self.btn_cut.setIconSize(QSize(22, 22))
+        apply_cut_button_style(self.btn_cut, "normal", icon_size=22)
 
     def set_cut_status(self, status):
-        colors = {
-            "normal":  {"bg": "#e53935", "hover": "#ff6b6b"},
-            "saved":   {"bg": "#1dc038", "hover": "#2ed573"},
-            "unsaved": {"bg": "#ffc107", "hover": "#ffdb58"}
-        }
-        
-        cfg = colors.get(status, colors["normal"])
-        self.btn_cut.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {cfg['bg']};
-                border: none;
-                border-radius: 20px;
-                padding: 6px;
-            }}
-            QPushButton:hover {{
-                background-color: {cfg['hover']};
-            }}
-            QPushButton:disabled {{
-                background-color: #555;
-            }}
-        """)
+        apply_cut_button_style(self.btn_cut, status, icon_size=22)
 
     def set_duration(self, text):
         if text:

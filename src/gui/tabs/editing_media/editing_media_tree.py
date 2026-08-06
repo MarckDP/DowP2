@@ -1,7 +1,7 @@
 # src/gui/tabs/editing_media/editing_media_tree.py
 import os
-from PySide6.QtCore import Qt, QSize
-from PySide6.QtGui import QIcon, QColor, QFont
+from PySide6.QtCore import Qt, QSize, QRectF
+from PySide6.QtGui import QIcon, QColor, QFont, QPixmap, QPainter
 from PySide6.QtWidgets import (
     QTreeWidgetItem,
     QListWidgetItem,
@@ -406,21 +406,23 @@ class TreeListMixin:
                 else:
                     # Si hay más elementos disponibles que sobrepasan el límite actual, agregar botón "Mostrar todo"
                     if has_more:
-                        more_item = MediaListWidgetItem(self.tr(f"Mostrar todo ({total_count})"))
-                        more_item.setData(Qt.UserRole, {"tipo": "load_more"})
-                        
-                        # Resaltado verde acento del programa (#B9E640)
                         accent_color = get_theme_token("acento_primario", "#B9E640")
-                        more_item.setForeground(QColor(accent_color))
-                        f = more_item.font()
-                        f.setBold(True)
-                        more_item.setFont(f)
-                        more_item.setTextAlignment(Qt.AlignCenter)
-
-                        # Icono verde llamativo
-                        btn_icon = get_colored_svg_icon("arrow_circle_down.svg", accent_color, size=32 if is_grid else 18)
-                        if not btn_icon.isNull():
-                            more_item.setIcon(btn_icon)
+                        if is_grid:
+                            icon_sz = self.media_list.iconSize().width()
+                            more_item = MediaListWidgetItem("")
+                            more_item.setData(Qt.UserRole, {"tipo": "load_more"})
+                            more_item.setIcon(self._create_load_more_card_icon(total_count, icon_sz, accent_color))
+                        else:
+                            more_item = MediaListWidgetItem(self.tr(f"Mostrar todo ({total_count})"))
+                            more_item.setData(Qt.UserRole, {"tipo": "load_more"})
+                            more_item.setForeground(QColor(accent_color))
+                            f = more_item.font()
+                            f.setBold(True)
+                            more_item.setFont(f)
+                            more_item.setTextAlignment(Qt.AlignCenter)
+                            btn_icon = get_colored_svg_icon("arrow_circle_down.svg", accent_color, size=18)
+                            if not btn_icon.isNull():
+                                more_item.setIcon(btn_icon)
 
                         if grid_hint:
                             more_item.setSizeHint(grid_hint)
@@ -434,6 +436,46 @@ class TreeListMixin:
             add_batch(0)
         finally:
             self.media_list.setUpdatesEnabled(True)
+
+    def _create_load_more_card_icon(self, total_count: int, size: int, accent_color: str) -> QIcon:
+        """Genera una tarjeta visual para 'Mostrar todo' en cuadrícula con el texto arriba y el icono directamente abajo."""
+        pixmap = QPixmap(size, size)
+        pixmap.fill(Qt.transparent)
+
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.TextAntialiasing)
+
+        color = QColor(accent_color)
+        painter.setPen(color)
+
+        # 1. Texto principal "Mostrar todo"
+        f1 = QFont()
+        f1.setBold(True)
+        f1.setPointSize(max(10, min(14, size // 9)))
+        painter.setFont(f1)
+        r1 = QRectF(0, size * 0.15, size, size * 0.22)
+        painter.drawText(r1, Qt.AlignCenter, self.tr("Mostrar todo"))
+
+        # 2. Subtítulo con el número total (N)
+        f2 = QFont()
+        f2.setBold(True)
+        f2.setPointSize(max(9, min(12, size // 10)))
+        painter.setFont(f2)
+        r2 = QRectF(0, size * 0.37, size, size * 0.20)
+        painter.drawText(r2, Qt.AlignCenter, f"({total_count})")
+
+        # 3. Icono arrow_circle_down.svg posicionado directamente DEBAJO del texto
+        icon_sz = max(18, min(32, size // 4))
+        arrow_icon = get_colored_svg_icon("arrow_circle_down.svg", accent_color, size=icon_sz)
+        if not arrow_icon.isNull():
+            arrow_pix = arrow_icon.pixmap(icon_sz, icon_sz)
+            x = (size - icon_sz) // 2
+            y = int(size * 0.60)
+            painter.drawPixmap(x, y, arrow_pix)
+
+        painter.end()
+        return QIcon(pixmap)
 
     def _on_disk_changed(self):
         """Callback del watchdog cuando hay cambios en las carpetas vigiladas (con debounce de 500ms)."""
@@ -935,7 +977,7 @@ class TreeListMixin:
                 self.btn_sort_dir.setIconSize(QSize(16, 16))
                 self.btn_sort_dir.setToolTip(self.tr("Orden Ascendente (A-Z, Antiguos primero)"))
             else:
-                self.btn_sort_dir.setIcon(get_colored_svg_icon("arrow_circle_down.svg", "#FFFFFF", size=16))
+                self.btn_sort_dir.setIcon(get_colored_svg_icon("arrow_downward_alt.svg", "#FFFFFF", size=16))
                 self.btn_sort_dir.setIconSize(QSize(16, 16))
                 self.btn_sort_dir.setToolTip(self.tr("Orden Descendente (Z-A, Recientes primero)"))
         self._apply_active_filters_fast()

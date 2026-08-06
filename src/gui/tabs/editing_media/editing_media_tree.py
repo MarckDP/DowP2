@@ -1,7 +1,7 @@
 # src/gui/tabs/editing_media/editing_media_tree.py
 import os
 from PySide6.QtCore import Qt, QSize
-from PySide6.QtGui import QIcon
+from PySide6.QtGui import QIcon, QColor, QFont
 from PySide6.QtWidgets import (
     QTreeWidgetItem,
     QListWidgetItem,
@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QMenu
 )
+from gui.styles import get_theme_token
 from core.logger.logger_manager import logger
 from gui.tabs.editing_media.editing_media_icons import (
     get_colored_svg_icon,
@@ -407,6 +408,15 @@ class TreeListMixin:
                     if has_more:
                         more_item = QListWidgetItem(self.tr(f"Mostrar todo ({total_count})"))
                         more_item.setData(Qt.UserRole, {"tipo": "load_more"})
+                        
+                        # Resaltado verde acento del programa (#B9E640)
+                        accent_color = get_theme_token("acento_primario", "#B9E640")
+                        more_item.setForeground(QColor(accent_color))
+                        f = more_item.font()
+                        f.setBold(True)
+                        more_item.setFont(f)
+                        more_item.setTextAlignment(Qt.AlignCenter)
+
                         self.media_list.addItem(more_item)
 
                     # Solicitar miniaturas únicamente para los elementos visibles en el viewport

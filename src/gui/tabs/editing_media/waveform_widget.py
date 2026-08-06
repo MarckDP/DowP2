@@ -57,9 +57,34 @@ class AudioWaveformWidget(QWidget):
 
     def set_peaks(self, peaks: list):
         """Asigna los picos reales extraídos del audio y repinta."""
-        self.peaks = peaks or []
+        self._raw_peaks = list(peaks) if peaks else []
+        self.peaks = self._raw_peaks
         self.set_loading(False)  # Detener animación cuando se asignan picos
         self.update()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, "_raw_peaks") and self._raw_peaks and not self.is_loading:
+            width = self.width()
+            target_num_bars = max(50, min((width - 24) // 5, 180)) if width > 50 else 80
+            self.peaks = self._resample_peaks(self._raw_peaks, target_num_bars)
+            self.update()
+
+    def _resample_peaks(self, peaks: list, target_count: int) -> list:
+        if not peaks or target_count <= 0 or len(peaks) == target_count:
+            return peaks
+        n = len(peaks)
+        resampled = []
+        for i in range(target_count):
+            pos = i * (n - 1) / max(1, target_count - 1)
+            idx = int(pos)
+            frac = pos - idx
+            if idx >= n - 1:
+                resampled.append(peaks[-1])
+            else:
+                val = peaks[idx] * (1.0 - frac) + peaks[idx + 1] * frac
+                resampled.append(val)
+        return resampled
 
     def set_playback_ratio(self, ratio: float):
         """Actualiza la posición del cabezal y repinta el widget."""
@@ -95,14 +120,11 @@ class AudioWaveformWidget(QWidget):
                 val = math.sin(i * 0.15 + self.loading_phase) * 0.25 + 0.35
                 pulse = math.sin(self.loading_phase * 0.5) * 0.1 + 0.9
                 peaks_to_draw.append(max(0.05, min(val * pulse, 0.95)))
-            num_bars_to_draw = target_num_bars
         elif not self.peaks:
             # Si no hay picos y no está cargando, dejar vacío (evita confusión)
             return
         else:
             peaks_to_draw = self.peaks
-            # Si estamos cargando progresivamente, calculamos el espaciado usando el total esperado
-            num_bars_to_draw = max(target_num_bars, len(peaks_to_draw))
 
         num_bars = len(peaks_to_draw)
         if num_bars == 0:
@@ -113,9 +135,9 @@ class AudioWaveformWidget(QWidget):
         end_x = width - 10
         span = max(1, end_x - start_x)
 
-        # Calcular ancho de barra y espaciado dinámicamente usando la cantidad total esperada
-        step = span / (num_bars_to_draw - 1) if num_bars_to_draw > 1 else span
-        bar_width = max(1, int(step * 0.6))
+        # Calcular ancho de barra y espaciado basándose STRICTAMENTE en la cantidad real de picos a dibujar
+        step = span / (num_bars - 1) if num_bars > 1 else span
+        bar_width = max(1, min(int(step * 0.6), 8))
 
         # Configurar pincel para las barras
         pen = QPen()

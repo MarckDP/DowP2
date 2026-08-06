@@ -403,9 +403,9 @@ class TreeListMixin:
                     self._batch_timer.timeout.connect(lambda: add_batch(end_idx))
                     self._batch_timer.start(5)
                 else:
-                    # Si hay más elementos disponibles que sobrepasan el límite actual, agregar botón "Cargar más"
+                    # Si hay más elementos disponibles que sobrepasan el límite actual, agregar botón "Mostrar todo"
                     if has_more:
-                        more_item = QListWidgetItem(self.tr(f"⚡ Cargar más elementos... (Mostrando {max_count} de {total_count})"))
+                        more_item = QListWidgetItem(self.tr(f"Mostrar todo ({total_count})"))
                         more_item.setData(Qt.UserRole, {"tipo": "load_more"})
                         self.media_list.addItem(more_item)
 
@@ -535,6 +535,15 @@ class TreeListMixin:
 
         self.media_list.setUpdatesEnabled(False)
         try:
+            # Extraer y remover temporalmente el ítem load_more para que no se ordene al inicio
+            more_item = None
+            for i in range(self.media_list.count()):
+                item = self.media_list.item(i)
+                data = item.data(Qt.UserRole)
+                if isinstance(data, dict) and data.get("tipo") == "load_more":
+                    more_item = self.media_list.takeItem(i)
+                    break
+
             for i in range(self.media_list.count()):
                 item = self.media_list.item(i)
                 data = item.data(Qt.UserRole)
@@ -555,6 +564,10 @@ class TreeListMixin:
 
             order = Qt.AscendingOrder if sort_asc else Qt.DescendingOrder
             self.media_list.sortItems(order)
+
+            # Re-insertar el ítem load_more al final absoluto de la lista
+            if more_item:
+                self.media_list.addItem(more_item)
         finally:
             self.media_list.setUpdatesEnabled(True)
 
@@ -581,6 +594,10 @@ class TreeListMixin:
                     continue
 
                 item_type = item_data.get("tipo", "")
+                if item_type == "load_more":
+                    item.setHidden(False)
+                    continue
+
                 item_name = item_data.get("nombre", "").lower()
 
                 type_match = True

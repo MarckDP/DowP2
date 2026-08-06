@@ -10,16 +10,17 @@ class FreesoundSearchThread(QThread):
     finished_search = Signal(dict)
     error_search = Signal(str)
 
-    def __init__(self, client, query, token, page=1, parent=None):
+    def __init__(self, client, query, token, page=1, sort_order=None, parent=None):
         super().__init__(parent)
         self.client = client
         self.query = query
         self.token = token
         self.page = page
+        self.sort_order = sort_order
 
     def run(self):
         try:
-            results = self.client.search(self.query, self.token, page=self.page)
+            results = self.client.search(self.query, self.token, sort_order=self.sort_order, page=self.page)
             self.finished_search.emit(results)
         except Exception as e:
             self.error_search.emit(str(e))
@@ -124,12 +125,10 @@ class FreesoundMixin:
         token = self.controller.freesound_token
         query = self.search_input.text().strip()
         
+        sort_order = None
         if not query:
-            if hasattr(self, "search_spinner"):
-                self.search_spinner.stop()
-            self.online_results = []
-            self._update_media_list()
-            return
+            # Si el cuadro de búsqueda está vacío, cargar automáticamente sonidos recientes ("Más nuevos")
+            sort_order = "Más nuevos"
             
         if self.online_search_thread and self.online_search_thread.isRunning():
             if self.online_search_thread.page == self.current_page:
@@ -137,7 +136,10 @@ class FreesoundMixin:
             self.online_search_thread.terminate()
             self.online_search_thread.wait()
             
-        self.online_search_thread = FreesoundSearchThread(self.freesound_client, query, token, self.current_page, self)
+        if hasattr(self, "search_spinner"):
+            self.search_spinner.start()
+
+        self.online_search_thread = FreesoundSearchThread(self.freesound_client, query, token, self.current_page, sort_order, self)
         self.online_search_thread.finished_search.connect(self._on_online_search_success)
         self.online_search_thread.error_search.connect(self._on_online_search_error)
         self.online_search_thread.start()

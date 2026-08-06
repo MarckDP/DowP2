@@ -492,7 +492,7 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         self.btn_loop_audio.clicked.connect(self._on_toggle_audio_loop)
         controls_layout.addWidget(self.btn_loop_audio)
 
-        self.lbl_time = QLabel("00:00 / 00:00")
+        self.lbl_time = QLabel("00:00:00.000 / 00:00:00.000")
         self.lbl_time.setStyleSheet("font-size: 11px; color: #a6adc8;")
         controls_layout.addWidget(self.lbl_time)
 
@@ -864,6 +864,8 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         hint = QSize(fluid_cell_w, cell_h)
         for i in range(self.media_list.count()):
             self.media_list.item(i).setSizeHint(hint)
+        
+        self.media_list.doItemsLayout()
 
     def _show_grid_scale_popup(self):
         if hasattr(self, "grid_scale_popup") and hasattr(self, "btn_view_grid"):

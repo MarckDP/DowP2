@@ -147,10 +147,10 @@ class PlaybackMixin:
                 try:
                     if is_remote:
                         self.audio_player.setSource(QUrl(path))
-                        self.lbl_time.setText("00:00 / " + item_data.get("duración", "-"))
+                        self.lbl_time.setText("00:00:00.000 / 00:00:00.000")
                     else:
                         self.audio_player.setSource(QUrl.fromLocalFile(path))
-                        self.lbl_time.setText("00:00 / " + self.controller.get_media_duration_for_file(path))
+                        self.lbl_time.setText("00:00:00.000 / 00:00:00.000")
                     
                     # Aplicar bucle según configuración actual (por defecto activo)
                     loops = QMediaPlayer.Infinite if getattr(self, "_audio_loop_active", True) else 1
@@ -459,6 +459,16 @@ class PlaybackMixin:
                     ratio = position / duration
                     self.waveform_widget.set_playback_ratio(ratio)
 
+    def _format_time_ms(self, ms: int) -> str:
+        """Formatea milisegundos a HH:MM:SS.mmm (estándar de edición de video)."""
+        if not ms or ms < 0:
+            ms = 0
+        ms = int(ms)
+        s, ms_r = divmod(ms, 1000)
+        m, s = divmod(s, 60)
+        h, m = divmod(m, 60)
+        return f"{h:02d}:{m:02d}:{s:02d}.{ms_r:03d}"
+
     def _on_audio_position_changed(self, position):
         if not self.audio_player:
             return
@@ -466,24 +476,12 @@ class PlaybackMixin:
         if duration > 0:
             ratio = position / duration
             self.waveform_widget.set_playback_ratio(ratio)
-            
-            # Formatear tiempos transcurridos
-            pos_sec = position // 1000
-            dur_sec = duration // 1000
-            
-            pos_min = pos_sec // 60
-            pos_sec = pos_sec % 60
-            dur_min = dur_sec // 60
-            dur_sec = dur_sec % 60
-            
-            self.lbl_time.setText(f"{pos_min:02d}:{pos_sec:02d} / {dur_min:02d}:{dur_sec:02d}")
+            self.lbl_time.setText(f"{self._format_time_ms(position)} / {self._format_time_ms(duration)}")
 
     def _on_audio_duration_changed(self, duration):
-        if duration > 0:
-            dur_sec = duration // 1000
-            dur_min = dur_sec // 60
-            dur_sec = dur_sec % 60
-            self.lbl_time.setText(f"00:00 / {dur_min:02d}:{dur_sec:02d}")
+        if self.audio_player:
+            pos = self.audio_player.position()
+            self.lbl_time.setText(f"{self._format_time_ms(pos)} / {self._format_time_ms(duration)}")
 
     def _stop_audio_playback(self):
         from gui.styles import apply_player_play_button_style

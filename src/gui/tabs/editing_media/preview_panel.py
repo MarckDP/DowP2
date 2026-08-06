@@ -144,7 +144,7 @@ class PreviewContainerWidget(QFrame):
         btn_layout.addWidget(self.btn_loop)
 
         # Etiqueta de tiempo
-        self.lbl_video_time = QLabel("00:00 / 00:00")
+        self.lbl_video_time = QLabel("00:00:00.000 / 00:00:00.000")
         self.lbl_video_time.setStyleSheet("font-size: 11px; color: #a6adc8; background: transparent; border: none;")
         btn_layout.addWidget(self.lbl_video_time)
 
@@ -311,16 +311,13 @@ class PreviewContainerWidget(QFrame):
         self.lbl_video_time.setText(f"{pos_str} / {dur_str}")
 
     def _format_time(self, ms):
-        if ms < 0:
+        if not ms or ms < 0:
             ms = 0
-        s = ms // 1000
-        m = s // 60
-        s = s % 60
-        h = m // 60
-        m = m % 60
-        if h > 0:
-            return f"{h:02d}:{m:02d}:{s:02d}"
-        return f"{m:02d}:{s:02d}"
+        ms = int(ms)
+        s, ms_r = divmod(ms, 1000)
+        m, s = divmod(s, 60)
+        h, m = divmod(m, 60)
+        return f"{h:02d}:{m:02d}:{s:02d}.{ms_r:03d}"
 
     def _on_slider_pressed(self):
         self._is_dragging_slider = True

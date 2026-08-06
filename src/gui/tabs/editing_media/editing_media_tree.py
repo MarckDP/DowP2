@@ -269,6 +269,10 @@ class TreeListMixin:
             elif tipo == "collection":
                 nombre = data.get("nombre")
                 media_items = self.controller.get_media_files_in_collection(nombre)
+            elif tipo == "root_physical":
+                media_items = self.controller.get_all_media_files()
+            elif tipo == "root_virtual":
+                media_items = []
             elif tipo == "root_online":
                 # Renderizar resultados de Freesound
                 icon_cloud_list = self._get_cached_media_icon("travel_explore.svg", "#3498db")
@@ -325,6 +329,36 @@ class TreeListMixin:
                     continue
 
                 filtered_items.append(item)
+
+            # Si no hay ítems filtrados, mostrar mensaje descriptivo personalizado de estado vacío
+            if not filtered_items:
+                msg = ""
+                if tipo == "collection":
+                    nombre = data.get("nombre", "") if data else ""
+                    if nombre == "Favoritos":
+                        msg = self.tr("Aquí puedes guardar tus medios locales o web para acceder más rápido a ellos ⭐")
+                    else:
+                        msg = self.tr(f"La colección '{nombre}' está vacía.\nAñade elementos haciendo clic derecho sobre cualquier medio.")
+                elif tipo in ["folder", "subfolder"]:
+                    msg = self.tr("Esta carpeta no contiene archivos multimedia.")
+                elif tipo == "root_virtual":
+                    msg = self.tr("Selecciona o crea una colección a la izquierda para ver sus archivos.")
+                elif search_query:
+                    msg = self.tr(f"No se encontraron medios que coincidan con '{search_query}'.")
+                elif active_filter != "Todos":
+                    msg = self.tr(f"No hay elementos de tipo '{active_filter}' en esta sección.")
+                else:
+                    msg = self.tr("No hay archivos multimedia para mostrar.")
+
+                empty_item = QListWidgetItem(msg)
+                empty_item.setFlags(Qt.NoItemFlags)
+                empty_item.setTextAlignment(Qt.AlignCenter)
+                empty_item.setForeground(QColor("#a6adc8"))
+                f = empty_item.font()
+                f.setPointSize(11)
+                empty_item.setFont(f)
+                self.media_list.addItem(empty_item)
+                return
 
             # 2. Pre-ordenación ultrarrápida en RAM (0ms)
             sort_by = getattr(self, "sort_by", "nombre")
@@ -442,6 +476,8 @@ class TreeListMixin:
                     # Solicitar miniaturas únicamente para los elementos visibles en el viewport
                     from PySide6.QtCore import QTimer
                     QTimer.singleShot(50, self._request_visible_thumbnails)
+                    if hasattr(self, "_recalculate_grid_spacing"):
+                        QTimer.singleShot(20, self._recalculate_grid_spacing)
 
             add_batch(0)
         finally:

@@ -9,12 +9,12 @@ class FragmentManager:
     
     @staticmethod
     def format_time(ms):
-        """Convierte milisegundos a formato HH:MM:SS:mmm."""
+        """Convierte milisegundos a formato HH:MM:SS.mmm."""
         ms = int(ms)
         s, ms_r = divmod(ms, 1000)
         m, s = divmod(s, 60)
         h, m = divmod(m, 60)
-        return f"{h:02d}:{m:02d}:{s:02d}:{ms_r:03d}"
+        return f"{h:02d}:{m:02d}:{s:02d}.{ms_r:03d}"
 
     @staticmethod
     def parse_time(text):

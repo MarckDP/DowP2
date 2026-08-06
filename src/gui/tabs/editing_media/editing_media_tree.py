@@ -632,54 +632,14 @@ class TreeListMixin:
             self.media_list.setUpdatesEnabled(True)
 
     def _apply_active_filters_fast(self):
-        """Aplica filtros de tipo, ordenación y búsqueda en 0ms ocultando/mostrando/reordenando ítems."""
-        selected = self.tree_folders.currentItem()
-        data = selected.data(0, Qt.UserRole) if selected else None
-        if data and data.get("tipo") == "root_online":
-            self._update_media_list()
-            return
-
-        active_filter = self.active_filter
-        search_query = self.search_input.text().lower().strip()
-
-        # Re-ordenar ítems en RAM primero
-        self._sort_media_list_items()
-
-        self.media_list.setUpdatesEnabled(False)
-        try:
-            for i in range(self.media_list.count()):
-                item = self.media_list.item(i)
-                item_data = item.data(Qt.UserRole)
-                if not isinstance(item_data, dict):
-                    continue
-
-                item_type = item_data.get("tipo", "")
-                if item_type == "load_more":
-                    item.setHidden(False)
-                    continue
-
-                item_name = item_data.get("nombre", "").lower()
-
-                type_match = True
-                if active_filter == "Imágenes" and item_type != "imagen":
-                    type_match = False
-                elif active_filter == "Videos" and item_type != "video":
-                    type_match = False
-                elif active_filter == "Audios" and item_type != "audio":
-                    type_match = False
-
-                search_match = True
-                if search_query and search_query not in item_name:
-                    search_match = False
-
-                item.setHidden(not (type_match and search_match))
-        finally:
-            self.media_list.setUpdatesEnabled(True)
+        """Aplica filtros de tipo, ordenación y búsqueda en RAM (0ms)."""
+        self._update_media_list()
 
     def _on_filter_button_clicked(self):
         """Maneja el cambio de filtro y deselecciona los otros botones."""
         sender = self.sender()
         self.active_filter = sender.text()
+        self._max_display_count = 500  # Resetear paginación al cambiar de filtro
         
         # Si filtramos por categoría específica y el modo actual de ordenación es "tipo", revertir a "nombre"
         if self.active_filter != "Todos" and getattr(self, "sort_by", "nombre") == "tipo":
@@ -695,7 +655,7 @@ class TreeListMixin:
         if hasattr(self, "_build_sort_menu"):
             self._build_sort_menu()
 
-        self._apply_active_filters_fast()
+        self._update_media_list()
 
     def _show_tree_context_menu(self, position):
         item = self.tree_folders.itemAt(position)

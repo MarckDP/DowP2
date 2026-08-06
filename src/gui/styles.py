@@ -384,4 +384,27 @@ def apply_volume_control_style(btn_mute, slider):
     """)
 
 
+def create_checkerboard_pixmap(width: int, height: int, square_size: int = 10):
+    """
+    Genera una cuadrícula de transparencia (patrón de ajedrez) para diferenciar fondos transparentes.
+    Utiliza los tokens de color del tema activo ('ajedrez_c1', 'ajedrez_c2').
+    """
+    from PySide6.QtGui import QPixmap, QPainter, QColor
+    pix = QPixmap(width, height)
+    painter = QPainter(pix)
+    c1 = QColor(get_theme_token('ajedrez_c1', '#2a2a2a'))
+    c2 = QColor(get_theme_token('ajedrez_c2', '#181818'))
+
+    rows = (height + square_size - 1) // square_size
+    cols = (width + square_size - 1) // square_size
+
+    for r in range(rows):
+        for c in range(cols):
+            color = c1 if (r + c) % 2 == 0 else c2
+            painter.fillRect(c * square_size, r * square_size, square_size, square_size, color)
+    painter.end()
+    return pix
+
+
+
 

@@ -64,6 +64,8 @@
         "etiqueta_combinado": "#3498db",
         "etiqueta_multi_idioma": "#9b59b6",
         "etiqueta_estrella": "#f1c40f",
-        "etiqueta_peligro": "#e74c3c"
+        "etiqueta_peligro": "#e74c3c",
+        "ajedrez_c1": "#e0e0e0",
+        "ajedrez_c2": "#c8c8c8"
     }
 }

@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
     QSlider,
     QScrollArea,
 )
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import Qt, QSize, QEvent, QPoint
 from PySide6.QtGui import QIcon
 
 # Importar QtMultimedia de forma segura para reproducción de audio
@@ -313,16 +313,57 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         self.btn_view_grid.setIconSize(QSize(14, 14))
         self.btn_view_grid.setStyleSheet(btn_mode_style)
         self.btn_view_grid.clicked.connect(lambda: self.set_view_mode("grid"))
+        self.btn_view_grid.installEventFilter(self)
         btn_bar.addWidget(self.btn_view_grid)
 
-        # Slider para ajustar el tamaño de iconos/miniaturas
+        # Popup emergente flotante para ajustar tamaño de cuadrícula sin estorbar la barra
+        self.grid_scale_popup = QFrame(self, Qt.Popup | Qt.FramelessWindowHint)
+        self.grid_scale_popup.setObjectName("gridScalePopup")
+        self.grid_scale_popup.setAttribute(Qt.WA_TranslucentBackground)
+        self.grid_scale_popup.setFixedWidth(90)
+        self.grid_scale_popup.setStyleSheet(f"""
+            QFrame#gridScalePopup {{
+                background-color: {get_theme_token('panel_fondo', '#181818')};
+                border: 1px solid {get_theme_token('borde_sutil', '#333333')};
+                border-radius: 10px;
+            }}
+        """)
+        popup_layout = QHBoxLayout(self.grid_scale_popup)
+        popup_layout.setContentsMargins(6, 4, 6, 4)
+        popup_layout.setSpacing(0)
+
         self.icon_size_slider = QSlider(Qt.Horizontal)
         self.icon_size_slider.setRange(48, 200)
         self.icon_size_slider.setValue(112)
-        self.icon_size_slider.setFixedWidth(80)
-        self.icon_size_slider.setToolTip(self.tr("Tamaño de Miniaturas"))
+        self.icon_size_slider.setFixedWidth(75)
+        self.icon_size_slider.setToolTip(self.tr("Tamaño de cuadrícula"))
         self.icon_size_slider.valueChanged.connect(self._on_icon_size_changed)
-        btn_bar.addWidget(self.icon_size_slider)
+
+        accent_sec = get_theme_token('acento_secundario', '#1DC038')
+        accent_pri = get_theme_token('acento_primario', '#B9E640')
+        border_color = get_theme_token('borde_normal', '#444444')
+        self.icon_size_slider.setStyleSheet(f"""
+            QSlider::groove:horizontal {{
+                border-radius: 2px;
+                height: 4px;
+                background: {border_color};
+            }}
+            QSlider::sub-page:horizontal {{
+                background: {accent_sec};
+                border-radius: 2px;
+            }}
+            QSlider::handle:horizontal {{
+                background: #ffffff;
+                width: 10px;
+                margin-top: -3px;
+                margin-bottom: -3px;
+                border-radius: 5px;
+            }}
+            QSlider::handle:horizontal:hover {{
+                background: {accent_pri};
+            }}
+        """)
+        popup_layout.addWidget(self.icon_size_slider)
 
         # Botón de Ordenar Por
         self.btn_sort_by = QPushButton(self.tr("Nombre"))
@@ -750,13 +791,12 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
                 self.btn_view_list.setChecked(False)
                 self.btn_view_grid.setIcon(get_colored_svg_icon("grid_view.svg", "#000000", size=14))
                 self.btn_view_list.setIcon(get_colored_svg_icon("view_list.svg", "#FFFFFF", size=14))
-                self.icon_size_slider.setVisible(True)
                 self.media_list.setViewMode(QListWidget.IconMode)
                 self.media_list.setResizeMode(QListWidget.Adjust)
                 self.media_list.setMovement(QListWidget.Static)
                 self.media_list.setWordWrap(True)
                 self.media_list.setSpacing(8)
-                self.media_list.setUniformItemSizes(False)
+                self.media_list.setUniformItemSizes(True)
                 self.media_list.setBatchSize(50)
                 self._apply_icon_size(self.icon_size_slider.value())
             else:
@@ -764,7 +804,8 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
                 self.btn_view_grid.setChecked(False)
                 self.btn_view_list.setIcon(get_colored_svg_icon("view_list.svg", "#000000", size=14))
                 self.btn_view_grid.setIcon(get_colored_svg_icon("grid_view.svg", "#FFFFFF", size=14))
-                self.icon_size_slider.setVisible(False)
+                if hasattr(self, "grid_scale_popup"):
+                    self.grid_scale_popup.hide()
                 self.media_list.setViewMode(QListWidget.ListMode)
                 self.media_list.setWordWrap(False)
                 self.media_list.setSpacing(2)
@@ -777,6 +818,30 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
             self.media_list.update()
         finally:
             self.media_list.setUpdatesEnabled(True)
+
+    def eventFilter(self, obj, event):
+        if hasattr(self, "btn_view_grid") and obj == self.btn_view_grid:
+            if event.type() == QEvent.Enter:
+                if getattr(self, "view_mode", "grid") == "grid":
+                    self._show_grid_scale_popup()
+        return super().eventFilter(obj, event)
+
+    def _show_grid_scale_popup(self):
+        if hasattr(self, "grid_scale_popup") and hasattr(self, "btn_view_grid"):
+            self.grid_scale_popup.adjustSize()
+            popup_w = self.grid_scale_popup.width() if self.grid_scale_popup.width() > 0 else 90
+            
+            btn_global_pos = self.btn_view_grid.mapToGlobal(QPoint(0, 0))
+            btn_w = self.btn_view_grid.width()
+            btn_h = self.btn_view_grid.height()
+            
+            center_x = btn_global_pos.x() + (btn_w // 2)
+            popup_x = center_x - (popup_w // 2)
+            popup_y = btn_global_pos.y() + btn_h + 4
+            
+            self.grid_scale_popup.move(QPoint(popup_x, popup_y))
+            self.grid_scale_popup.show()
+            self.grid_scale_popup.raise_()
 
     def _on_icon_size_changed(self, val: int):
         if self.view_mode == "grid":

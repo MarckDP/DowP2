@@ -89,9 +89,15 @@ class TreeListMixin:
                 item.setIcon(0, get_svg_icon("star.svg"))
             item.setData(0, Qt.UserRole, {"tipo": "collection", "nombre": col_name})
 
-        # Restaurar selección anterior
-        if selected_data:
-            self._restore_tree_selection(self.tree_folders.invisibleRootItem(), selected_data)
+        # Restaurar selección anterior guardada en sesión o seleccionar Directorios por defecto (primera vez)
+        saved_target = getattr(self.controller, "last_selected_tree_node", None)
+        target = selected_data or saved_target
+        restored = False
+        if target:
+            restored = self._restore_tree_selection(self.tree_folders.invisibleRootItem(), target)
+
+        if not restored:
+            self.tree_folders.setCurrentItem(self.physical_root)
 
         # Restaurar estado de botones
         self._update_button_states()
@@ -283,10 +289,14 @@ class TreeListMixin:
                     self.media_list.addItem(list_item)
                     return
 
+                icon_sz = self.icon_size_slider.value() if hasattr(self, "icon_size_slider") else 100
+                grid_hint = QSize(icon_sz + 32, icon_sz + 46)
+
                 for item in self.online_results:
                     list_item = QListWidgetItem(item["nombre"])
                     if is_grid:
                         list_item.setIcon(icon_cloud_grid)
+                        list_item.setSizeHint(grid_hint)
                     else:
                         list_item.setIcon(icon_cloud_list)
                     list_item.setData(Qt.UserRole, item)
@@ -581,6 +591,10 @@ class TreeListMixin:
         self._update_button_states()
         
         data = item.data(0, Qt.UserRole)
+        if data:
+            self.controller.last_selected_tree_node = data
+            self.controller.save_data()
+
         if data and data.get("tipo") == "root_online":
             self.current_page = 1
             if not self.online_results:

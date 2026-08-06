@@ -2,10 +2,15 @@
 import os
 from PySide6.QtWidgets import QFrame, QLabel, QVBoxLayout, QHBoxLayout, QSizePolicy, QWidget, QPushButton, QSlider
 from PySide6.QtCore import Qt, QUrl, QSize
-from PySide6.QtGui import QPixmap, QIcon
+from PySide6.QtGui import QPixmap, QIcon, QPainter, QColor
 
 from core.logger.logger_manager import logger
-from gui.styles import get_theme_token, apply_player_play_button_style, apply_player_loop_button_style
+from gui.styles import (
+    get_theme_token,
+    apply_player_play_button_style,
+    apply_player_loop_button_style,
+    create_checkerboard_pixmap,
+)
 from gui.tabs.editing_media.editing_media_icons import get_colored_svg_icon
 from gui.widgets.volume_control import VolumeControlWidget
 
@@ -220,7 +225,12 @@ class PreviewContainerWidget(QFrame):
                 Qt.KeepAspectRatio,
                 Qt.SmoothTransformation
             )
-            self.placeholder_label.setPixmap(scaled)
+            # Dibujar el patrón de ajedrez debajo de la imagen para mostrar transparencias claramente
+            bg = create_checkerboard_pixmap(scaled.width(), scaled.height(), square_size=10)
+            painter = QPainter(bg)
+            painter.drawPixmap(0, 0, scaled)
+            painter.end()
+            self.placeholder_label.setPixmap(bg)
         else:
             self.placeholder_label.setText(f"[ Error al cargar Imagen ]\n\n{os.path.basename(path)}")
             self.placeholder_label.setStyleSheet("color: #ff6c6b; font-weight: bold; font-size: 13px;")

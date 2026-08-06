@@ -171,7 +171,7 @@ class EditingMediaController(QObject):
                     saved_auth = data.get("freesound_auth", None)
                     if saved_auth and isinstance(saved_auth, dict):
                         self.freesound_auth.update(saved_auth)
-                    # Ignorar freesound_api_key legacy — OAuth2 lo reemplaza
+                    self.last_selected_tree_node = data.get("last_selected_tree_node", None)
                 logger.info(f"EditingMediaLogic: Datos cargados desde {self.db_path}")
             except Exception as e:
                 logger.error(f"EditingMediaLogic: Error leyendo base de datos: {e}")
@@ -179,13 +179,14 @@ class EditingMediaController(QObject):
             self.save_data()
 
     def save_data(self):
-        """Guarda carpetas indexadas, colecciones y auth OAuth2 en indexed_media.json."""
+        """Guarda carpetas indexadas, colecciones, auth OAuth2 y nodo seleccionado en indexed_media.json."""
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         try:
             data = {
                 "indexed_folders": self.indexed_folders,
                 "collections": self.collections,
-                "freesound_auth": self.freesound_auth
+                "freesound_auth": self.freesound_auth,
+                "last_selected_tree_node": getattr(self, "last_selected_tree_node", None)
             }
             with open(self.db_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=4, ensure_ascii=False)

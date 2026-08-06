@@ -79,7 +79,7 @@ class PlaybackMixin:
 
                     thumb_path = ThumbnailCacheManager.get_instance().get_cached_thumbnail_path(path)
                     if thumb_path and os.path.exists(thumb_path):
-                        pix = QPixmap(thumb_path).scaled(64, 64, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+                        pix = QPixmap(thumb_path).scaled(64, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation)
                         self.lbl_cover_art.setPixmap(pix)
                     else:
                         self.lbl_cover_art.setPixmap(fallback_icon.pixmap(32, 32))

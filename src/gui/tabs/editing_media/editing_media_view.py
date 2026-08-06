@@ -819,7 +819,7 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         # Actualizar carátula en el panel de audio si el archivo coincide
         if hasattr(self, "current_playing_path") and self.current_playing_path == file_path:
             if hasattr(self, "lbl_cover_art") and hasattr(self, "current_playing_type") and self.current_playing_type == "audio":
-                pix = QPixmap(thumb_path).scaled(64, 64, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+                pix = QPixmap(thumb_path).scaled(64, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation)
                 self.lbl_cover_art.setPixmap(pix)
 
     def _build_sort_menu(self):

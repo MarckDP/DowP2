@@ -38,6 +38,9 @@ class DependencyCheckWorker(QThread):
     all_ready = Signal()                          # Todo listo
     failed = Signal(str)                          # Mensaje de error
 
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
     def run(self):
         try:
             from core.setup.setup_manager import verify_all_dependencies
@@ -472,6 +475,8 @@ class SplashScreen(QWidget):
         self.fade_anim.start()
 
     def _emit_ready(self):
+        if self.worker and self.worker.isRunning():
+            self.worker.wait(1000)
         self.hide()
         self.ready.emit(self._main_window)
 
@@ -482,7 +487,7 @@ class SplashScreen(QWidget):
         self.show()
         QApplication.processEvents()
 
-        self.worker = DependencyCheckWorker()
+        self.worker = DependencyCheckWorker(self)
         self.worker.status_update.connect(self._on_status_update, Qt.QueuedConnection)
         self.worker.dependency_started.connect(self._on_dep_started, Qt.QueuedConnection)
         self.worker.dependency_progress.connect(self._on_dep_progress, Qt.QueuedConnection)

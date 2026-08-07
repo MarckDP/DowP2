@@ -26,8 +26,8 @@ class DependencyInstallerWorker(QThread):
     dependency_finished = Signal(str, bool, str) # dep_id, éxito, versión/mensaje
     all_finished = Signal(bool)                  # éxito general (True/False)
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, parent=None):
+        super().__init__(parent)
         self.is_cancelled = False
 
     def run(self):
@@ -313,7 +313,7 @@ class DependencyDialog(QDialog):
             widgets["progress_bar"].hide()
 
         # Lanzar hilo secundario
-        self.worker = DependencyInstallerWorker()
+        self.worker = DependencyInstallerWorker(self)
         
         # Conectar señales explícitamente usando Qt.QueuedConnection para forzar la ejecución en el hilo principal de la GUI
         self.worker.dependency_started.connect(self.on_dep_started, Qt.QueuedConnection)
@@ -358,6 +358,8 @@ class DependencyDialog(QDialog):
     @Slot(bool)
     def on_all_finished(self, overall_success):
         """Se activa cuando el hilo secundario ha finalizado."""
+        if self.worker and self.worker.isRunning():
+            self.worker.wait(1000)
         if overall_success:
             self.status_message.setText(self.tr("¡Todas las dependencias instaladas correctamente! Iniciando..."))
             self.status_message.setStyleSheet(f"color: {get_theme_token('estado_exito', '#40d66b')}; font-size: 11px; font-weight: bold;")

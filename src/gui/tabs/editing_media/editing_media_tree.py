@@ -230,6 +230,18 @@ class TreeListMixin:
             if isinstance(curr_data, dict):
                 target_path = curr_data.get("ruta")
 
+        def restore_selection():
+            if target_path:
+                idx = self.media_model.find_item_index_by_path(target_path)
+                if idx.isValid():
+                    from PySide6.QtCore import QItemSelectionModel
+                    if hasattr(self, "media_table") and self.media_table.selectionModel():
+                        self.media_table.selectionModel().select(idx, QItemSelectionModel.ClearAndSelect | QItemSelectionModel.Rows)
+                        self.media_table.setCurrentIndex(idx)
+                    if hasattr(self, "media_list") and self.media_list.selectionModel():
+                        self.media_list.selectionModel().select(idx, QItemSelectionModel.ClearAndSelect)
+                        self.media_list.setCurrentIndex(idx)
+
         # Detener temporizador de búsqueda anterior si lo hubiera
         if hasattr(self, "_batch_timer") and self._batch_timer and self._batch_timer.isActive():
             self._batch_timer.stop()
@@ -304,6 +316,7 @@ class TreeListMixin:
                         item["dest_path"] = found_path
 
                 self.media_model.set_data(self.online_results)
+                restore_selection()
                 return
 
             else:
@@ -394,13 +407,7 @@ class TreeListMixin:
             self.media_model.set_data(display_items)
 
             # Re-seleccionar si es necesario
-            if target_path:
-                idx = self.media_model.find_item_index_by_path(target_path)
-                if idx.isValid():
-                    if hasattr(self, "media_table"):
-                        self.media_table.setCurrentIndex(idx)
-                    if hasattr(self, "media_list"):
-                        self.media_list.setCurrentIndex(idx)
+            restore_selection()
 
         except Exception as e:
             logger.error(f"EditingMediaTab: Error al actualizar lista de medios: {e}", exc_info=True)

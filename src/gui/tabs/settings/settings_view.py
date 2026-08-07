@@ -4,6 +4,7 @@ from PySide6.QtCore import Qt, Signal
 from core.utils.i18n import logger
 
 from .pages.general_page import GeneralPage
+from .pages.memory_cache_page import MemoryCachePage
 from .pages.network_page import NetworkPage
 from .pages.downloads_page import DownloadsPage
 from .pages.cookies_page import CookiesPage
@@ -57,6 +58,7 @@ class SettingsTab(QWidget):
 
         # Buttons
         self.btn_general = SidebarButton(self.tr("General"))
+        self.btn_memory_cache = SidebarButton(self.tr("Memoria y Caché"))
         self.btn_network = SidebarButton(self.tr("Conexión y Red"))
         self.btn_downloads = SidebarButton(self.tr("Descargas"))
         self.btn_cookies = SidebarButton(self.tr("Cookies"))
@@ -67,16 +69,18 @@ class SettingsTab(QWidget):
         self.btn_console = SidebarButton(self.tr("Consola"))
 
         self.btn_group.addButton(self.btn_general, 0)
-        self.btn_group.addButton(self.btn_network, 1)
-        self.btn_group.addButton(self.btn_downloads, 2)
-        self.btn_group.addButton(self.btn_cookies, 3)
-        self.btn_group.addButton(self.btn_deps, 4)
-        self.btn_group.addButton(self.btn_labels, 5)
-        self.btn_group.addButton(self.btn_integrations, 6)
-        self.btn_group.addButton(self.btn_models, 7)
-        self.btn_group.addButton(self.btn_console, 8)
+        self.btn_group.addButton(self.btn_memory_cache, 1)
+        self.btn_group.addButton(self.btn_network, 2)
+        self.btn_group.addButton(self.btn_downloads, 3)
+        self.btn_group.addButton(self.btn_cookies, 4)
+        self.btn_group.addButton(self.btn_deps, 5)
+        self.btn_group.addButton(self.btn_labels, 6)
+        self.btn_group.addButton(self.btn_integrations, 7)
+        self.btn_group.addButton(self.btn_models, 8)
+        self.btn_group.addButton(self.btn_console, 9)
 
         sidebar_layout.addWidget(self.btn_general)
+        sidebar_layout.addWidget(self.btn_memory_cache)
         sidebar_layout.addWidget(self.btn_network)
         sidebar_layout.addWidget(self.btn_downloads)
         sidebar_layout.addWidget(self.btn_cookies)
@@ -107,6 +111,7 @@ class SettingsTab(QWidget):
         
         # Pages
         self.page_general = GeneralPage()
+        self.page_memory_cache = MemoryCachePage()
         self.page_network = NetworkPage()
         self.page_downloads = DownloadsPage()
         self.page_cookies = CookiesPage()
@@ -117,20 +122,21 @@ class SettingsTab(QWidget):
         self.page_placeholder_console = QWidget()  # Consola
 
         self.stacked_widget.addWidget(self.page_general)       # 0
-        self.stacked_widget.addWidget(self.page_network)       # 1
-        self.stacked_widget.addWidget(self.page_downloads)     # 2
-        self.stacked_widget.addWidget(self.page_cookies)       # 3
-        self.stacked_widget.addWidget(self.page_deps)          # 4
-        self.stacked_widget.addWidget(self.page_labels)        # 5
-        self.stacked_widget.addWidget(self.page_integrations)  # 6
-        self.stacked_widget.addWidget(self.page_placeholder_models)   # 7
-        self.stacked_widget.addWidget(self.page_placeholder_console)  # 8
+        self.stacked_widget.addWidget(self.page_memory_cache)  # 1
+        self.stacked_widget.addWidget(self.page_network)       # 2
+        self.stacked_widget.addWidget(self.page_downloads)     # 3
+        self.stacked_widget.addWidget(self.page_cookies)       # 4
+        self.stacked_widget.addWidget(self.page_deps)          # 5
+        self.stacked_widget.addWidget(self.page_labels)        # 6
+        self.stacked_widget.addWidget(self.page_integrations)  # 7
+        self.stacked_widget.addWidget(self.page_placeholder_models)   # 8
+        self.stacked_widget.addWidget(self.page_placeholder_console)  # 9
 
         content_layout.addWidget(self.stacked_widget)
         self.main_layout.addWidget(self.content_area, 1)
 
         # Connections
-        self.btn_group.idClicked.connect(self.stacked_widget.setCurrentIndex)
+        self.btn_group.idClicked.connect(self._on_tab_changed)
         
         # Pass signals from general page
         self.page_general.language_changed.connect(self.language_changed.emit)
@@ -139,5 +145,12 @@ class SettingsTab(QWidget):
         # Default selection
         self.btn_general.setChecked(True)
         self.stacked_widget.setCurrentIndex(0)
+
+
+    def _on_tab_changed(self, index: int):
+        self.stacked_widget.setCurrentIndex(index)
+        if index == 1:
+            self.page_memory_cache.refresh_stats()
+
 
 

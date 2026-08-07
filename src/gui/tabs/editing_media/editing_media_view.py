@@ -684,14 +684,26 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         buttons_layout = QHBoxLayout()
         buttons_layout.setSpacing(8)
 
-        # Botón para revelar en el explorador de archivos
-        self.btn_reveal = AnimatedButton(self.tr("Revelar en Explorador"))
+        # Botón para revelar/abrir en el explorador de archivos
+        self.btn_reveal = AnimatedButton(self.tr("Abrir en Explorador"))
+        self.btn_reveal.setObjectName("pathToolButton")
+        self.btn_reveal.setFixedHeight(34)
+        reveal_icon = get_svg_icon("folder_open.svg")
+        if not reveal_icon.isNull():
+            self.btn_reveal.setIcon(reveal_icon)
+            self.btn_reveal.setIconSize(QSize(20, 20))
         self.btn_reveal.setEnabled(False)
         self.btn_reveal.clicked.connect(self._on_reveal_clicked)
         buttons_layout.addWidget(self.btn_reveal, 1)
 
-        # Botón para descargar archivo de Freesound
-        self.btn_download = AnimatedButton(self.tr("Descargar Audio"))
+        # Botón para descargar archivo de Freesound (medios web)
+        self.btn_download = AnimatedButton(self.tr("Descargar Medio"))
+        self.btn_download.setObjectName("pathToolButton")
+        self.btn_download.setFixedHeight(34)
+        dl_icon = get_svg_icon("download.svg")
+        if not dl_icon.isNull():
+            self.btn_download.setIcon(dl_icon)
+            self.btn_download.setIconSize(QSize(20, 20))
         self.btn_download.setEnabled(False)
         self.btn_download.setVisible(False)
         self.btn_download.clicked.connect(self._on_download_clicked)

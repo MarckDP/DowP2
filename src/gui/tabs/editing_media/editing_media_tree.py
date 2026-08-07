@@ -992,10 +992,10 @@ class TreeListMixin:
         is_remote = file_path.startswith("http://") or file_path.startswith("https://")
         menu.addSeparator()
         if is_remote:
-            act_download = menu.addAction(self.tr("Descargar Audio"))
+            act_download = menu.addAction(get_svg_icon("download.svg"), self.tr("Descargar Medio"))
             act_download.triggered.connect(self._on_download_clicked)
         else:
-            act_reveal = menu.addAction(self.tr("Revelar en Explorador"))
+            act_reveal = menu.addAction(get_svg_icon("folder_open.svg"), self.tr("Abrir en Explorador"))
             act_reveal.triggered.connect(self._on_reveal_clicked)
 
         menu.exec(self.media_list.mapToGlobal(position))

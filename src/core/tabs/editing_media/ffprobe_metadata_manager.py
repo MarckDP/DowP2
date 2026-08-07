@@ -64,6 +64,19 @@ class FFprobeMetadataManager(QObject):
         except Exception as e:
             logger.error(f"FFprobeMetadataManager: Error al guardar caché: {e}")
 
+    def clear_cache(self) -> int:
+        """Limpia la caché de metadatos en memoria y disco, retornando la cantidad de entradas eliminadas."""
+        with QMutexLocker(self.mutex):
+            count = len(self.cache)
+            self.cache.clear()
+            if os.path.exists(CACHE_FILE):
+                try:
+                    os.remove(CACHE_FILE)
+                except Exception as e:
+                    logger.error(f"FFprobeMetadataManager: Error al eliminar archivo de caché: {e}")
+            logger.info(f"FFprobeMetadataManager: Se eliminaron {count} entradas de metadatos en caché.")
+            return count
+
     def get_metadata_instant(self, path: str, tipo: str) -> dict:
         """
         Retorna metadatos de forma INSTANTÁNEA (0ms):

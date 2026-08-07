@@ -149,45 +149,6 @@ class GeneralPage(QWidget):
         self.adobe_row.addWidget(self.adobe_switch)
         self.content_layout.addLayout(self.adobe_row)
 
-        # --- SECCIÓN: ALMACENAMIENTO & CACHÉ ---
-        self.cache_sec_label = QLabel(self.tr("Almacenamiento & Caché"))
-        self.cache_sec_label.setObjectName("settingsSectionTitle")
-        self.content_layout.addWidget(self.cache_sec_label)
-
-        self.cache_row = QHBoxLayout()
-        self.cache_vbox = QVBoxLayout()
-        self.cache_label = QLabel(self.tr("Caché de miniaturas"))
-        self.cache_label.setObjectName("settingsLabel")
-        self.cache_desc = QLabel(self.tr("Elimina las miniaturas generadas de imágenes y videos almacenadas en disco."))
-        self.cache_desc.setStyleSheet("color: #888888; font-size: 11px;")
-        
-        self.cache_vbox.addWidget(self.cache_label)
-        self.cache_vbox.addWidget(self.cache_desc)
-
-        self.btn_clear_cache = QPushButton(self.tr("Limpiar Caché"))
-        self.btn_clear_cache.setFixedHeight(30)
-        self.btn_clear_cache.setStyleSheet(f"""
-            QPushButton {{
-                background-color: #2d2d2d;
-                color: #ffffff;
-                border: 1px solid #3d3d3d;
-                border-radius: 6px;
-                padding: 4px 12px;
-                font-size: 11px;
-                font-weight: bold;
-            }}
-            QPushButton:hover {{
-                background-color: #e74c3c;
-                border-color: #c0392b;
-            }}
-        """)
-        self.btn_clear_cache.clicked.connect(self.on_clear_thumbnail_cache_clicked)
-
-        self.cache_row.addLayout(self.cache_vbox)
-        self.cache_row.addStretch()
-        self.cache_row.addWidget(self.btn_clear_cache)
-        self.content_layout.addLayout(self.cache_row)
-
         # Finalizar setup del scroll area
         self.scroll_area.setWidget(self.scroll_content)
         self.main_layout.addWidget(self.scroll_area)
@@ -202,14 +163,6 @@ class GeneralPage(QWidget):
         self.paste_switch.toggled.connect(self.on_auto_paste_toggled)
         self.adobe_switch.toggled.connect(self.on_adobe_compat_toggled)
 
-    def on_clear_thumbnail_cache_clicked(self):
-        from core.tabs.editing_media.thumbnail_cache_manager import ThumbnailCacheManager
-        deleted_count = ThumbnailCacheManager.get_instance().clear_cache()
-        QMessageBox.information(
-            self,
-            self.tr("Caché Limpiada"),
-            self.tr(f"Se han eliminado {deleted_count} miniaturas en caché correctamente.")
-        )
 
     def update_switch_colors(self):
         config = get_config()

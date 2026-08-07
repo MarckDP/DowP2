@@ -10,17 +10,28 @@ class FreesoundSearchThread(QThread):
     finished_search = Signal(dict)
     error_search = Signal(str)
 
-    def __init__(self, client, query, token, page=1, sort_order=None, parent=None):
+    def __init__(self, client, query, token, page=1, sort_order=None, duration_min=None, duration_max=None, license_type=None, parent=None):
         super().__init__(parent)
         self.client = client
         self.query = query
         self.token = token
         self.page = page
         self.sort_order = sort_order
+        self.duration_min = duration_min
+        self.duration_max = duration_max
+        self.license_type = license_type
 
     def run(self):
         try:
-            results = self.client.search(self.query, self.token, sort_order=self.sort_order, page=self.page)
+            results = self.client.search(
+                self.query,
+                self.token,
+                duration_min=self.duration_min,
+                duration_max=self.duration_max,
+                license_type=self.license_type,
+                sort_order=self.sort_order,
+                page=self.page
+            )
             self.finished_search.emit(results)
         except Exception as e:
             self.error_search.emit(str(e))
@@ -126,9 +137,12 @@ class FreesoundMixin:
         query = self.search_input.text().strip()
         
         sort_order = None
+        duration_max = None
         if not query:
             # Si el cuadro de búsqueda está vacío, cargar automáticamente sonidos recientes ("Más nuevos")
+            # y limitar a audios menores a 5 minutos (300 segundos) para mostrar solo efectos/audios cortos
             sort_order = "Más nuevos"
+            duration_max = 300
             
         if not hasattr(self, "_active_freesound_threads"):
             self._active_freesound_threads = set()
@@ -149,7 +163,15 @@ class FreesoundMixin:
         if hasattr(self, "search_spinner"):
             self.search_spinner.start()
 
-        self.online_search_thread = FreesoundSearchThread(self.freesound_client, query, token, self.current_page, sort_order, self)
+        self.online_search_thread = FreesoundSearchThread(
+            self.freesound_client,
+            query,
+            token,
+            page=self.current_page,
+            sort_order=sort_order,
+            duration_max=duration_max,
+            parent=self
+        )
         self.online_search_thread.finished_search.connect(self._on_online_search_success)
         self.online_search_thread.error_search.connect(self._on_online_search_error)
         

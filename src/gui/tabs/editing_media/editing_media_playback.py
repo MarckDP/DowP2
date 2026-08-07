@@ -29,28 +29,29 @@ class PlaybackMixin:
             pass
         return 0.0
 
-    def _on_media_clicked(self, list_item):
-        if not list_item:
+    def _on_media_clicked(self, index):
+        if not index or not hasattr(index, "isValid") or not index.isValid():
             return
-        if hasattr(list_item, "childCount"): # QTreeWidgetItem
-            item_data = list_item.data(0, Qt.UserRole)
-        elif hasattr(list_item, "data"): # QListWidgetItem
-            item_data = list_item.data(Qt.UserRole)
-        else:
-            return
+            
+        item_data = self.media_model.get_item(index)
 
         if not item_data or not isinstance(item_data, dict):
             return
 
         if item_data.get("tipo") == "load_more":
-            self._max_display_count = 999999
+            self._max_display_count = getattr(self, "_max_display_count", 500) + 500
             self._update_media_list()
             return
 
 
-        name = item_data["nombre"]
-        tipo = item_data["tipo"]
-        path = item_data["ruta"]
+        name = item_data.get("nombre", "Desconocido")
+        tipo = item_data.get("tipo", "desconocido")
+        path = item_data.get("ruta")
+        
+        if not path:
+            self._clear_metadata()
+            return
+            
         is_remote = path.startswith("http://") or path.startswith("https://")
 
         # Asegurar metadatos para archivos locales (necesitamos la duración exacta)
@@ -253,9 +254,6 @@ class PlaybackMixin:
                 if not sel_label and getattr(self, "last_selected_web_label", None):
                     sel_label = self.last_selected_web_label
                     item_data["selected_label"] = sel_label
-                    list_item.setData(Qt.UserRole, item_data)
-
-
 
                 idx = self.combo_tags.findText(sel_label) if sel_label else 0
                 self.combo_tags.blockSignals(True)
@@ -474,38 +472,34 @@ class PlaybackMixin:
             except Exception as e:
                 logger.error(f"PlaybackMixin: Error aplicando fuente en caché para {url}: {e}")
 
-    def _prefetch_next_freesound_item(self, current_item):
+    def _prefetch_next_freesound_item(self, current_index):
         """Pre-carga de forma transparente únicamente el archivo de audio N+1 (siguiente fila) y su forma de onda."""
-        if not hasattr(self, "media_list") or not self.media_list:
+        if not current_index or not current_index.isValid():
             return
-        current_row = self.media_list.row(current_item)
-        if current_row < 0:
-            return
-        next_row = current_row + 1
-        if next_row < self.media_list.count():
-            next_item = self.media_list.item(next_row)
-            if next_item:
-                next_data = next_item.data(Qt.UserRole)
-                if next_data and next_data.get("tipo") == "audio":
-                    next_path = next_data.get("ruta", "")
-                    if next_path.startswith("http://") or next_path.startswith("https://"):
-                        from core.tabs.editing_media.freesound_preview_cache import FreesoundPreviewCacheManager
-                        fs_cache = FreesoundPreviewCacheManager.get_instance()
-                        # Pre-cargar audio N+1 en la caché LRU de 10 elementos
-                        fs_cache.request_preview(next_path)
+            
+        next_row = current_index.row() + 1
+        if next_row < self.media_model.rowCount():
+            next_data = self.media_model.get_item_by_row(next_row)
+            if next_data and next_data.get("tipo") == "audio":
+                next_path = next_data.get("ruta", "")
+                if next_path.startswith("http://") or next_path.startswith("https://"):
+                    from core.tabs.editing_media.freesound_preview_cache import FreesoundPreviewCacheManager
+                    fs_cache = FreesoundPreviewCacheManager.get_instance()
+                    # Pre-cargar audio N+1 en la caché LRU de 10 elementos
+                    fs_cache.request_preview(next_path)
 
-                        # Pre-cargar forma de onda N+1 si está disponible
-                        if "images" in next_data and next_data["images"].get("waveform_m"):
-                            wf_url = next_data["images"]["waveform_m"]
-                            if not fs_cache.get_cached_waveform_peaks(wf_url):
-                                from core.tabs.editing_media.editing_media_logic import RemoteWaveformLoaderThread
-                                w_width = self.waveform_widget.width()
-                                num_peaks = max(50, min((w_width - 24) // 5, 180)) if w_width > 50 else 80
-                                self._prefetch_wf_thread = RemoteWaveformLoaderThread(wf_url, num_peaks, self)
-                                self._prefetch_wf_thread.finished.connect(
-                                    lambda peaks, u=wf_url: fs_cache.cache_waveform_peaks(u, peaks) if peaks else None
-                                )
-                                self._prefetch_wf_thread.start()
+                    # Pre-cargar forma de onda N+1 si está disponible
+                    if "images" in next_data and next_data["images"].get("waveform_m"):
+                        wf_url = next_data["images"]["waveform_m"]
+                        if not fs_cache.get_cached_waveform_peaks(wf_url):
+                            from core.tabs.editing_media.editing_media_logic import RemoteWaveformLoaderThread
+                            w_width = self.waveform_widget.width()
+                            num_peaks = max(50, min((w_width - 24) // 5, 180)) if w_width > 50 else 80
+                            self._prefetch_wf_thread = RemoteWaveformLoaderThread(wf_url, num_peaks, self)
+                            self._prefetch_wf_thread.finished.connect(
+                                lambda peaks, u=wf_url: fs_cache.cache_waveform_peaks(u, peaks) if peaks else None
+                            )
+                            self._prefetch_wf_thread.start()
 
 
 

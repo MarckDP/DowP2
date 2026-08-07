@@ -292,9 +292,7 @@ class FreesoundMixin:
                         self._exec_online_search()
                 return
 
-        # Solicitar miniaturas para los elementos actualmente visibles al desplazarse
-        if hasattr(self, "_request_visible_thumbnails"):
-            self._request_visible_thumbnails()
+
 
     def _on_download_clicked(self):
         item_data = self._get_current_media_data() if hasattr(self, "_get_current_media_data") else None
@@ -365,14 +363,9 @@ class FreesoundMixin:
             progress_dialog.close()
             if success:
                 item_data["dest_path"] = dest_path
-                selected_item.setData(Qt.UserRole, item_data)
-                
-                # Pintar icono en verde
-                from gui.styles import get_theme_token
-                from gui.tabs.editing_media.editing_media_icons import get_colored_svg_icon
-                accent_green = get_theme_token("acento_primario", "#B9E640")
-                is_grid = getattr(self, "view_mode", "grid") == "grid"
-                selected_item.setIcon(get_colored_svg_icon("music_note.svg", accent_green, size=32 if is_grid else 18))
+                idx = self.media_model.find_item_index_by_path(item_data["ruta"])
+                if idx.isValid():
+                    self.media_model.dataChanged.emit(idx, idx, [])
 
                 # Registrar en la colección 'Descargados'
                 self.controller.add_to_downloaded_collection(dest_path)

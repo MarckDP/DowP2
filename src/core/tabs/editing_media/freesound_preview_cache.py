@@ -7,7 +7,8 @@ from PySide6.QtCore import QObject, Signal, QRunnable, QThreadPool
 from core.logger.logger_manager import logger
 from core.utils.paths import get_freesound_cache_dir
 
-MAX_FREESOUND_CACHE_FILES = 10
+MAX_FREESOUND_CACHE_FILES = 50
+MAX_WAVEFORM_CACHE_ITEMS = 500
 
 
 class FreesoundPreviewWorkerSignals(QObject):
@@ -229,7 +230,7 @@ class FreesoundPreviewCacheManager(QObject):
                 self._waveform_access_order.remove(waveform_url)
             self._waveform_access_order.append(waveform_url)
         else:
-            if len(self._waveform_access_order) >= MAX_FREESOUND_CACHE_FILES:
+            if len(self._waveform_access_order) >= MAX_WAVEFORM_CACHE_ITEMS:
                 oldest_url = self._waveform_access_order.pop(0)
                 self._waveform_peaks_cache.pop(oldest_url, None)
 

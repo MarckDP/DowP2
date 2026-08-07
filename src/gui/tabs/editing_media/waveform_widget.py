@@ -192,4 +192,17 @@ class AudioWaveformWidget(QWidget):
                 ratio = max(0.0, min(ratio, 1.0))
                 self.seek_requested.emit(ratio)
                 self.set_playback_ratio(ratio)
-            super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        """Permite arrastrar el cabezal de reproducción (scrubbing) a través de la onda."""
+        if event.buttons() & Qt.LeftButton:
+            x = event.position().x()
+            start_x = 10
+            end_x = self.width() - 10
+            span = end_x - start_x
+            if span > 0:
+                ratio = (x - start_x) / span
+                ratio = max(0.0, min(ratio, 1.0))
+                self.seek_requested.emit(ratio)
+                self.set_playback_ratio(ratio)
+        super().mouseMoveEvent(event)

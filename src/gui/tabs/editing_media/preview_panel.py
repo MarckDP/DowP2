@@ -324,15 +324,22 @@ class PreviewContainerWidget(QFrame):
 
     def _on_slider_pressed(self):
         self._is_dragging_slider = True
+        if self.media_player:
+            self._was_playing_before_drag = (self.media_player.playbackState() == QMediaPlayer.PlayingState)
+            if self._was_playing_before_drag:
+                self.media_player.pause()
 
     def _on_slider_moved(self, position):
         if self.media_player:
+            self.media_player.setPosition(position)
             self._update_time_label(position, self.media_player.duration())
 
     def _on_slider_released(self):
         self._is_dragging_slider = False
         if self.media_player:
             self.media_player.setPosition(self.time_slider.value())
+            if getattr(self, "_was_playing_before_drag", False):
+                self.media_player.play()
 
     def _on_playback_state_changed(self, state):
         is_playing = (state == QMediaPlayer.PlayingState)

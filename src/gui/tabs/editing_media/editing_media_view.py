@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QSlider,
     QScrollArea,
+    QApplication,
 )
 
 from PySide6.QtCore import Qt, QSize, QEvent, QPoint
@@ -188,16 +189,16 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         # Aplicar hojas de estilo para contenedores y listas
         self._apply_custom_styles()
 
-    def set_license_info(self, title: str, desc: str, color_hex: str, credits_text: str = None):
-        """Actualiza el panel de licencias con los datos (Título, Descripción, Color, y opcionalmente el texto TASL)."""
+    def set_license_info(self, title: str, desc: str, color_hex: str, credits_text: str = None, icon_name: str = "copyright.svg"):
+        """Actualiza el panel de licencias con los datos (Título, Descripción, Color, y opcionalmente el texto TASL e icono)."""
         self.lbl_license_text.setText(title)
         self.lbl_license_text.setStyleSheet(f"font-size: 12px; font-weight: bold; color: {color_hex};")
         
         self.lbl_license_desc.setText(desc)
         
         # Color the icon
-        copyright_icon = get_colored_svg_icon("copyright.svg", color_hex)
-        self.lbl_license_icon.setPixmap(copyright_icon.pixmap(16, 16))
+        icon = get_colored_svg_icon(icon_name, color_hex)
+        self.lbl_license_icon.setPixmap(icon.pixmap(16, 16))
 
         self.license_panel.setStyleSheet(f"""
             QFrame#licensePanel {{

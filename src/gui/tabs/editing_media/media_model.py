@@ -203,9 +203,13 @@ class MediaTableModel(QAbstractTableModel):
         self.endResetModel()
 
     def get_item(self, index: QModelIndex):
-        if not index.isValid(): return None
-        if 0 <= index.row() < len(self._media_items):
+        if index.isValid() and 0 <= index.row() < len(self._media_items):
             return self._media_items[index.row()]
+        return None
+
+    def get_item_by_row(self, row: int):
+        if 0 <= row < len(self._media_items):
+            return self._media_items[row]
         return None
 
     def find_item_index_by_path(self, path: str):

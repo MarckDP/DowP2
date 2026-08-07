@@ -283,27 +283,31 @@ class PlaybackMixin:
             source_url = f"https://freesound.org/s/{item_id}/" if item_id else "https://freesound.org"
             
             if "zero" in url_lower or "cc0" in url_lower:
-                lic_title = self.tr("✅ Dominio Público (CC0)")
+                lic_title = self.tr("Dominio Público (CC0)")
                 lic_desc = self.tr("Puedes usar este sonido para cualquier propósito (incluso comercial) sin necesidad de dar créditos.")
                 lic_color = "#1DC038" # Green
                 tasl = ""
+                icon_name = "check_circle.svg"
             elif "by-nc" in url_lower:
-                lic_title = self.tr("⚠️ Uso No Comercial (CC-BY-NC)")
+                lic_title = self.tr("Uso No Comercial (CC-BY-NC)")
                 lic_desc = self.tr("No puedes usar este sonido en videos monetizados o proyectos comerciales. Es obligatorio dar crédito al autor.")
                 lic_color = "#E67E22" # Orange
                 tasl = f'"{title}" por {author} ({source_url}) está licenciado bajo CC-BY-NC ({license_url})'
+                icon_name = "warning.svg"
             elif "by" in url_lower:
-                lic_title = self.tr("ℹ️ Requiere Atribución (CC-BY)")
+                lic_title = self.tr("Requiere Atribución (CC-BY)")
                 lic_desc = self.tr("Uso comercial permitido, pero es obligatorio dar crédito al autor copiando el texto TASL.")
                 lic_color = "#40A9E6" # Blue
                 tasl = f'"{title}" por {author} ({source_url}) está licenciado bajo CC-BY ({license_url})'
+                icon_name = "attribution.svg"
             else:
                 lic_title = self.tr("Licencia Desconocida")
                 lic_desc = self.tr("Revisa la licencia original antes de usar este sonido.")
                 lic_color = "#A6ADC8" # Gray
                 tasl = ""
+                icon_name = "error.svg"
                 
-            self.set_license_info(lic_title, lic_desc, lic_color, tasl)
+            self.set_license_info(lic_title, lic_desc, lic_color, tasl, icon_name)
             
             self.metadata_header_labels["video_codec"].setText(self.tr("Usuario:"))
             self.metadata_header_labels["video_profile"].setText(self.tr("Licencia:"))

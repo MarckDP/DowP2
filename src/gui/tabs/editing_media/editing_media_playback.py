@@ -280,7 +280,7 @@ class PlaybackMixin:
             title = item_data.get("nombre", "Sonido")
             author = item_data.get("username", "Autor Desconocido")
             item_id = item_data.get("id", "")
-            source_url = item_data.get("url", f"https://freesound.org/s/{item_id}/" if item_id else "https://freesound.org")
+            source_url = item_data.get("url") or (f"https://freesound.org/s/{item_id}/" if item_id else "https://freesound.org")
             author_url = f"https://freesound.org/people/{author}/" if author != "Autor Desconocido" else ""
             
             if "zero" in url_lower or "cc0" in url_lower:
@@ -293,13 +293,19 @@ class PlaybackMixin:
                 lic_title = self.tr("Uso No Comercial (CC-BY-NC)")
                 lic_desc = self.tr("No puedes usar este sonido en videos monetizados o proyectos comerciales. Es obligatorio dar crédito al autor.")
                 lic_color = "#E67E22" # Orange
-                tasl = f'"{title}" por {author} ({author_url}) obtenida de {source_url} está licenciada bajo CC-BY-NC ({license_url})'
+                cc_url = "https://creativecommons.org/licenses/by-nc/4.0/"
+                tasl = self.tr('"{title}" por {author} ({author_url}) obtenida de {source_url} está licenciada bajo CC-BY-NC ({cc_url})').format(
+                    title=title, author=author, author_url=author_url, source_url=source_url, cc_url=cc_url
+                )
                 icon_name = "warning.svg"
             elif "by" in url_lower:
                 lic_title = self.tr("Requiere Atribución (CC-BY)")
                 lic_desc = self.tr("Uso comercial permitido, pero es obligatorio dar crédito al autor copiando el texto TASL.")
                 lic_color = "#40A9E6" # Blue
-                tasl = f'"{title}" por {author} ({author_url}) obtenida de {source_url} está licenciada bajo CC-BY ({license_url})'
+                cc_url = "https://creativecommons.org/licenses/by/4.0/"
+                tasl = self.tr('"{title}" por {author} ({author_url}) obtenida de {source_url} está licenciada bajo CC-BY ({cc_url})').format(
+                    title=title, author=author, author_url=author_url, source_url=source_url, cc_url=cc_url
+                )
                 icon_name = "attribution.svg"
             else:
                 lic_title = self.tr("Licencia Desconocida")

@@ -211,6 +211,20 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         if credits_text:
             self._current_credits_text = credits_text
             self.btn_copy_credits.setVisible(True)
+            self.btn_copy_credits.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: transparent;
+                    border: 1px solid {get_theme_token('borde_normal', '#444444')};
+                    border-radius: 4px;
+                    color: {get_theme_token('texto_secundario', '#a6adc8')};
+                    padding: 4px 10px;
+                }}
+                QPushButton:hover {{
+                    background-color: {get_theme_token('seleccion_fondo', '#2d2d2d')};
+                    border: 1px solid {color_hex};
+                    color: {get_theme_token('texto_principal', '#ffffff')};
+                }}
+            """)
         else:
             self._current_credits_text = ""
             self.btn_copy_credits.setVisible(False)

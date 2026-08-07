@@ -212,7 +212,7 @@ class PlaybackMixin:
                         apply_player_play_button_style(self.btn_play, is_playing=True, icon_size=14)
 
                     if is_remote:
-                        self._prefetch_next_freesound_item(list_item)
+                        self._prefetch_next_freesound_item(index)
                 except Exception as e:
                     logger.error(f"EditingMediaTab: Error cargando fuente de audio: {e}")
 

@@ -13,6 +13,8 @@ class MediaTableModel(QAbstractTableModel):
     Modelo de datos para la lista de medios.
     Soporta visualización tanto en QListView (IconMode) como en QTreeView (Tabla).
     """
+    global_sort_requested = Signal(int, bool) # column, is_ascending
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._media_items = []
@@ -213,6 +215,17 @@ class MediaTableModel(QAbstractTableModel):
 
     def sort(self, column: int, order=Qt.AscendingOrder):
         """Implementación nativa de ordenamiento para soportar clics en las cabeceras de QTreeView."""
+        is_remote = False
+        if len(self._media_items) > 0:
+            for item in self._media_items:
+                if item.get("tipo") not in ("empty", "load_more"):
+                    is_remote = item.get("es_remoto", False) or item.get("ruta", "").startswith("http")
+                    break
+                    
+        if not is_remote:
+            self.global_sort_requested.emit(column, order == Qt.AscendingOrder)
+            return
+
         self.layoutAboutToBeChanged.emit()
         
         reverse = (order == Qt.DescendingOrder)

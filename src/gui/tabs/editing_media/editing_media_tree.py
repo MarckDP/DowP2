@@ -364,6 +364,17 @@ class TreeListMixin:
                     return item.get("size_bytes", 0)
                 elif sort_by == "tipo":
                     return item.get("tipo", "")
+                elif sort_by == "duration":
+                    d = item.get("duration", 0)
+                    if isinstance(d, (int, float)): return float(d)
+                    if "duración" in item:
+                        dur_str = str(item["duración"])
+                        if ":" in dur_str:
+                            parts = dur_str.split(":")
+                            if len(parts) == 2:
+                                try: return float(parts[0])*60 + float(parts[1])
+                                except: return 0.0
+                    return 0.0
                 return item.get("nombre", "").lower()
 
             filtered_items.sort(key=sort_key, reverse=not sort_asc)
@@ -737,8 +748,11 @@ class TreeListMixin:
         self._update_tree_view()
 
     def _show_media_context_menu(self, position):
-        item = self.media_list.itemAt(position)
-        if not item:
+        is_list_view = getattr(self, "view_mode", "grid") == "list" and hasattr(self, "media_table")
+        view_widget = self.media_table if is_list_view else self.media_list
+        index = view_widget.indexAt(position)
+        
+        if not index.isValid():
             menu = QMenu(self)
             menu.setStyleSheet(f"""
                 QMenu {{
@@ -809,14 +823,14 @@ class TreeListMixin:
             act_list.setChecked(getattr(self, "view_mode", "grid") == "list")
             act_list.triggered.connect(lambda: self.set_view_mode("list"))
 
-            menu.exec(self.media_list.mapToGlobal(position))
+            menu.exec(view_widget.mapToGlobal(position))
             return
 
-        item_data = item.data(Qt.UserRole)
+        item_data = self.media_model.get_item(index)
         if not item_data:
             return
 
-        file_path = item_data["ruta"]
+        file_path = item_data.get("ruta", "")
         menu = QMenu(self)
 
         act_refresh = menu.addAction(get_contrast_svg_icon("refresh.svg"), self.tr("Actualizar Lista"))
@@ -865,7 +879,7 @@ class TreeListMixin:
             act_reveal = menu.addAction(get_svg_icon("folder_open.svg"), self.tr("Abrir en Explorador"))
             act_reveal.triggered.connect(self._on_reveal_clicked)
 
-        menu.exec(self.media_list.mapToGlobal(position))
+        menu.exec(view_widget.mapToGlobal(position))
 
     def _add_file_to_collection(self, col_name, file_path):
         success = self.controller.add_to_collection(col_name, file_path)
@@ -877,6 +891,11 @@ class TreeListMixin:
     def _remove_file_from_collection(self, col_name, file_path):
         self.controller.remove_from_collection(col_name, file_path)
         self._update_media_list()
+
+    def _on_sort_option_selected(self, key: str, label: str):
+        self.sort_by = key
+        if hasattr(self, "_update_media_list"):
+            self._update_media_list()
 
     def _set_sort_direction(self, asc: bool):
         self.sort_ascending = asc

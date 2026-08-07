@@ -414,6 +414,7 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
 
         # Modelo de Datos MVC
         self.media_model = MediaTableModel(self)
+        self.media_model.global_sort_requested.connect(self._on_global_sort_requested)
 
         # 1. Modo Lista Tabular (QTreeView multi-columna estilo SoundQ)
         self.media_table = QTreeView()
@@ -1124,6 +1125,24 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
             idx = self._get_current_media_item()
             if idx and idx.isValid():
                 self.media_model.dataChanged.emit(idx, idx, [])
+
+    def _on_global_sort_requested(self, column: int, is_ascending: bool):
+        """Maneja la petición de ordenamiento global (local) originada por clic en las cabeceras del modelo MVC."""
+        mapping = {
+            1: "nombre",
+            2: "nombre", # Descripción no implementada en ordenamiento local aún, fallback a nombre
+            3: "nombre", # Licencia
+            4: "duration",
+            5: "nombre", # Library
+            6: "tipo",
+            7: "nombre"  # Sample Rate
+        }
+        self.sort_by = mapping.get(column, "nombre")
+        self.sort_ascending = is_ascending
+        
+        # Dispara la actualización completa (donde se ordenan los 10,000 items locales)
+        if hasattr(self, "_update_media_list"):
+            self._update_media_list()
 
     def _on_local_search_timer_timeout(self):
         """Callback cuando vence el timer de retardo (250ms) para búsquedas locales."""

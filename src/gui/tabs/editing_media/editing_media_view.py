@@ -495,8 +495,8 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         header.setVisible(True)
         header.setStretchLastSection(False)
         
-        # Ocultar scrollbars horizontales y manejar anchos
-        self.media_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        # Habilitar scrollbars horizontales y manejar anchos
+        self.media_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         # Los anchos iniciales se ajustarán luego
         
         # Conectar eventos de la tabla

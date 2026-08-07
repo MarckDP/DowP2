@@ -94,7 +94,17 @@ def main():
     splash.ready.connect(on_splash_ready)
     splash.failed.connect(on_splash_failed)
     splash.start()
-    
+
+    def on_app_exit():
+        logger.info("Cerrando servicios en segundo plano...")
+        try:
+            from core.utils.queue_manager import get_queue_manager
+            get_queue_manager().stop_worker()
+        except Exception as e:
+            logger.debug(f"Error deteniendo QueueManager en salida: {e}")
+
+    app.aboutToQuit.connect(on_app_exit)
+
     logger.info("Application event loop started")
     sys.exit(app.exec())
 

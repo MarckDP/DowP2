@@ -341,11 +341,19 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         self.btn_view_grid.installEventFilter(self)
         btn_bar.addWidget(self.btn_view_grid)
 
-        # Popup emergente flotante para ajustar tamaño de cuadrícula sin estorbar la barra
-        self.grid_scale_popup = QFrame(self, Qt.Popup | Qt.FramelessWindowHint)
+        # Temporizador para ocultar popup al perder hover (puente extendido de 400ms)
+        from PySide6.QtCore import QTimer
+        self.hide_popup_timer = QTimer(self)
+        self.hide_popup_timer.setSingleShot(True)
+        self.hide_popup_timer.setInterval(400)
+        self.hide_popup_timer.timeout.connect(self._hide_grid_scale_popup)
+
+        # Popup emergente flotante (usamos Tool para no robar foco modalmente)
+        self.grid_scale_popup = QFrame(self, Qt.Tool | Qt.FramelessWindowHint)
         self.grid_scale_popup.setObjectName("gridScalePopup")
+        self.grid_scale_popup.installEventFilter(self)
         self.grid_scale_popup.setAttribute(Qt.WA_TranslucentBackground)
-        self.grid_scale_popup.setFixedWidth(90)
+        self.grid_scale_popup.setFixedWidth(100)
         self.grid_scale_popup.setStyleSheet(f"""
             QFrame#gridScalePopup {{
                 background-color: {get_theme_token('panel_fondo', '#181818')};
@@ -852,11 +860,27 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         cfg["editing_media_view_mode"] = mode
         save_config(cfg)
 
+    def _hide_grid_scale_popup(self):
+        if hasattr(self, "grid_scale_popup"):
+            self.grid_scale_popup.hide()
+
     def eventFilter(self, obj, event):
         if hasattr(self, "btn_view_grid") and obj == self.btn_view_grid:
             if event.type() == QEvent.Enter:
                 if getattr(self, "view_mode", "grid") == "grid":
+                    if hasattr(self, "hide_popup_timer"):
+                        self.hide_popup_timer.stop()
                     self._show_grid_scale_popup()
+            elif event.type() == QEvent.Leave:
+                if hasattr(self, "hide_popup_timer"):
+                    self.hide_popup_timer.start()
+        elif hasattr(self, "grid_scale_popup") and obj == self.grid_scale_popup:
+            if event.type() == QEvent.Enter:
+                if hasattr(self, "hide_popup_timer"):
+                    self.hide_popup_timer.stop()
+            elif event.type() == QEvent.Leave:
+                if hasattr(self, "hide_popup_timer"):
+                    self.hide_popup_timer.start()
         elif hasattr(self, "media_list") and self.media_list and obj == self.media_list.viewport():
             if event.type() == QEvent.Resize:
                 if getattr(self, "view_mode", "grid") == "grid":
@@ -916,7 +940,8 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
             
             center_x = btn_global_pos.x() + (btn_w // 2)
             popup_x = center_x - (popup_w // 2)
-            popup_y = btn_global_pos.y() + btn_h + 4
+            # Solapar ligeramente el popup sobre el botón (-2 px) para asegurar hitbox continuo
+            popup_y = btn_global_pos.y() + btn_h - 2
             
             self.grid_scale_popup.move(QPoint(popup_x, popup_y))
             self.grid_scale_popup.show()

@@ -471,8 +471,13 @@ class QueueManager(QObject):
         self._worker.start()
 
     def __del__(self):
-        if hasattr(self, '_worker'):
-            self._worker.stop()
+        self.stop_worker()
+
+    def stop_worker(self):
+        """Detiene el hilo secundario de la cola limpiamente."""
+        with QMutexLocker(self._mutex):
+            if hasattr(self, '_worker') and self._worker and self._worker.isRunning():
+                self._worker.stop()
 
     def is_paused(self) -> bool:
         with QMutexLocker(self._mutex):

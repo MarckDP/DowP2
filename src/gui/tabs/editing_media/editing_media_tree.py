@@ -249,6 +249,15 @@ class TreeListMixin:
         if hasattr(self, "_batch_timer") and self._batch_timer and self._batch_timer.isActive():
             self._batch_timer.stop()
 
+        # Guardar la ruta del archivo seleccionado antes de limpiar la lista
+        target_path = getattr(self, "current_playing_path", None)
+        if not target_path and hasattr(self, "media_list") and self.media_list.currentItem():
+            curr_data = self.media_list.currentItem().data(Qt.UserRole)
+            if isinstance(curr_data, dict):
+                target_path = curr_data.get("ruta")
+
+        was_blocked = self.media_list.signalsBlocked()
+        self.media_list.blockSignals(True)
         self.media_list.setUpdatesEnabled(False)
         try:
             self.media_list.clear()
@@ -473,6 +482,15 @@ class TreeListMixin:
 
                         self.media_list.addItem(more_item)
 
+                    # Restaurar selección previa si el ítem sigue en la lista
+                    if target_path:
+                        for i in range(self.media_list.count()):
+                            it = self.media_list.item(i)
+                            d = it.data(Qt.UserRole)
+                            if isinstance(d, dict) and d.get("ruta") == target_path:
+                                self.media_list.setCurrentItem(it)
+                                break
+
                     # Solicitar miniaturas únicamente para los elementos visibles en el viewport
                     from PySide6.QtCore import QTimer
                     QTimer.singleShot(50, self._request_visible_thumbnails)
@@ -481,6 +499,7 @@ class TreeListMixin:
 
             add_batch(0)
         finally:
+            self.media_list.blockSignals(was_blocked)
             self.media_list.setUpdatesEnabled(True)
             if hasattr(self, "_recalculate_grid_spacing"):
                 self._recalculate_grid_spacing()
@@ -618,7 +637,7 @@ class TreeListMixin:
                 self._clear_metadata()
 
     def _on_tree_current_item_changed(self, current, previous):
-        if current:
+        if current and current != previous:
             self._on_tree_item_clicked(current, 0)
 
     def _on_current_item_changed(self, current, previous):
@@ -628,7 +647,18 @@ class TreeListMixin:
     def _on_tree_item_clicked(self, item, column):
         self._update_button_states()
         
-        data = item.data(0, Qt.UserRole)
+        data = item.data(0, Qt.UserRole) if item else None
+        
+        # Evitar re-ejecución duplicada si ya es el nodo seleccionado y renderizado
+        if getattr(self, "_active_tree_item", None) == item and getattr(self, "_active_tree_data", None) == data:
+            return
+            
+        self._active_tree_item = item
+        self._active_tree_data = data
+
+        # Limpiar selección previa del reproductor al cambiar de carpeta en el árbol
+        self.current_playing_path = None
+        
         if data:
             self.controller.last_selected_tree_node = data
             self.controller.save_data()

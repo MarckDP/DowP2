@@ -131,7 +131,13 @@ class ThumbnailCacheManager(QObject):
 
         cached_path = self.get_cached_thumbnail_path(file_path)
         if cached_path:
-            self._qicon_cache[file_path] = QIcon(cached_path)
+            pix = QPixmap(cached_path)
+            if not pix.isNull():
+                sq_pix = make_square_thumbnail_pixmap(pix, 256)
+                icon = QIcon(sq_pix)
+            else:
+                icon = QIcon(cached_path)
+            self._qicon_cache[file_path] = icon
             self.thumbnail_loaded.emit(file_path, cached_path)
             return
 

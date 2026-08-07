@@ -1,10 +1,13 @@
+import os
+import platform
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
                                  QPushButton, QFrame, QScrollArea, QProgressBar, QMessageBox)
-from PySide6.QtCore import Qt, Signal, QThread
+from PySide6.QtCore import Qt, Signal, QThread, QUrl
+from PySide6.QtGui import QDesktopServices
 from core.utils.i18n import logger
-import platform
+from gui.styles import get_theme_token
 
-from core.setup.ffmpeg_setup import check_ffmpeg, download_ffmpeg, get_local_version as ffmpeg_local, get_latest_remote_version as ffmpeg_remote
+from core.setup.ffmpeg_setup import check_ffmpeg, download_ffmpeg, get_local_version as ffmpeg_local, get_latest_remote_version as ffmpeg_remote, get_ffmpeg_dir
 from core.setup.deno_setup import check_deno, download_deno, get_local_version as deno_local, get_latest_remote_version as deno_remote
 from core.setup.ytdlp_setup import check_ytdlp, download_ytdlp, get_local_version as ytdlp_local, get_latest_remote_version as ytdlp_remote
 
@@ -348,33 +351,69 @@ class DependenciesPage(QWidget):
         scroll_area.setWidget(scroll_content)
         layout.addWidget(scroll_area)
         
-        # Bottom Check Updates Button
+        # Bottom Action Buttons Layout
         bottom_layout = QHBoxLayout()
+        bottom_layout.setSpacing(10)
         bottom_layout.addStretch()
         
-        self.btn_check_updates = QPushButton("Buscar Actualizaciones")
+        # Botón para abrir la carpeta contenedora de dependencias
+        self.btn_open_folder = QPushButton(self.tr("Abrir Carpeta"))
+        self.btn_open_folder.setCursor(Qt.PointingHandCursor)
+        self.btn_open_folder.setToolTip(self.tr("Abrir la carpeta donde se almacenan los binarios de las dependencias"))
+        self.btn_open_folder.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {get_theme_token('fondo_elemento', '#2d2d2d')};
+                color: {get_theme_token('texto_principal', '#ffffff')};
+                border: 1px solid {get_theme_token('borde_normal', '#444444')};
+                padding: 8px 18px;
+                font-weight: bold;
+                font-size: 12px;
+                border-radius: 6px;
+            }}
+            QPushButton:hover {{
+                background-color: {get_theme_token('seleccion_fondo', '#3d3d3d')};
+                border-color: {get_theme_token('acento_primario', '#B9E640')};
+            }}
+        """)
+        self.btn_open_folder.clicked.connect(self.open_dependencies_folder)
+        bottom_layout.addWidget(self.btn_open_folder)
+
+        # Botón para buscar actualizaciones (con contraste de texto mejorado)
+        self.btn_check_updates = QPushButton(self.tr("Buscar Actualizaciones"))
         self.btn_check_updates.setCursor(Qt.PointingHandCursor)
         self.btn_check_updates.setStyleSheet("""
             QPushButton {
                 background-color: #FF8C00; 
-                color: white; 
+                color: #000000; 
                 padding: 8px 20px; 
                 font-weight: bold;
+                font-size: 12px;
                 border: none;
-                border-radius: 5px;
+                border-radius: 6px;
             }
             QPushButton:hover {
-                background-color: #E67E22;
+                background-color: #FFA500;
+                color: #000000;
             }
             QPushButton:disabled {
-                background-color: #555555;
-                color: #888888;
+                background-color: #333333;
+                color: #777777;
             }
         """)
         self.btn_check_updates.clicked.connect(self.check_all_updates)
         bottom_layout.addWidget(self.btn_check_updates)
         
         layout.addLayout(bottom_layout)
+
+    def open_dependencies_folder(self):
+        """Abre la carpeta de dependencias en el explorador de archivos."""
+        try:
+            deps_dir = os.path.dirname(get_ffmpeg_dir())
+            if not os.path.exists(deps_dir):
+                os.makedirs(deps_dir, exist_ok=True)
+            QDesktopServices.openUrl(QUrl.fromLocalFile(deps_dir))
+        except Exception as e:
+            logger.error(f"Error abriendo la carpeta de dependencias: {e}")
 
     def check_all_updates(self):
         self.btn_check_updates.setDisabled(True)

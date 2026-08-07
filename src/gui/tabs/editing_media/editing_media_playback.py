@@ -3,6 +3,7 @@ import os
 import re
 import datetime
 import subprocess
+import platform
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QImageReader, QImage
 from PySide6.QtMultimedia import QMediaPlayer
@@ -95,8 +96,10 @@ class PlaybackMixin:
                 self.waveform_thread.wait()
 
             if hasattr(self, "remote_waveform_thread") and self.remote_waveform_thread and self.remote_waveform_thread.isRunning():
-                self.remote_waveform_thread.terminate()
-                self.remote_waveform_thread.wait()
+                try:
+                    self.remote_waveform_thread.finished.disconnect()
+                except Exception:
+                    pass
                 
             # Calcular cantidad ideal de picos basándose en el ancho actual del widget
             w_width = self.waveform_widget.width()
@@ -276,140 +279,37 @@ class PlaybackMixin:
             self.audio_panel.setVisible(False)
 
     def _extract_rich_metadata(self, path: str, tipo: str) -> dict:
-        meta = {
-            "creado": "-",
-            "modificado": "-",
-            "duración": "-",
-            "resolución": "-",
-            "video_codec": "-",
-            "video_profile": "-",
-            "fps": "-",
-            "aspecto": "-",
-            "bitrate_video": "-",
-            "color": "-",
-            "audio_codec": "-",
-            "samplerate": "-",
-            "canales": "-",
-            "bitrate_audio": "-"
-        }
-        
-        if not os.path.exists(path):
-            return meta
-            
-        # 1. Fechas físicas del archivo
-        try:
-            stat_info = os.stat(path)
-            # Fecha de modificación
-            mtime = datetime.datetime.fromtimestamp(stat_info.st_mtime)
-            meta["modificado"] = mtime.strftime("%Y-%m-%d %H:%M:%S")
-            
-            # Fecha de creación (Windows st_ctime es creación; Unix es metadatos)
-            ctime = datetime.datetime.fromtimestamp(stat_info.st_ctime)
-            meta["creado"] = ctime.strftime("%Y-%m-%d %H:%M:%S")
-        except Exception as e:
-            logger.error(f"EditingMediaTab: Error al obtener fechas del archivo: {e}")
-            
-        # 2. Detalles específicos según tipo
-        if tipo == "imagen":
-            try:
-                reader = QImageReader(path)
-                if reader.canRead():
-                    size = reader.size()
-                    meta["resolución"] = f"{size.width()}x{size.height()}"
-                    fmt = reader.format().data().decode('utf-8', errors='ignore').upper()
-                    meta["video_codec"] = fmt
-                    
-                    img = QImage(path)
-                    if not img.isNull():
-                        fmt_name = str(img.format()).split('.')[-1]
-                        meta["color"] = fmt_name
-            except Exception as e:
-                logger.error(f"EditingMediaTab: Error al extraer metadatos de imagen: {e}")
-                
-        elif tipo in ("video", "audio"):
-            from core.setup.ffmpeg_setup import get_ffmpeg_dir, get_platform_info, check_ffmpeg
-            if check_ffmpeg():
-                try:
-                    info = get_platform_info()
-                    ffmpeg_exe = os.path.join(get_ffmpeg_dir(), info["binary_name"])
-                    cmd = [ffmpeg_exe, "-hide_banner", "-i", path]
-                    
-                    startupinfo = None
-                    if os.name == 'nt':
-                        startupinfo = subprocess.STARTUPINFO()
-                        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                        
-                    process = subprocess.Popen(
-                        cmd,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        startupinfo=startupinfo,
-                        text=True,
-                        encoding='utf-8',
-                        errors='ignore'
-                    )
-                    _, stderr = process.communicate(timeout=5)
-                    
-                    # Parsear duración
-                    dur_match = re.search(r"Duration:\s*(\d{2}:\d{2}:\d{2}(?:\.\d+)?)", stderr)
-                    if dur_match:
-                        dur = dur_match.group(1)
-                        if '.' in dur:
-                            dur = dur.split('.')[0]
-                        meta["duración"] = dur
-                        
-                    # Parsear Video Stream
-                    video_match = re.search(r"Stream #\d+:\d+.*Video:\s*([^\n]+)", stderr)
-                    if video_match:
-                        video_info = video_match.group(1)
-                        parts = [p.strip() for p in video_info.split(',')]
-                        
-                        codec_part = parts[0]
-                        profile_m = re.search(r"\(([^)]+)\)", codec_part)
-                        if profile_m:
-                            meta["video_profile"] = profile_m.group(1)
-                        codec_clean = re.sub(r"\s*\([^)]*\)", "", codec_part)
-                        meta["video_codec"] = codec_clean.upper()
-                        
-                        for part in parts:
-                            res_m = re.search(r"\b(\d{2,5})x(\d{2,5})\b", part)
-                            if res_m:
-                                meta["resolución"] = res_m.group(0)
-                            if "DAR" in part or "SAR" in part:
-                                meta["aspecto"] = part
-                                
-                        for part in parts:
-                            if "fps" in part:
-                                meta["fps"] = part
-                            if "kb/s" in part:
-                                meta["bitrate_video"] = part
-                                
-                        for part in parts:
-                            if any(x in part.lower() for x in ["yuv", "rgb", "bgr", "gray", "nv12", "nv21", "p010"]):
-                                meta["color"] = part
-                                
-                    # Parsear Audio Stream
-                    audio_match = re.search(r"Stream #\d+:\d+.*Audio:\s*([^\n]+)", stderr)
-                    if audio_match:
-                        audio_info = audio_match.group(1)
-                        parts = [p.strip() for p in audio_info.split(',')]
-                        
-                        codec_part = parts[0]
-                        codec_clean = re.sub(r"\s*\([^)]*\)", "", codec_part)
-                        meta["audio_codec"] = codec_clean.upper()
-                        
-                        if len(parts) > 1:
-                            meta["samplerate"] = parts[1]
-                        if len(parts) > 2:
-                            meta["canales"] = parts[2]
-                        for part in parts:
-                            if "kb/s" in part:
-                                meta["bitrate_audio"] = part
-                                
-                except Exception as e:
-                    logger.error(f"EditingMediaTab: Error al extraer metadatos vía ffmpeg: {e}")
-                    
-        return meta
+        from core.tabs.editing_media.ffprobe_metadata_manager import FFprobeMetadataManager
+        return FFprobeMetadataManager.get_instance().get_metadata_instant(path, tipo)
+
+    def _on_async_metadata_ready(self, path: str, meta: dict):
+        """Callback cuando la extracción de ffprobe en segundo plano finaliza."""
+        if not hasattr(self, "_metadata_cache"):
+            self._metadata_cache = {}
+        self._metadata_cache[path] = meta
+
+        # Si el archivo procesado es el que se está mostrando actualmente en la UI, actualizar panel
+        if getattr(self, "current_playing_path", None) == path:
+            if hasattr(self, "metadata_labels"):
+                self.metadata_labels["creado"].setText(meta.get("creado", "-"))
+                self.metadata_labels["modificado"].setText(meta.get("modificado", "-"))
+                self.metadata_labels["duración"].setText(meta.get("duración", "-"))
+                self.metadata_labels["resolución"].setText(meta.get("resolución", "-"))
+                self.metadata_labels["video_codec"].setText(meta.get("video_codec", "-"))
+                self.metadata_labels["video_profile"].setText(meta.get("video_profile", "-"))
+                self.metadata_labels["fps"].setText(meta.get("fps", "-"))
+                self.metadata_labels["aspecto"].setText(meta.get("aspecto", "-"))
+                self.metadata_labels["bitrate_video"].setText(meta.get("bitrate_video", "-"))
+                self.metadata_labels["color"].setText(meta.get("color", "-"))
+                self.metadata_labels["audio_codec"].setText(meta.get("audio_codec", "-"))
+                self.metadata_labels["samplerate"].setText(meta.get("samplerate", "-"))
+                self.metadata_labels["canales"].setText(meta.get("canales", "-"))
+                self.metadata_labels["bitrate_audio"].setText(meta.get("bitrate_audio", "-"))
+
+            if getattr(self, "current_playing_type", None) == "audio" and hasattr(self, "lbl_audio_sub"):
+                dur_str = meta.get("duración", "-")
+                self.lbl_audio_sub.setText(f"AUDIO • {dur_str}")
+
 
     # ── Métodos de Control para el Reproductor de Audio Central ─────────────
     def _on_play_clicked(self):
@@ -505,14 +405,25 @@ class PlaybackMixin:
             return
         item_data = selected.data(Qt.UserRole)
         if item_data:
-            path = item_data["ruta"]
-            if os.path.exists(path):
-                if os.name == "nt":
-                    os.startfile(os.path.dirname(path))
-                else:
-                    from PySide6.QtGui import QDesktopServices
-                    from PySide6.QtCore import QUrl
-                    QDesktopServices.openUrl(QUrl.fromLocalFile(os.path.dirname(path)))
+            path = item_data.get("ruta")
+            if path and os.path.exists(path):
+                norm_path = os.path.normpath(path)
+                sys_os = platform.system().lower()
+                try:
+                    if sys_os == "windows":
+                        subprocess.Popen(['explorer', '/select,', norm_path])
+                    elif sys_os == "darwin":
+                        subprocess.Popen(['open', '-R', norm_path])
+                    else:
+                        # Linux: intenta nautilus --select o abre carpeta contenedora
+                        try:
+                            subprocess.Popen(['nautilus', '--select', norm_path])
+                        except Exception:
+                            from PySide6.QtGui import QDesktopServices
+                            from PySide6.QtCore import QUrl
+                            QDesktopServices.openUrl(QUrl.fromLocalFile(os.path.dirname(norm_path)))
+                except Exception as e:
+                    logger.error(f"Error al revelar archivo en explorador: {e}")
 
     def _on_toggle_audio_loop(self):
         """Alterna el modo de repetición del reproductor de audio."""

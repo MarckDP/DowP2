@@ -64,6 +64,16 @@ def get_ffmpeg_dir():
         os.makedirs(ffmpeg_dir)
     return ffmpeg_dir
 
+def get_ffprobe_path():
+    """Returns the full executable path of ffprobe if present, else None."""
+    info = get_platform_info()
+    probe_name = "ffprobe.exe" if info["os"] == "windows" else "ffprobe"
+    probe_path = os.path.join(get_ffmpeg_dir(), probe_name)
+    if os.path.exists(probe_path):
+        return probe_path
+    return None
+
+
 _ffmpeg_checked = False
 
 def check_ffmpeg():
@@ -137,32 +147,56 @@ def download_ffmpeg(version=None, progress_callback=None):
             with zipfile.ZipFile(temp_file, 'r') as zip_ref:
                 zip_ref.extractall(extract_path)
         
-        # 3. Find executable and move to ffmpeg folder
-        logger.info("Locating executable file...")
+        # 3. Find executable files (keep ffmpeg and ffprobe, exclude/delete ffplay)
+        logger.info("Locating executable files (ffmpeg, ffprobe)...")
         exe_found = False
-        target_bin = info["binary_name"]
+        target_ffmpeg = info["binary_name"]
+        target_ffprobe = "ffprobe.exe" if info["os"] == "windows" else "ffprobe"
+        target_ffplay = "ffplay.exe" if info["os"] == "windows" else "ffplay"
         
+        # Remove ffplay from ffmpeg_dir if present
+        ffplay_in_dir = os.path.join(ffmpeg_dir, target_ffplay)
+        if os.path.exists(ffplay_in_dir):
+            try:
+                os.remove(ffplay_in_dir)
+                logger.info(f"Removed unnecessary binary: {target_ffplay}")
+            except Exception as e:
+                logger.warning(f"Could not remove {target_ffplay}: {e}")
+
         for root, dirs, files in os.walk(extract_path):
             for file in files:
-                # In macOS direct zip, file is 'ffmpeg'. In GyanD, it's 'ffmpeg.exe'. In BtbN, it's 'ffmpeg'
-                if file == target_bin or (info["os"] == "windows" and file.endswith(".exe") and "ffmpeg" in file.lower()):
+                file_lower = file.lower()
+                # Ignore ffplay
+                if file_lower == target_ffplay.lower() or "ffplay" in file_lower:
+                    continue
+                
+                # Check for ffmpeg
+                if file == target_ffmpeg or (info["os"] == "windows" and file_lower == "ffmpeg.exe"):
                     src_file = os.path.join(root, file)
-                    dst_file = os.path.join(ffmpeg_dir, target_bin)
+                    dst_file = os.path.join(ffmpeg_dir, target_ffmpeg)
                     if os.path.exists(dst_file):
                         os.remove(dst_file)
                     logger.debug(f"Moving {file} to {ffmpeg_dir}")
                     shutil.move(src_file, dst_file)
                     exe_found = True
-                    break
-            if exe_found:
-                break
+
+                # Check for ffprobe
+                elif file == target_ffprobe or (info["os"] == "windows" and file_lower == "ffprobe.exe"):
+                    src_file = os.path.join(root, file)
+                    dst_file = os.path.join(ffmpeg_dir, target_ffprobe)
+                    if os.path.exists(dst_file):
+                        os.remove(dst_file)
+                    logger.debug(f"Moving {file} to {ffmpeg_dir}")
+                    shutil.move(src_file, dst_file)
         
         # 4. Unix Permissions
-        final_exe = os.path.join(ffmpeg_dir, target_bin)
         if exe_found and info["os"] != "windows":
-            logger.info("Setting executable permissions for FFmpeg binary...")
-            st = os.stat(final_exe)
-            os.chmod(final_exe, st.st_mode | stat.S_IEXEC)
+            logger.info("Setting executable permissions for FFmpeg binaries...")
+            for bin_name in [target_ffmpeg, target_ffprobe]:
+                final_bin = os.path.join(ffmpeg_dir, bin_name)
+                if os.path.exists(final_bin):
+                    st = os.stat(final_bin)
+                    os.chmod(final_bin, st.st_mode | stat.S_IEXEC)
 
         # 5. Cleanup
         logger.info("Cleaning up temporary files...")

@@ -46,6 +46,7 @@ from gui.tabs.editing_media.editing_media_playback import PlaybackMixin
 from gui.tabs.editing_media.editing_media_freesound import FreesoundMixin
 from gui.tabs.editing_media.editing_media_icons import LoadingSpinnerWidget
 from core.tabs.editing_media.thumbnail_cache_manager import ThumbnailCacheManager
+from core.utils.config_manager import get_config, save_config
 
 class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
     """Pestaña 'Medios de Edición' con una distribución visual de tres paneles de 20/40/40."""
@@ -59,15 +60,22 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         
         self.selected_tree_item_data = None
         self.active_filter = "Todos"
-        self.view_mode = "grid"
+        
+        # Restaurar preferencias persistentes de vista
+        cfg = get_config()
+        self.view_mode = cfg.get("editing_media_view_mode", "grid")
+        self._saved_icon_size = cfg.get("editing_media_icon_size", 112)
+        
         self.sort_by = "nombre"
         self.sort_ascending = True
         self._metadata_cache = {}
         self.waveform_thread = None
         self._icon_cache = {}
         
-        # Conectar señal del cargador de miniaturas en segundo plano
+        # Conectar señal del cargador de miniaturas y metadatos en segundo plano
         ThumbnailCacheManager.get_instance().thumbnail_loaded.connect(self._on_thumbnail_loaded)
+        from core.tabs.editing_media.ffprobe_metadata_manager import FFprobeMetadataManager
+        FFprobeMetadataManager.get_instance().metadata_ready.connect(self._on_async_metadata_ready)
         
         # Temporizador de retardo (debounce) para búsquedas locales (250ms)
         from PySide6.QtCore import QTimer
@@ -75,6 +83,18 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         self.local_search_timer.setSingleShot(True)
         self.local_search_timer.setInterval(250)
         self.local_search_timer.timeout.connect(self._on_local_search_timer_timeout)
+
+        # Temporizador de retardo (debounce) para persistir tamaño de cuadrícula (500ms)
+        self._icon_size_save_timer = QTimer(self)
+        self._icon_size_save_timer.setSingleShot(True)
+        self._icon_size_save_timer.setInterval(500)
+        self._icon_size_save_timer.timeout.connect(self._save_icon_size_to_config)
+
+        # Temporizador de retardo (debounce) para persistir tamaños del splitter (500ms)
+        self._splitter_save_timer = QTimer(self)
+        self._splitter_save_timer.setSingleShot(True)
+        self._splitter_save_timer.setInterval(500)
+        self._splitter_save_timer.timeout.connect(self._save_splitter_sizes_to_config)
 
         # Inicializar cliente de Freesound y timer para debouncing de búsqueda
         from core.tabs.editing_media.freesound_client import FreesoundClient
@@ -145,8 +165,13 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         self.col3_container = self._build_right_column()
         self.splitter.addWidget(self.col3_container)
 
-        # Proporción inicial 20% - 40% - 40%
-        self.splitter.setSizes([240, 480, 480])
+        # Restaurar tamaños del splitter desde la configuración guardada
+        cfg = get_config()
+        saved_sizes = cfg.get("editing_media_splitter_sizes", [240, 480, 480])
+        self.splitter.setSizes(saved_sizes)
+
+        # Conectar señal para persistir cambios de tamaño del splitter
+        self.splitter.splitterMoved.connect(self._on_splitter_moved)
 
         # Asegurar anchos mínimos
         self.col1_container.setMinimumWidth(200)
@@ -334,7 +359,7 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
 
         self.icon_size_slider = QSlider(Qt.Horizontal)
         self.icon_size_slider.setRange(48, 200)
-        self.icon_size_slider.setValue(112)
+        self.icon_size_slider.setValue(self._saved_icon_size)
         self.icon_size_slider.setFixedWidth(75)
         self.icon_size_slider.setToolTip(self.tr("Tamaño de cuadrícula"))
         self.icon_size_slider.valueChanged.connect(self._on_icon_size_changed)
@@ -414,8 +439,8 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         
         layout.addWidget(self.media_list, 1)
 
-        # Aplicar modo de vista por defecto (cuadrícula)
-        self.set_view_mode("grid")
+        # Aplicar modo de vista guardado
+        self.set_view_mode(self.view_mode)
 
         # ── ESPECTRO DE AUDIO INTEGRADO (A pie de columna, oculto por defecto) ──
         self.audio_panel = QFrame()
@@ -799,6 +824,7 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
                 self.media_list.setSpacing(8)
                 self.media_list.setUniformItemSizes(True)
                 self.media_list.setBatchSize(50)
+                self.media_list.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
                 self._apply_icon_size(self.icon_size_slider.value())
             else:
                 self.btn_view_list.setChecked(True)
@@ -813,12 +839,18 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
                 self.media_list.setGridSize(QSize())
                 self.media_list.setIconSize(QSize(24, 24))
                 self.media_list.setUniformItemSizes(True)
+                self.media_list.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
 
             self._update_media_list()
             self.media_list.doItemsLayout()
             self.media_list.update()
         finally:
             self.media_list.setUpdatesEnabled(True)
+        
+        # Persistir la preferencia de modo de vista
+        cfg = get_config()
+        cfg["editing_media_view_mode"] = mode
+        save_config(cfg)
 
     def eventFilter(self, obj, event):
         if hasattr(self, "btn_view_grid") and obj == self.btn_view_grid:
@@ -835,37 +867,43 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         """Calcula el ancho fluido adaptable de las tarjetas para rellenar el 100% del contenedor sin espacio muerto a la derecha."""
         if getattr(self, "view_mode", "list") != "grid":
             return
-        
-        viewport_w = self.media_list.viewport().width()
-        if viewport_w <= 50:
+        if getattr(self, "_is_recalculating_grid", False):
             return
-        
-        icon_size = self.icon_size_slider.value() if hasattr(self, "icon_size_slider") else 112
-        base_cell_w = icon_size + 32
-        cell_h = icon_size + 46
-        
-        spacing = 4
-        # Ancho efectivo reservado para columnas (considerando márgenes laterales)
-        avail_w = max(10, viewport_w - (spacing * 2))
-        
-        # Número exacto de columnas que caben confortablemente
-        num_cols = max(1, avail_w // base_cell_w)
-        
-        # Ancho fluido exacto por celda
-        fluid_cell_w = avail_w // num_cols
-        
-        # Ajuste de espaciado para absorber residuos de división entera
-        leftover = avail_w - (fluid_cell_w * num_cols)
-        final_spacing = spacing + (leftover // (num_cols + 1))
-        
-        self.media_list.setSpacing(max(1, final_spacing))
-        self.media_list.setGridSize(QSize(fluid_cell_w, cell_h))
-        
-        hint = QSize(fluid_cell_w, cell_h)
-        for i in range(self.media_list.count()):
-            self.media_list.item(i).setSizeHint(hint)
-        
-        self.media_list.doItemsLayout()
+        self._is_recalculating_grid = True
+
+        try:
+            viewport_w = self.media_list.viewport().width()
+            if viewport_w <= 50:
+                return
+            
+            icon_size = self.icon_size_slider.value() if hasattr(self, "icon_size_slider") else 112
+            base_cell_w = icon_size + 32
+            cell_h = icon_size + 46
+            
+            spacing = 4
+            # Ancho efectivo reservado para columnas (considerando márgenes laterales)
+            avail_w = max(10, viewport_w - (spacing * 2))
+            
+            # Número exacto de columnas que caben confortablemente
+            num_cols = max(1, avail_w // base_cell_w)
+            
+            # Ancho fluido exacto por celda
+            fluid_cell_w = avail_w // num_cols
+            
+            # Ajuste de espaciado para absorber residuos de división entera
+            leftover = avail_w - (fluid_cell_w * num_cols)
+            final_spacing = spacing + (leftover // (num_cols + 1))
+            
+            self.media_list.setSpacing(max(1, final_spacing))
+            self.media_list.setGridSize(QSize(fluid_cell_w, cell_h))
+            
+            hint = QSize(fluid_cell_w, cell_h)
+            for i in range(self.media_list.count()):
+                self.media_list.item(i).setSizeHint(hint)
+            
+            self.media_list.doItemsLayout()
+        finally:
+            self._is_recalculating_grid = False
 
     def _show_grid_scale_popup(self):
         if hasattr(self, "grid_scale_popup") and hasattr(self, "btn_view_grid"):
@@ -892,6 +930,26 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
                 self.media_list.doItemsLayout()
             finally:
                 self.media_list.setUpdatesEnabled(True)
+        
+        # Reiniciar el temporizador de debounce para persistir el tamaño
+        self._icon_size_save_timer.start()
+
+    def _save_icon_size_to_config(self):
+        """Persiste el tamaño de cuadrícula al archivo de configuración (llamado con debounce)."""
+        val = self.icon_size_slider.value()
+        cfg = get_config()
+        cfg["editing_media_icon_size"] = val
+        save_config(cfg)
+
+    def _on_splitter_moved(self, pos, index):
+        """Reinicia el temporizador de debounce al mover el splitter."""
+        self._splitter_save_timer.start()
+
+    def _save_splitter_sizes_to_config(self):
+        """Persiste los tamaños del splitter al archivo de configuración (llamado con debounce)."""
+        cfg = get_config()
+        cfg["editing_media_splitter_sizes"] = self.splitter.sizes()
+        save_config(cfg)
 
     def _apply_icon_size(self, size: int):
         self.media_list.setIconSize(QSize(size, size))

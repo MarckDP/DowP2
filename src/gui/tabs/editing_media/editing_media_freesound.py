@@ -130,11 +130,21 @@ class FreesoundMixin:
             # Si el cuadro de búsqueda está vacío, cargar automáticamente sonidos recientes ("Más nuevos")
             sort_order = "Más nuevos"
             
-        if self.online_search_thread and self.online_search_thread.isRunning():
-            if self.online_search_thread.page == self.current_page:
-                return
-            self.online_search_thread.terminate()
-            self.online_search_thread.wait()
+        if not hasattr(self, "_active_freesound_threads"):
+            self._active_freesound_threads = set()
+
+        if hasattr(self, "online_search_thread") and self.online_search_thread and self.online_search_thread.isRunning():
+            old_thread = self.online_search_thread
+            try:
+                old_thread.finished_search.disconnect()
+            except Exception:
+                pass
+            try:
+                old_thread.error_search.disconnect()
+            except Exception:
+                pass
+            self._active_freesound_threads.add(old_thread)
+            old_thread.finished.connect(lambda t=old_thread: self._active_freesound_threads.discard(t))
             
         if hasattr(self, "search_spinner"):
             self.search_spinner.start()
@@ -142,7 +152,11 @@ class FreesoundMixin:
         self.online_search_thread = FreesoundSearchThread(self.freesound_client, query, token, self.current_page, sort_order, self)
         self.online_search_thread.finished_search.connect(self._on_online_search_success)
         self.online_search_thread.error_search.connect(self._on_online_search_error)
-        self.online_search_thread.start()
+        
+        new_thread = self.online_search_thread
+        self._active_freesound_threads.add(new_thread)
+        new_thread.finished.connect(lambda t=new_thread: self._active_freesound_threads.discard(t))
+        new_thread.start()
 
     def _on_search_timer_timeout(self):
         """Callback del temporizador de búsqueda diferida en Freesound."""
@@ -213,6 +227,8 @@ class FreesoundMixin:
                 # Si llega casi al final y no hay búsqueda activa, cargar la siguiente página
                 if value >= max_scroll - 5 and max_scroll > 0:
                     if not self.loading_next_page:
+                        if hasattr(self, "online_search_thread") and self.online_search_thread and self.online_search_thread.isRunning():
+                            return
                         self.loading_next_page = True
                         self.current_page += 1
                         self._exec_online_search()

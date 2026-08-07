@@ -32,7 +32,10 @@ def get_config():
         "use_impersonate": False,
         "adobe_compat_default": True,
         "auto_paste_url": True,
-        "labels": []
+        "labels": [],
+        "editing_media_view_mode": "grid",
+        "editing_media_icon_size": 112,
+        "editing_media_splitter_sizes": [240, 480, 480]
     }
     for k, v in defaults.items():
         if k not in _cached_config:

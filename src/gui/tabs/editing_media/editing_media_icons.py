@@ -48,7 +48,7 @@ _SVG_DIR = os.path.normpath(os.path.join(
 ))
 
 def get_colored_svg_icon(name: str, color_hex: str, size=16) -> QIcon:
-    """Carga y tintura un icono SVG con el color especificado."""
+    """Carga y tintura un icono SVG con el color especificado sin tinte automático de selección."""
     path = os.path.join(_SVG_DIR, name)
     if not os.path.exists(path):
         return QIcon()
@@ -60,10 +60,18 @@ def get_colored_svg_icon(name: str, color_hex: str, size=16) -> QIcon:
     painter.setCompositionMode(QPainter.CompositionMode_SourceIn)
     painter.fillRect(pix.rect(), QColor(color_hex))
     painter.end()
-    return QIcon(pix)
+
+    icon = QIcon()
+    icon.addPixmap(pix, QIcon.Mode.Normal, QIcon.State.Off)
+    icon.addPixmap(pix, QIcon.Mode.Normal, QIcon.State.On)
+    icon.addPixmap(pix, QIcon.Mode.Selected, QIcon.State.Off)
+    icon.addPixmap(pix, QIcon.Mode.Selected, QIcon.State.On)
+    icon.addPixmap(pix, QIcon.Mode.Active, QIcon.State.Off)
+    icon.addPixmap(pix, QIcon.Mode.Active, QIcon.State.On)
+    return icon
 
 def get_colored_folder_icon(color_hex: str) -> QIcon:
-    """Genera un icono de carpeta abierta/cerrada coloreado."""
+    """Genera un icono de carpeta abierta/cerrada coloreado sin tinte de selección."""
     icon = QIcon()
     path_closed = os.path.join(_SVG_DIR, "folder.svg")
     path_open = os.path.join(_SVG_DIR, "folder_open.svg")
@@ -77,6 +85,8 @@ def get_colored_folder_icon(color_hex: str) -> QIcon:
             painter.fillRect(pix_closed.rect(), QColor(color_hex))
             painter.end()
             icon.addPixmap(pix_closed, QIcon.Mode.Normal, QIcon.State.Off)
+            icon.addPixmap(pix_closed, QIcon.Mode.Selected, QIcon.State.Off)
+            icon.addPixmap(pix_closed, QIcon.Mode.Active, QIcon.State.Off)
             
     if os.path.exists(path_open):
         pix_open = QPixmap(path_open)
@@ -87,12 +97,26 @@ def get_colored_folder_icon(color_hex: str) -> QIcon:
             painter.fillRect(pix_open.rect(), QColor(color_hex))
             painter.end()
             icon.addPixmap(pix_open, QIcon.Mode.Normal, QIcon.State.On)
+            icon.addPixmap(pix_open, QIcon.Mode.Selected, QIcon.State.On)
+            icon.addPixmap(pix_open, QIcon.Mode.Active, QIcon.State.On)
             
     return icon
 
 def get_svg_icon(name: str) -> QIcon:
     path = os.path.join(_SVG_DIR, name)
-    return QIcon(path) if os.path.exists(path) else QIcon()
+    if not os.path.exists(path):
+        return QIcon()
+    pix = QPixmap(path)
+    if pix.isNull():
+        return QIcon(path)
+    icon = QIcon()
+    icon.addPixmap(pix, QIcon.Mode.Normal, QIcon.State.Off)
+    icon.addPixmap(pix, QIcon.Mode.Normal, QIcon.State.On)
+    icon.addPixmap(pix, QIcon.Mode.Selected, QIcon.State.Off)
+    icon.addPixmap(pix, QIcon.Mode.Selected, QIcon.State.On)
+    icon.addPixmap(pix, QIcon.Mode.Active, QIcon.State.Off)
+    icon.addPixmap(pix, QIcon.Mode.Active, QIcon.State.On)
+    return icon
 
 def get_contrast_svg_icon(name: str, normal_color_hex="#B9E640", active_color_hex="#101010", size=16) -> QIcon:
     """Genera un QIcon con modos Normal (color acento) y Active/Selected (color oscuro contraste)."""
@@ -130,8 +154,12 @@ def get_folder_icon() -> QIcon:
     path_open = os.path.join(_SVG_DIR, "folder_open.svg")
     if os.path.exists(path_closed):
         icon.addFile(path_closed, QSize(), QIcon.Mode.Normal, QIcon.State.Off)
+        icon.addFile(path_closed, QSize(), QIcon.Mode.Selected, QIcon.State.Off)
+        icon.addFile(path_closed, QSize(), QIcon.Mode.Active, QIcon.State.Off)
     if os.path.exists(path_open):
         icon.addFile(path_open, QSize(), QIcon.Mode.Normal, QIcon.State.On)
+        icon.addFile(path_open, QSize(), QIcon.Mode.Selected, QIcon.State.On)
+        icon.addFile(path_open, QSize(), QIcon.Mode.Active, QIcon.State.On)
     return icon
 
 _PLACEHOLDER_CACHE = {}
@@ -165,7 +193,13 @@ def get_placeholder_thumbnail_icon(svg_name: str, color_hex: str, canvas_size=25
 
     painter.end()
 
-    icon = QIcon(pixmap)
+    icon = QIcon()
+    icon.addPixmap(pixmap, QIcon.Mode.Normal, QIcon.State.Off)
+    icon.addPixmap(pixmap, QIcon.Mode.Normal, QIcon.State.On)
+    icon.addPixmap(pixmap, QIcon.Mode.Selected, QIcon.State.Off)
+    icon.addPixmap(pixmap, QIcon.Mode.Selected, QIcon.State.On)
+    icon.addPixmap(pixmap, QIcon.Mode.Active, QIcon.State.Off)
+    icon.addPixmap(pixmap, QIcon.Mode.Active, QIcon.State.On)
     _PLACEHOLDER_CACHE[cache_key] = icon
     return icon
 

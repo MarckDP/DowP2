@@ -734,7 +734,7 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         borde_color = get_theme_token('borde_normal', '#2d2d2d')
 
         box_style = f"""
-            QFrame {{
+            QFrame#sidebarFrame, QFrame#mediaListFrame, QFrame#previewFrame {{
                 background-color: {fondo_secundario};
                 border: 1px solid {borde_color};
                 border-radius: 12px;
@@ -780,9 +780,11 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
                 color: {get_theme_token('texto_principal', '#cdd6f4')};
             }}
             QListWidget::item {{
-                padding: 4px;
+                padding: 6px 10px;
                 margin: 2px;
                 border-radius: 8px;
+                min-height: 30px;
+                font-size: 13px;
                 background-color: {get_theme_token('fondo_elemento', '#1c1c1e')};
                 border: 1px solid transparent;
             }}
@@ -1093,10 +1095,12 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         self.btn_sort_by.setText(short_label)
 
     def load_labels(self):
-        """Carga las etiquetas configuradas en la aplicación en el QComboBox de etiquetas."""
+        """Carga las etiquetas configuradas en la aplicación en el QComboBox de etiquetas con círculos de color."""
         if not hasattr(self, "combo_tags"):
             return
+        from gui.styles import create_colored_circle_icon, update_label_combobox_style
         self.combo_tags.blockSignals(True)
+        current_text = self.combo_tags.currentText()
         self.combo_tags.clear()
         self.combo_tags.addItem(self.tr("Etiqueta"), "")
         
@@ -1109,12 +1113,24 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
             path = label.get("path", "")
             color = label.get("color", "#B9E640")
             idx = self.combo_tags.count()
-            self.combo_tags.addItem(name, path)
+            icon = create_colored_circle_icon(color, size=12)
+            self.combo_tags.addItem(icon, name, path)
             self.combo_tags.setItemData(idx, color, Qt.UserRole + 1)
             self.combo_tags.setItemData(idx, QColor(color), Qt.ForegroundRole)
+
+        idx = self.combo_tags.findText(current_text)
+        if idx >= 0:
+            self.combo_tags.setCurrentIndex(idx)
+        else:
+            self.combo_tags.setCurrentIndex(0)
+
         self.combo_tags.blockSignals(False)
+        update_label_combobox_style(self.combo_tags)
 
     def _on_label_combo_changed(self, index):
+        from gui.styles import update_label_combobox_style
+        update_label_combobox_style(self.combo_tags)
+
         label_name = self.combo_tags.itemText(index) if index > 0 else None
         self.last_selected_web_label = label_name
 

@@ -406,5 +406,53 @@ def create_checkerboard_pixmap(width: int, height: int, square_size: int = 10):
     return pix
 
 
+def create_colored_circle_icon(color_hex: str, size: int = 12):
+    """
+    Genera un QIcon circular del color especificado sin tinte automático de selección.
+    """
+    from PySide6.QtGui import QPixmap, QPainter, QColor, QIcon
+    from PySide6.QtCore import Qt
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing)
+    painter.setBrush(QColor(color_hex))
+    painter.setPen(Qt.NoPen)
+    painter.drawEllipse(1, 1, size - 2, size - 2)
+    painter.end()
+    
+    icon = QIcon()
+    icon.addPixmap(pixmap, QIcon.Mode.Normal, QIcon.State.Off)
+    icon.addPixmap(pixmap, QIcon.Mode.Normal, QIcon.State.On)
+    icon.addPixmap(pixmap, QIcon.Mode.Selected, QIcon.State.Off)
+    icon.addPixmap(pixmap, QIcon.Mode.Selected, QIcon.State.On)
+    icon.addPixmap(pixmap, QIcon.Mode.Active, QIcon.State.Off)
+    icon.addPixmap(pixmap, QIcon.Mode.Active, QIcon.State.On)
+    return icon
+
+
+def update_label_combobox_style(combo):
+    """
+    Actualiza el color del texto del QComboBox según la etiqueta seleccionada.
+    """
+    from PySide6.QtCore import Qt
+    idx = combo.currentIndex()
+    if idx > 0:
+        color = combo.itemData(idx, Qt.UserRole + 1)
+        if color:
+            text_color = get_theme_token("texto_principal", "#cdd6f4")
+            combo.setStyleSheet(
+                f"QComboBox {{ color: {color}; font-weight: bold; }} "
+                f"QComboBox QAbstractItemView {{ color: {text_color}; font-weight: normal; }}"
+            )
+            combo.style().unpolish(combo)
+            combo.style().polish(combo)
+            return
+    combo.setStyleSheet("")
+    combo.style().unpolish(combo)
+    combo.style().polish(combo)
+
+
+
 
 

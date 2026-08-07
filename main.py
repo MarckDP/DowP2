@@ -24,16 +24,24 @@ from core.utils.config_manager import get_config
 __version__ = "2.0.0"
 
 from PySide6.QtCore import QObject, QEvent, Qt
-from PySide6.QtWidgets import QPushButton, QCheckBox, QComboBox, QTabBar
+from PySide6.QtWidgets import QPushButton, QCheckBox, QComboBox, QTabBar, QStyledItemDelegate
 
 class HandCursorInstaller(QObject):
-    """Instala cursor pointer en widgets interactivos cuando se crean.
-    Usa ChildAdded en vez de Enter para procesar una sola vez por widget."""
+    """Instala cursor pointer en widgets interactivos y garantiza QStyledItemDelegate
+    en QComboBoxes para soporte de hover y selección visual vía QSS."""
     _TARGET_TYPES = (QPushButton, QCheckBox, QComboBox, QTabBar)
     
     def eventFilter(self, obj, event):
         if event.type() == QEvent.Type.ChildAdded:
             child = event.child()
+            if isinstance(child, QComboBox):
+                # Si no tiene un delegate customizado (ej: RichTextDelegate), asignar QStyledItemDelegate
+                # para habilitar feedback visual de hover/selección en el menú desplegable QSS.
+                if child.itemDelegate().__class__ == QComboBox().itemDelegate().__class__:
+                    child.setItemDelegate(QStyledItemDelegate(child))
+                # Transparencia en la ventana del menú desplegable para eliminar filos cuadrados detrás del border-radius QSS
+                if child.view() and child.view().window():
+                    child.view().window().setAttribute(Qt.WA_TranslucentBackground)
             if isinstance(child, self._TARGET_TYPES):
                 child.setCursor(Qt.PointingHandCursor)
         return False
@@ -41,6 +49,7 @@ class HandCursorInstaller(QObject):
 def main():
     # 0. Setup App and Language
     app = QApplication(sys.argv)
+    app.setStyle("Fusion")  # Estilo base multiplataforma que previene bugs de QComboBox en Windows
     
     # Instalar cursor pointer en widgets interactivos (ChildAdded, no Enter — más eficiente)
     app.installEventFilter(HandCursorInstaller(app))

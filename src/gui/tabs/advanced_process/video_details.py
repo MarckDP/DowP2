@@ -748,7 +748,8 @@ class VideoDetailsWidget(QFrame):
         self.stream_url = ""
 
     def load_labels(self):
-        """Carga las etiquetas configuradas en la aplicación en el combo de etiquetas."""
+        """Carga las etiquetas configuradas en la aplicación en el combo de etiquetas con círculos de color."""
+        from gui.styles import create_colored_circle_icon, update_label_combobox_style
         self.combo_tags.blockSignals(True)
         current_text = self.combo_tags.currentText()
         self.combo_tags.clear()
@@ -762,7 +763,8 @@ class VideoDetailsWidget(QFrame):
             color = label.get("color", "#B9E640")
             
             idx = self.combo_tags.count()
-            self.combo_tags.addItem(name, path)
+            icon = create_colored_circle_icon(color, size=12)
+            self.combo_tags.addItem(icon, name, path)
             
             # Guardar color en user data y ForegroundRole
             from PySide6.QtGui import QColor
@@ -781,19 +783,5 @@ class VideoDetailsWidget(QFrame):
 
     def update_combo_style(self):
         """Actualiza el color de texto del combo según la etiqueta seleccionada."""
-        idx = self.combo_tags.currentIndex()
-        if idx > 0:
-            color = self.combo_tags.itemData(idx, Qt.UserRole + 1)
-            if color:
-                from gui.styles import get_theme_token
-                text_color = get_theme_token("texto_principal", "#ffffff")
-                self.combo_tags.setStyleSheet(
-                    f"QComboBox {{ color: {color}; font-weight: bold; }} "
-                    f"QComboBox QAbstractItemView {{ color: {text_color}; font-weight: normal; }}"
-                )
-                self.combo_tags.style().unpolish(self.combo_tags)
-                self.combo_tags.style().polish(self.combo_tags)
-                return
-        self.combo_tags.setStyleSheet("")
-        self.combo_tags.style().unpolish(self.combo_tags)
-        self.combo_tags.style().polish(self.combo_tags)
+        from gui.styles import update_label_combobox_style
+        update_label_combobox_style(self.combo_tags)

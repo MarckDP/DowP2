@@ -17,7 +17,15 @@ def get_colored_icon(path, color_hex, size=16):
     painter.setCompositionMode(QPainter.CompositionMode_SourceIn)
     painter.fillRect(pixmap.rect(), QColor(color_hex))
     painter.end()
-    return QIcon(pixmap)
+    
+    icon = QIcon()
+    icon.addPixmap(pixmap, QIcon.Mode.Normal, QIcon.State.Off)
+    icon.addPixmap(pixmap, QIcon.Mode.Normal, QIcon.State.On)
+    icon.addPixmap(pixmap, QIcon.Mode.Selected, QIcon.State.Off)
+    icon.addPixmap(pixmap, QIcon.Mode.Selected, QIcon.State.On)
+    icon.addPixmap(pixmap, QIcon.Mode.Active, QIcon.State.Off)
+    icon.addPixmap(pixmap, QIcon.Mode.Active, QIcon.State.On)
+    return icon
 
 class QueueItemCard(QFrame):
     """

@@ -58,6 +58,17 @@ class ThumbnailRunnable(QRunnable):
         finally:
             self.manager._task_finished(self.file_path)
 
+def _make_multi_state_icon(pix: QPixmap) -> QIcon:
+    if pix.isNull():
+        return QIcon()
+    icon = QIcon()
+    icon.addPixmap(pix, QIcon.Mode.Normal, QIcon.State.Off)
+    icon.addPixmap(pix, QIcon.Mode.Normal, QIcon.State.On)
+    icon.addPixmap(pix, QIcon.Mode.Selected, QIcon.State.Off)
+    icon.addPixmap(pix, QIcon.Mode.Selected, QIcon.State.On)
+    icon.addPixmap(pix, QIcon.Mode.Active, QIcon.State.Off)
+    icon.addPixmap(pix, QIcon.Mode.Active, QIcon.State.On)
+    return icon
 
 class ThumbnailCacheManager(QObject):
     """Gestor de caché de miniaturas en disco y memoria (RAM) con cola optimizada."""
@@ -88,6 +99,7 @@ class ThumbnailCacheManager(QObject):
         """Genera un hash SHA256 único y lo mantiene en memoria para evitar os.stat repetidos."""
         if file_path in self._hash_cache:
             return self._hash_cache[file_path]
+
         try:
             stat = os.stat(file_path)
             raw = f"{os.path.abspath(file_path)}_{stat.st_mtime}_{stat.st_size}_v3"
@@ -107,7 +119,7 @@ class ThumbnailCacheManager(QObject):
             pix = QPixmap(thumb_path)
             if not pix.isNull():
                 sq_pix = make_square_thumbnail_pixmap(pix, 256)
-                icon = QIcon(sq_pix)
+                icon = _make_multi_state_icon(sq_pix)
                 self._qicon_cache[file_path] = icon
                 return icon
 
@@ -134,9 +146,9 @@ class ThumbnailCacheManager(QObject):
             pix = QPixmap(cached_path)
             if not pix.isNull():
                 sq_pix = make_square_thumbnail_pixmap(pix, 256)
-                icon = QIcon(sq_pix)
+                icon = _make_multi_state_icon(sq_pix)
             else:
-                icon = QIcon(cached_path)
+                icon = _make_multi_state_icon(QPixmap(cached_path))
             self._qicon_cache[file_path] = icon
             self.thumbnail_loaded.emit(file_path, cached_path)
             return
@@ -151,9 +163,9 @@ class ThumbnailCacheManager(QObject):
         pix = QPixmap(thumb_path)
         if not pix.isNull():
             sq_pix = make_square_thumbnail_pixmap(pix, 256)
-            icon = QIcon(sq_pix)
+            icon = _make_multi_state_icon(sq_pix)
         else:
-            icon = QIcon(thumb_path)
+            icon = _make_multi_state_icon(QPixmap(thumb_path))
         self._qicon_cache[file_path] = icon
         self.thumbnail_loaded.emit(file_path, thumb_path)
 

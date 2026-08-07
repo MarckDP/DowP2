@@ -314,7 +314,8 @@ class TreeListMixin:
                         item["dest_path"] = found_path
 
                 self.media_model.set_data(self.online_results)
-                restore_selection()
+                from PySide6.QtCore import QTimer
+                QTimer.singleShot(0, restore_selection)
                 return
 
             else:
@@ -405,7 +406,8 @@ class TreeListMixin:
             self.media_model.set_data(display_items)
 
             # Re-seleccionar si es necesario
-            restore_selection()
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(0, restore_selection)
 
         except Exception as e:
             logger.error(f"EditingMediaTab: Error al actualizar lista de medios: {e}", exc_info=True)

@@ -216,7 +216,7 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
                     background-color: transparent;
                     border: 1px solid {get_theme_token('borde_normal', '#444444')};
                     border-radius: 4px;
-                    color: {get_theme_token('texto_secundario', '#a6adc8')};
+                    color: {get_theme_token('texto_principal', '#ffffff')};
                     padding: 4px 10px;
                 }}
                 QPushButton:hover {{

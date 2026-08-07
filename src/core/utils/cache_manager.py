@@ -174,6 +174,55 @@ class IndexingMetadataCacheProvider(BaseCacheProvider):
         }
 
 
+class FreesoundPreviewCacheProvider(BaseCacheProvider):
+    """Proveedor de caché para previsualizaciones de audio de Freesound (máximo 10 archivos LRU)."""
+
+    @property
+    def key(self) -> str:
+        return "freesound_previews"
+
+    @property
+    def name(self) -> str:
+        return "Caché de Previsualización Freesound"
+
+    @property
+    def description(self) -> str:
+        return "Audios en caché local para preescucha instantánea al explorar Freesound (máx 10 archivos)."
+
+    def get_stats(self) -> Dict[str, Any]:
+        from core.utils.paths import get_freesound_cache_dir
+        fs_dir = get_freesound_cache_dir()
+        file_count = 0
+        total_size = 0
+
+        if os.path.exists(fs_dir):
+            for entry in os.scandir(fs_dir):
+                if entry.is_file() and not entry.name.endswith(".tmp"):
+                    file_count += 1
+                    try:
+                        total_size += entry.stat().st_size
+                    except Exception:
+                        pass
+
+        return {
+            "key": self.key,
+            "name": self.name,
+            "description": self.description,
+            "file_count": file_count,
+            "size_bytes": total_size,
+            "formatted_size": format_bytes(total_size)
+        }
+
+    def clear(self) -> Dict[str, Any]:
+        stats_before = self.get_stats()
+        from core.tabs.editing_media.freesound_preview_cache import FreesoundPreviewCacheManager
+        deleted_count = FreesoundPreviewCacheManager.get_instance().clear_cache()
+        return {
+            "files_removed": deleted_count,
+            "bytes_freed": stats_before["size_bytes"]
+        }
+
+
 class CacheManager:
     """Servicio centralizado que administra todos los proveedores de caché de la aplicación."""
 
@@ -193,6 +242,8 @@ class CacheManager:
         """Registra los proveedores por defecto de la aplicación."""
         self.register_provider(ImageThumbnailCacheProvider())
         self.register_provider(IndexingMetadataCacheProvider())
+        self.register_provider(FreesoundPreviewCacheProvider())
+
 
     def register_provider(self, provider: BaseCacheProvider):
         """Permite registrar un nuevo proveedor de caché dinámicamente."""

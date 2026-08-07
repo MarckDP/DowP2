@@ -36,6 +36,13 @@ def get_thumbnail_cache_dir() -> str:
     os.makedirs(thumb_dir, exist_ok=True)
     return thumb_dir
 
+def get_freesound_cache_dir() -> str:
+    """Retorna el directorio de caché para previas de audio de Freesound (máximo 10 archivos LRU)."""
+    fs_dir = os.path.join(get_cache_dir(), "freesound_previews")
+    os.makedirs(fs_dir, exist_ok=True)
+    return fs_dir
+
+
 def get_config_path() -> str:
     """Retorna la ruta al archivo de configuración general config.json."""
     return os.path.join(get_app_data_dir(), "config.json")

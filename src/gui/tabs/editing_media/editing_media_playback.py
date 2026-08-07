@@ -111,11 +111,28 @@ class PlaybackMixin:
             # Si es remoto y tiene imágenes del waveform, usarlas
             if is_remote and "images" in item_data and item_data["images"].get("waveform_m"):
                 waveform_url = item_data["images"]["waveform_m"]
-                from core.tabs.editing_media.editing_media_logic import RemoteWaveformLoaderThread
+                from core.tabs.editing_media.freesound_preview_cache import FreesoundPreviewCacheManager
+                fs_cache = FreesoundPreviewCacheManager.get_instance()
                 
-                self.remote_waveform_thread = RemoteWaveformLoaderThread(waveform_url, num_peaks, self)
-                self.remote_waveform_thread.finished.connect(self.waveform_widget.set_peaks)
-                self.remote_waveform_thread.start()
+                cached_peaks = fs_cache.get_cached_waveform_peaks(waveform_url)
+                if cached_peaks:
+                    # HIT: Renderizado instantáneo a 0ms de la forma de onda descompuesta
+                    self.waveform_widget.set_peaks(cached_peaks)
+                else:
+                    # MISS: Extraer picos en segundo plano y guardar en caché LRU de 10 elementos
+                    from core.tabs.editing_media.editing_media_logic import RemoteWaveformLoaderThread
+                    
+                    self.remote_waveform_thread = RemoteWaveformLoaderThread(waveform_url, num_peaks, self)
+                    
+                    def _on_remote_waveform_finished(peaks, target_url=waveform_url, req_path=path):
+                        if peaks:
+                            fs_cache.cache_waveform_peaks(target_url, peaks)
+                        if getattr(self, "active_remote_audio_url", None) == req_path:
+                            self.waveform_widget.set_peaks(peaks)
+
+                    self.remote_waveform_thread.finished.connect(_on_remote_waveform_finished)
+                    self.remote_waveform_thread.start()
+
             else:
                 # Obtener duración en segundos para el muestreo progresivo
                 dur_str = item_data.get("duración", "-")
@@ -149,22 +166,47 @@ class PlaybackMixin:
             if tipo == "audio" and self.audio_player:
                 try:
                     if is_remote:
-                        self.audio_player.setSource(QUrl(path))
+                        from core.tabs.editing_media.freesound_preview_cache import FreesoundPreviewCacheManager
+                        fs_cache = FreesoundPreviewCacheManager.get_instance()
+
+                        if not getattr(self, "_freesound_cache_connected", False):
+                            fs_cache.preview_ready.connect(self._on_freesound_preview_ready)
+                            self._freesound_cache_connected = True
+
+                        self.active_remote_audio_url = path
+                        cached_local_path = fs_cache.get_cached_path(path)
+
+                        if cached_local_path and os.path.exists(cached_local_path):
+                            # HIT: Reproducción instantánea directa desde disco local
+                            self.audio_player.setSource(QUrl.fromLocalFile(cached_local_path))
+                            loops = QMediaPlayer.Infinite if getattr(self, "_audio_loop_active", True) else 1
+                            self.audio_player.setLoops(loops)
+                            self.audio_player.play()
+                            from gui.styles import apply_player_play_button_style
+                            apply_player_play_button_style(self.btn_play, is_playing=True, icon_size=14)
+                        else:
+                            # MISS: Solicitar descarga rápida a la caché LRU (reproducción limpia tras ~100ms sin streaming)
+                            fs_cache.request_preview(path)
+                            from gui.styles import apply_player_play_button_style
+                            apply_player_play_button_style(self.btn_play, is_playing=True, icon_size=14)
+
                         self.lbl_time.setText("00:00:00.000 / 00:00:00.000")
                     else:
                         self.audio_player.setSource(QUrl.fromLocalFile(path))
                         self.lbl_time.setText("00:00:00.000 / 00:00:00.000")
-                    
-                    # Aplicar bucle según configuración actual (por defecto activo)
-                    loops = QMediaPlayer.Infinite if getattr(self, "_audio_loop_active", True) else 1
-                    self.audio_player.setLoops(loops)
-                    
-                    # Auto-reproducir audio al hacer clic (igual que en video)
-                    self.audio_player.play()
-                    from gui.styles import apply_player_play_button_style
-                    apply_player_play_button_style(self.btn_play, is_playing=True, icon_size=14)
+                        loops = QMediaPlayer.Infinite if getattr(self, "_audio_loop_active", True) else 1
+                        self.audio_player.setLoops(loops)
+                        self.audio_player.play()
+                        from gui.styles import apply_player_play_button_style
+                        apply_player_play_button_style(self.btn_play, is_playing=True, icon_size=14)
+
+                    if is_remote:
+                        self._prefetch_next_freesound_item(list_item)
                 except Exception as e:
                     logger.error(f"EditingMediaTab: Error cargando fuente de audio: {e}")
+
+
+
         else:
             self.audio_panel.setVisible(False)
 
@@ -383,7 +425,57 @@ class PlaybackMixin:
             pos = self.audio_player.position()
             self.lbl_time.setText(f"{self._format_time_ms(pos)} / {self._format_time_ms(duration)}")
 
+    def _on_freesound_preview_ready(self, url: str, local_path: str):
+        """Callback cuando la descarga en segundo plano de la previa de Freesound se completa."""
+        if getattr(self, "active_remote_audio_url", None) == url and self.audio_player:
+            try:
+                self.audio_player.setSource(QUrl.fromLocalFile(local_path))
+                loops = QMediaPlayer.Infinite if getattr(self, "_audio_loop_active", True) else 1
+                self.audio_player.setLoops(loops)
+                self.audio_player.play()
+                from gui.styles import apply_player_play_button_style
+                apply_player_play_button_style(self.btn_play, is_playing=True, icon_size=14)
+                logger.info(f"PlaybackMixin: Reproducción de archivo local en caché iniciada para {url}")
+            except Exception as e:
+                logger.error(f"PlaybackMixin: Error aplicando fuente en caché para {url}: {e}")
+
+    def _prefetch_next_freesound_item(self, current_item):
+        """Pre-carga de forma transparente únicamente el archivo de audio N+1 (siguiente fila) y su forma de onda."""
+        if not hasattr(self, "media_list") or not self.media_list:
+            return
+        current_row = self.media_list.row(current_item)
+        if current_row < 0:
+            return
+        next_row = current_row + 1
+        if next_row < self.media_list.count():
+            next_item = self.media_list.item(next_row)
+            if next_item:
+                next_data = next_item.data(Qt.UserRole)
+                if next_data and next_data.get("tipo") == "audio":
+                    next_path = next_data.get("ruta", "")
+                    if next_path.startswith("http://") or next_path.startswith("https://"):
+                        from core.tabs.editing_media.freesound_preview_cache import FreesoundPreviewCacheManager
+                        fs_cache = FreesoundPreviewCacheManager.get_instance()
+                        # Pre-cargar audio N+1 en la caché LRU de 10 elementos
+                        fs_cache.request_preview(next_path)
+
+                        # Pre-cargar forma de onda N+1 si está disponible
+                        if "images" in next_data and next_data["images"].get("waveform_m"):
+                            wf_url = next_data["images"]["waveform_m"]
+                            if not fs_cache.get_cached_waveform_peaks(wf_url):
+                                from core.tabs.editing_media.editing_media_logic import RemoteWaveformLoaderThread
+                                w_width = self.waveform_widget.width()
+                                num_peaks = max(50, min((w_width - 24) // 5, 180)) if w_width > 50 else 80
+                                self._prefetch_wf_thread = RemoteWaveformLoaderThread(wf_url, num_peaks, self)
+                                self._prefetch_wf_thread.finished.connect(
+                                    lambda peaks, u=wf_url: fs_cache.cache_waveform_peaks(u, peaks) if peaks else None
+                                )
+                                self._prefetch_wf_thread.start()
+
+
+
     def _stop_audio_playback(self):
+
         from gui.styles import apply_player_play_button_style
         if self.audio_player:
             try:

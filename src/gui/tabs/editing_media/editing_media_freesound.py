@@ -174,9 +174,10 @@ class FreesoundMixin:
         new_items = []
         for r in results:
             previews = r.get("previews", {})
-            preview_url = previews.get("preview-hq-mp3", previews.get("preview-lq-mp3", ""))
+            preview_url = previews.get("preview-lq-mp3", previews.get("preview-hq-mp3", previews.get("preview-lq-ogg", "")))
             if not preview_url:
                 continue
+
             
             dur = r.get("duration", 0)
             dur_m = int(dur // 60)
@@ -190,8 +191,13 @@ class FreesoundMixin:
             else:
                 size_str = f"{size_kb:.1f} KB"
                 
+            sound_name = r.get("name", "Sonido sin nombre").strip()
+            sound_type = r.get("type", "").strip().lower()
+            if sound_type and not any(sound_name.lower().endswith(f".{ext}") for ext in ["wav", "mp3", "flac", "ogg", "aiff", "m4a", "aac"]):
+                sound_name = f"{sound_name}.{sound_type}"
+
             new_items.append({
-                "nombre": r.get("name", "Sonido sin nombre") + ".mp3",
+                "nombre": sound_name,
                 "ruta": preview_url,
                 "tipo": "audio",
                 "tamaño": size_str,
@@ -204,6 +210,7 @@ class FreesoundMixin:
                 "description": r.get("description", "-"),
                 "images": r.get("images", {})
             })
+
         
         self.online_results.extend(new_items)
         self._update_media_list()

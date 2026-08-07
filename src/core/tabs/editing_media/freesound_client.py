@@ -38,7 +38,8 @@ class FreesoundClient:
         url = f"{BASE_URL}/search/"
         
         # Campos detallados para evitar peticiones individuales extras
-        fields = "id,name,tags,username,license,previews,duration,filesize,images,description,avg_rating,num_downloads"
+        fields = "id,name,tags,username,license,previews,duration,filesize,images,description,avg_rating,num_downloads,type"
+
         
         params = {
             "query": query,

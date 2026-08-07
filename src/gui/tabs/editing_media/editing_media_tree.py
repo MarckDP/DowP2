@@ -225,10 +225,8 @@ class TreeListMixin:
         """Refresca la lista central de medios inyectando datos filtrados en el Modelo MVC."""
         # Limpiar la selección anterior si es posible
         target_path = getattr(self, "current_playing_path", None)
-        if not target_path and hasattr(self, "_get_current_media_data"):
-            curr_data = self._get_current_media_data()
-            if isinstance(curr_data, dict):
-                target_path = curr_data.get("ruta")
+        if not target_path:
+            target_path = getattr(self, "last_selected_media_path", None)
 
         def restore_selection():
             if target_path:

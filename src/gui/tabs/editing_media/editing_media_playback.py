@@ -52,6 +52,8 @@ class PlaybackMixin:
             self._clear_metadata()
             return
             
+        self.last_selected_media_path = path
+            
         is_remote = path.startswith("http://") or path.startswith("https://")
 
         # Asegurar metadatos para archivos locales (necesitamos la duración exacta)

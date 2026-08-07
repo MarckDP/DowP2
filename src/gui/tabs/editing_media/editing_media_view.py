@@ -188,6 +188,42 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         # Aplicar hojas de estilo para contenedores y listas
         self._apply_custom_styles()
 
+    def set_license_info(self, title: str, desc: str, color_hex: str, credits_text: str = None):
+        """Actualiza el panel de licencias con los datos (Título, Descripción, Color, y opcionalmente el texto TASL)."""
+        self.lbl_license_text.setText(title)
+        self.lbl_license_text.setStyleSheet(f"font-size: 12px; font-weight: bold; color: {color_hex};")
+        
+        self.lbl_license_desc.setText(desc)
+        
+        # Color the icon
+        copyright_icon = get_colored_svg_icon("copyright.svg", color_hex)
+        self.lbl_license_icon.setPixmap(copyright_icon.pixmap(16, 16))
+
+        self.license_panel.setStyleSheet(f"""
+            QFrame#licensePanel {{
+                background-color: {get_theme_token('fondo_elemento', '#1e1e1e')};
+                border: 1px solid {color_hex};
+                border-radius: 8px;
+            }}
+        """)
+
+        if credits_text:
+            self._current_credits_text = credits_text
+            self.btn_copy_credits.setVisible(True)
+        else:
+            self._current_credits_text = ""
+            self.btn_copy_credits.setVisible(False)
+
+        self.license_panel.setVisible(True)
+
+    def _on_copy_credits_clicked(self):
+        """Copia el texto TASL actual al portapapeles y muestra confirmación."""
+        if self._current_credits_text:
+            QApplication.clipboard().setText(self._current_credits_text)
+            self.btn_copy_credits.setText(self.tr("¡Créditos Copiados!"))
+            # Reset text after 2 seconds
+            QTimer.singleShot(2000, lambda: self.btn_copy_credits.setText(self.tr("Copiar Créditos (TASL)")))
+
     def _cleanup(self):
         """Detiene el watchdog y cualquier reproducción activa al cerrar."""
         self.controller.stop_watcher()
@@ -262,6 +298,30 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
 
         self.search_input.textChanged.connect(self._update_media_input_changed)
         search_layout.addWidget(self.search_input)
+
+        # Contenedor para el filtro de licencias (solo visible en Freesound)
+        self.license_container = QFrame()
+        self.license_container.setVisible(False)
+        lic_layout = QHBoxLayout(self.license_container)
+        lic_layout.setContentsMargins(0, 0, 0, 0)
+        lic_layout.setSpacing(4)
+        
+        lbl_copyright = QLabel()
+        lbl_copyright.setPixmap(get_svg_icon("copyright.svg").pixmap(16, 16))
+        lbl_copyright.setToolTip(self.tr("Filtro de Licencia (Freesound)"))
+        lic_layout.addWidget(lbl_copyright)
+
+        self.freesound_license_combo = QComboBox()
+        self.freesound_license_combo.setMaximumWidth(135)
+        self.freesound_license_combo.addItem(self.tr("Cualquiera"), "Cualquiera")
+        self.freesound_license_combo.addItem(self.tr("CC0 (Sin Copyright)"), "CC0")
+        self.freesound_license_combo.addItem(self.tr("CC-BY (Atribución)"), "Attribution")
+        self.freesound_license_combo.addItem(self.tr("CC-BY-NC (No Comercial)"), "Attribution NonCommercial")
+        self.freesound_license_combo.setToolTip(self.tr("Filtrar por Licencia (Freesound)"))
+        self.freesound_license_combo.currentIndexChanged.connect(lambda: self._update_media_input_changed(""))
+        lic_layout.addWidget(self.freesound_license_combo)
+        
+        search_layout.addWidget(self.license_container)
 
         self.btn_freesound_login = QPushButton()
         self.btn_freesound_login.setFixedSize(26, 26)
@@ -589,19 +649,36 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
                 border-radius: 8px;
             }}
         """)
-        license_layout = QHBoxLayout(self.license_panel)
-        license_layout.setContentsMargins(8, 4, 8, 4)
+        license_layout = QVBoxLayout(self.license_panel)
+        license_layout.setContentsMargins(10, 8, 10, 8)
+        license_layout.setSpacing(6)
 
+        # Fila superior: Ícono + Título
+        top_row = QHBoxLayout()
         self.lbl_license_icon = QLabel()
         copyright_icon = get_colored_svg_icon("copyright.svg", get_theme_token("acento_primario", "#B9E640"))
         self.lbl_license_icon.setPixmap(copyright_icon.pixmap(16, 16))
-        license_layout.addWidget(self.lbl_license_icon)
+        top_row.addWidget(self.lbl_license_icon)
 
         self.lbl_license_text = QLabel()
-        self.lbl_license_text.setStyleSheet("font-size: 11px; font-weight: bold; color: #f5c2e7;")
-        self.lbl_license_text.setWordWrap(True)
-        self.lbl_license_text.setOpenExternalLinks(True)
-        license_layout.addWidget(self.lbl_license_text, 1)
+        self.lbl_license_text.setStyleSheet("font-size: 12px; font-weight: bold; color: white;")
+        top_row.addWidget(self.lbl_license_text, 1)
+        license_layout.addLayout(top_row)
+
+        # Descripción
+        self.lbl_license_desc = QLabel()
+        self.lbl_license_desc.setStyleSheet("font-size: 11px; color: #a6adc8;")
+        self.lbl_license_desc.setWordWrap(True)
+        license_layout.addWidget(self.lbl_license_desc)
+
+        # Botón Copiar Créditos
+        self.btn_copy_credits = AnimatedButton(self.tr("Copiar Créditos (TASL)"))
+        self.btn_copy_credits.setFixedHeight(28)
+        self.btn_copy_credits.clicked.connect(self._on_copy_credits_clicked)
+        self.btn_copy_credits.setVisible(False)
+        license_layout.addWidget(self.btn_copy_credits)
+
+        self._current_credits_text = ""
 
         layout.addWidget(self.license_panel)
 

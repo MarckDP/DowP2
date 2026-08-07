@@ -194,6 +194,8 @@ class TreeListMixin:
         # Mostrar engranaje de configuración en modo online
         if hasattr(self, "btn_freesound_login"):
             self.btn_freesound_login.setVisible(is_online)
+        if hasattr(self, "license_container"):
+            self.license_container.setVisible(is_online)
             
         # Si es online, forzar el filtro "Audios" y deshabilitar los otros
         if is_online:

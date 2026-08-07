@@ -273,36 +273,37 @@ class PlaybackMixin:
 
 
         if is_remote:
-            self.license_panel.setVisible(True)
-            
-            def get_friendly_license_name(url: str) -> str:
-                if not url:
-                    return "Licencia"
-                url_lower = url.lower()
-                if "zero" in url_lower or "cc0" in url_lower:
-                    return "CC0 (Public Domain)"
-                elif "by-nc" in url_lower:
-                    return "CC BY-NC (Attribution Non-Commercial)"
-                elif "by-nd" in url_lower:
-                    return "CC BY-ND (Attribution NoDerivatives)"
-                elif "by-sa" in url_lower:
-                    return "CC BY-SA (Attribution ShareAlike)"
-                elif "by" in url_lower:
-                    return "CC BY (Attribution)"
-                elif "sampling" in url_lower:
-                    return "Sampling Plus"
-                return "Ver Licencia"
-                
             license_url = item_data.get("license", "-")
-            if license_url.startswith("http"):
-                friendly_name = get_friendly_license_name(license_url)
-                self.lbl_license_text.setText(
-                    self.tr('Licencia: <a href="{url}" style="color: #B9E640; text-decoration: underline;">{name}</a>').format(
-                        url=license_url, name=friendly_name
-                    )
-                )
+            url_lower = license_url.lower()
+            
+            # Construir texto TASL
+            title = item_data.get("name", "Sonido")
+            author = item_data.get("username", "Autor Desconocido")
+            item_id = item_data.get("id", "")
+            source_url = f"https://freesound.org/s/{item_id}/" if item_id else "https://freesound.org"
+            
+            if "zero" in url_lower or "cc0" in url_lower:
+                lic_title = self.tr("✅ Dominio Público (CC0)")
+                lic_desc = self.tr("Puedes usar este sonido para cualquier propósito (incluso comercial) sin necesidad de dar créditos.")
+                lic_color = "#1DC038" # Green
+                tasl = ""
+            elif "by-nc" in url_lower:
+                lic_title = self.tr("⚠️ Uso No Comercial (CC-BY-NC)")
+                lic_desc = self.tr("No puedes usar este sonido en videos monetizados o proyectos comerciales. Es obligatorio dar crédito al autor.")
+                lic_color = "#E67E22" # Orange
+                tasl = f'"{title}" por {author} ({source_url}) está licenciado bajo CC-BY-NC ({license_url})'
+            elif "by" in url_lower:
+                lic_title = self.tr("ℹ️ Requiere Atribución (CC-BY)")
+                lic_desc = self.tr("Uso comercial permitido, pero es obligatorio dar crédito al autor copiando el texto TASL.")
+                lic_color = "#40A9E6" # Blue
+                tasl = f'"{title}" por {author} ({source_url}) está licenciado bajo CC-BY ({license_url})'
             else:
-                self.lbl_license_text.setText(self.tr("Licencia: ") + license_url)
+                lic_title = self.tr("Licencia Desconocida")
+                lic_desc = self.tr("Revisa la licencia original antes de usar este sonido.")
+                lic_color = "#A6ADC8" # Gray
+                tasl = ""
+                
+            self.set_license_info(lic_title, lic_desc, lic_color, tasl)
             
             self.metadata_header_labels["video_codec"].setText(self.tr("Usuario:"))
             self.metadata_header_labels["video_profile"].setText(self.tr("Licencia:"))

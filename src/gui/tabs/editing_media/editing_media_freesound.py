@@ -138,6 +138,11 @@ class FreesoundMixin:
         
         sort_order = None
         duration_max = None
+        license_type = None
+
+        if hasattr(self, "freesound_license_combo"):
+            license_type = self.freesound_license_combo.currentData()
+
         if not query:
             # Si el cuadro de búsqueda está vacío, cargar automáticamente sonidos recientes ("Más nuevos")
             # y limitar a audios menores a 5 minutos (300 segundos) para mostrar solo efectos/audios cortos
@@ -170,6 +175,7 @@ class FreesoundMixin:
             page=self.current_page,
             sort_order=sort_order,
             duration_max=duration_max,
+            license_type=license_type,
             parent=self
         )
         self.online_search_thread.finished_search.connect(self._on_online_search_success)

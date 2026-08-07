@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
     QApplication,
 )
 
-from PySide6.QtCore import Qt, QSize, QEvent, QPoint
+from PySide6.QtCore import Qt, QSize, QEvent, QPoint, QTimer
 from PySide6.QtGui import QIcon
 
 # Importar QtMultimedia de forma segura para reproducción de audio

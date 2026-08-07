@@ -263,7 +263,9 @@ class FreesoundMixin:
                 "avg_rating": f"{r.get('avg_rating', 0):.1f}",
                 "num_downloads": str(r.get("num_downloads", 0)),
                 "description": r.get("description", "-"),
-                "images": r.get("images", {})
+                "images": r.get("images", {}),
+                "id": str(r.get("id", "")),
+                "url": r.get("url", "")
             })
 
 

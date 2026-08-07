@@ -35,9 +35,10 @@ class PlaybackMixin:
             return
 
         if item_data.get("tipo") == "load_more":
-            self._max_display_count = getattr(self, "_max_display_count", 500) + 500
+            self._max_display_count = 999999
             self._update_media_list()
             return
+
 
         name = item_data["nombre"]
         tipo = item_data["tipo"]
@@ -179,7 +180,7 @@ class PlaybackMixin:
                         if cached_local_path and os.path.exists(cached_local_path):
                             # HIT: Reproducción instantánea directa desde disco local
                             self.audio_player.setSource(QUrl.fromLocalFile(cached_local_path))
-                            loops = QMediaPlayer.Infinite if getattr(self, "_audio_loop_active", True) else 1
+                            loops = QMediaPlayer.Infinite if getattr(self, "_audio_loop_active", False) else 1
                             self.audio_player.setLoops(loops)
                             self.audio_player.play()
                             from gui.styles import apply_player_play_button_style
@@ -194,8 +195,9 @@ class PlaybackMixin:
                     else:
                         self.audio_player.setSource(QUrl.fromLocalFile(path))
                         self.lbl_time.setText("00:00:00.000 / 00:00:00.000")
-                        loops = QMediaPlayer.Infinite if getattr(self, "_audio_loop_active", True) else 1
+                        loops = QMediaPlayer.Infinite if getattr(self, "_audio_loop_active", False) else 1
                         self.audio_player.setLoops(loops)
+
                         self.audio_player.play()
                         from gui.styles import apply_player_play_button_style
                         apply_player_play_button_style(self.btn_play, is_playing=True, icon_size=14)
@@ -228,11 +230,41 @@ class PlaybackMixin:
         self.metadata_labels["tipo"].setText(tipo.upper())
         self.metadata_labels["tamaño"].setText(item_data.get("tamaño", "-"))
         
-        # Ocultar/mostrar botones según tipo local/online
-        self.btn_reveal.setVisible(not is_remote)
-        self.btn_reveal.setEnabled(not is_remote)
-        self.btn_download.setVisible(is_remote)
-        self.btn_download.setEnabled(is_remote)
+        # Ocultar/mostrar botones según tipo local/online y existencia en disco
+        dest_path = item_data.get("dest_path")
+        dest_exists = bool(dest_path and os.path.exists(dest_path))
+
+        self.btn_reveal.setVisible(not is_remote or dest_exists)
+        self.btn_reveal.setEnabled(not is_remote or dest_exists)
+        
+        if hasattr(self, "combo_tags"):
+            self.combo_tags.setVisible(is_remote and not dest_exists)
+            if is_remote and hasattr(self, "load_labels"):
+                self.load_labels()
+                sel_label = item_data.get("selected_label")
+                if not sel_label and getattr(self, "last_selected_web_label", None):
+                    sel_label = self.last_selected_web_label
+                    item_data["selected_label"] = sel_label
+                    list_item.setData(Qt.UserRole, item_data)
+
+
+
+                idx = self.combo_tags.findText(sel_label) if sel_label else 0
+                self.combo_tags.blockSignals(True)
+                self.combo_tags.setCurrentIndex(idx if idx >= 0 else 0)
+                self.combo_tags.blockSignals(False)
+
+
+
+        if is_remote and dest_exists:
+            self.btn_download.setVisible(True)
+            self.btn_download.setEnabled(False)
+            self.btn_download.setText(self.tr("En Disco"))
+        else:
+            self.btn_download.setVisible(is_remote)
+            self.btn_download.setEnabled(is_remote)
+            self.btn_download.setText(self.tr("Descargar Medio"))
+
 
         if is_remote:
             self.license_panel.setVisible(True)
@@ -430,7 +462,8 @@ class PlaybackMixin:
         if getattr(self, "active_remote_audio_url", None) == url and self.audio_player:
             try:
                 self.audio_player.setSource(QUrl.fromLocalFile(local_path))
-                loops = QMediaPlayer.Infinite if getattr(self, "_audio_loop_active", True) else 1
+                loops = QMediaPlayer.Infinite if getattr(self, "_audio_loop_active", False) else 1
+
                 self.audio_player.setLoops(loops)
                 self.audio_player.play()
                 from gui.styles import apply_player_play_button_style
@@ -497,8 +530,9 @@ class PlaybackMixin:
             return
         item_data = selected.data(Qt.UserRole)
         if item_data:
-            path = item_data.get("ruta")
+            path = item_data.get("dest_path") or item_data.get("ruta")
             if path and os.path.exists(path):
+
                 norm_path = os.path.normpath(path)
                 sys_os = platform.system().lower()
                 try:

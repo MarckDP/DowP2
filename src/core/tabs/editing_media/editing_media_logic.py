@@ -140,6 +140,7 @@ class EditingMediaController(QObject):
         
         self.indexed_folders = []
         self.collections = {
+            "Descargados": [],
             "Favoritos": [],
             "SFX": [],
             "Música": []
@@ -162,11 +163,13 @@ class EditingMediaController(QObject):
                 with open(self.db_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
                     self.indexed_folders = data.get("indexed_folders", [])
-                    self.collections = data.get("collections", {
-                        "Favoritos": [],
-                        "SFX": [],
-                        "Música": []
-                    })
+                    loaded_cols = data.get("collections", {})
+                    # Asegurar que Descargados sea la primera colección
+                    self.collections = {"Descargados": []}
+                    for k, v in loaded_cols.items():
+                        self.collections[k] = v
+                    if "Favoritos" not in self.collections:
+                        self.collections["Favoritos"] = []
                     # Cargar autenticación OAuth2 (con migración desde formato legacy)
                     saved_auth = data.get("freesound_auth", None)
                     if saved_auth and isinstance(saved_auth, dict):
@@ -177,6 +180,23 @@ class EditingMediaController(QObject):
                 logger.error(f"EditingMediaLogic: Error leyendo base de datos: {e}")
         else:
             self.save_data()
+
+    def add_to_downloaded_collection(self, file_path: str):
+        """Registra un archivo descargado en la colección virtual 'Descargados'."""
+        if "Descargados" not in self.collections:
+            new_cols = {"Descargados": []}
+            new_cols.update(self.collections)
+            self.collections = new_cols
+
+        norm_p = os.path.normpath(file_path).replace("\\", "/")
+        if norm_p not in self.collections["Descargados"] and file_path not in self.collections["Descargados"]:
+            self.collections["Descargados"].insert(0, norm_p)
+            self.save_data()
+            if hasattr(self, "_media_cache"):
+                self._media_cache.pop("collection:Descargados", None)
+            self.collections_changed.emit()
+
+
 
     def save_data(self):
         """Guarda carpetas indexadas, colecciones, auth OAuth2 y nodo seleccionado en indexed_media.json."""

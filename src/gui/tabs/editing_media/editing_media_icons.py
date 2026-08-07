@@ -94,6 +94,36 @@ def get_svg_icon(name: str) -> QIcon:
     path = os.path.join(_SVG_DIR, name)
     return QIcon(path) if os.path.exists(path) else QIcon()
 
+def get_contrast_svg_icon(name: str, normal_color_hex="#B9E640", active_color_hex="#101010", size=16) -> QIcon:
+    """Genera un QIcon con modos Normal (color acento) y Active/Selected (color oscuro contraste)."""
+    path = os.path.join(_SVG_DIR, name)
+    if not os.path.exists(path):
+        return QIcon()
+
+    def make_pix(color_hex):
+        pix = QPixmap(path)
+        if pix.isNull():
+            return QPixmap()
+        pix = pix.scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        painter = QPainter(pix)
+        painter.setCompositionMode(QPainter.CompositionMode_SourceIn)
+        painter.fillRect(pix.rect(), QColor(color_hex))
+        painter.end()
+        return pix
+
+    icon = QIcon()
+    pix_norm = make_pix(normal_color_hex)
+    pix_act = make_pix(active_color_hex)
+
+    icon.addPixmap(pix_norm, QIcon.Mode.Normal, QIcon.State.Off)
+    icon.addPixmap(pix_norm, QIcon.Mode.Normal, QIcon.State.On)
+    icon.addPixmap(pix_act, QIcon.Mode.Active, QIcon.State.Off)
+    icon.addPixmap(pix_act, QIcon.Mode.Active, QIcon.State.On)
+    icon.addPixmap(pix_act, QIcon.Mode.Selected, QIcon.State.Off)
+    icon.addPixmap(pix_act, QIcon.Mode.Selected, QIcon.State.On)
+    return icon
+
+
 def get_folder_icon() -> QIcon:
     icon = QIcon()
     path_closed = os.path.join(_SVG_DIR, "folder.svg")

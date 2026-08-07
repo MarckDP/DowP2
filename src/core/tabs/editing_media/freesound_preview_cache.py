@@ -45,12 +45,22 @@ class FreesoundPreviewRunnable(QRunnable):
                         pass
                 os.rename(temp_path, self.target_path)
                 self.manager._on_download_success(self.url, self.target_path)
-                self.signals.finished.emit(self.url, self.target_path)
+                try:
+                    self.signals.finished.emit(self.url, self.target_path)
+                except (RuntimeError, AttributeError):
+                    pass
             else:
-                self.signals.failed.emit(self.url)
+                try:
+                    self.signals.failed.emit(self.url)
+                except (RuntimeError, AttributeError):
+                    pass
         except Exception as e:
             logger.error(f"FreesoundPreviewRunnable: Error descargando {self.url}: {e}")
-            self.signals.failed.emit(self.url)
+            try:
+                self.signals.failed.emit(self.url)
+            except (RuntimeError, AttributeError):
+                pass
+
         finally:
             if os.path.exists(temp_path):
                 try:

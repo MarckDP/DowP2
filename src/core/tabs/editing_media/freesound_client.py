@@ -92,20 +92,24 @@ class FreesoundClient:
             logger.error(f"FreesoundClient: Error en la petición de búsqueda: {e}")
             raise IOError(f"Error de red al conectar con Freesound: {e}")
 
-    def download_file(self, url: str, dest_path: str, progress_callback=None) -> bool:
+    def download_file(self, url: str, dest_path: str, token: str = None, progress_callback=None) -> bool:
         """Descarga un archivo remoto (ej. vista previa o archivo original si está autorizado)."""
         try:
             logger.debug(f"FreesoundClient: Iniciando descarga de {url} hacia {dest_path}")
             os.makedirs(os.path.dirname(dest_path), exist_ok=True)
             
-            response = self.session.get(url, stream=True, timeout=15)
+            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
+
+            response = self.session.get(url, headers=headers, stream=True, timeout=20)
             response.raise_for_status()
             
             total_size = int(response.headers.get('content-length', 0))
             bytes_written = 0
             
             with open(dest_path, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192):
+                for chunk in response.iter_content(chunk_size=16384):
                     if chunk:
                         f.write(chunk)
                         bytes_written += len(chunk)
@@ -123,3 +127,4 @@ class FreesoundClient:
                 except Exception:
                     pass
             raise e
+

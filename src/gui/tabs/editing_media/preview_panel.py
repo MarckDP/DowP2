@@ -81,8 +81,9 @@ class PreviewContainerWidget(QFrame):
                 # Bajar el volumen por defecto a un nivel agradable (10%) para evitar sustos
                 self.audio_output.setVolume(0.1)
                 
-                # Hacer que el video se reproduzca en bucle continuo
-                self.media_player.setLoops(QMediaPlayer.Infinite)
+                # Desactivar bucle de video por defecto
+                self.media_player.setLoops(1)
+
             except Exception as ex:
                 logger.error(f"PreviewPanel: Error inicializando reproductores multimedia: {ex}")
                 self.video_widget = None
@@ -135,11 +136,12 @@ class PreviewContainerWidget(QFrame):
         btn_layout.addWidget(self.btn_play_pause)
 
         # Botón Loop/Repetir
-        self._video_loop_active = True  # Por defecto en loop (ya se setea Infinite arriba)
+        self._video_loop_active = False  # Por defecto desactivado
         self.btn_loop = QPushButton()
         self.btn_loop.setIconSize(QSize(14, 14))
         self.btn_loop.setFixedSize(26, 26)
-        apply_player_loop_button_style(self.btn_loop, is_active=True, icon_size=14)
+        apply_player_loop_button_style(self.btn_loop, is_active=False, icon_size=14)
+
         self.btn_loop.clicked.connect(self._toggle_video_loop)
         btn_layout.addWidget(self.btn_loop)
 
@@ -243,7 +245,8 @@ class PreviewContainerWidget(QFrame):
                 self.controls_widget.setVisible(True)
             try:
                 self.media_player.setSource(QUrl.fromLocalFile(path))
-                loops = QMediaPlayer.Infinite if getattr(self, "_video_loop_active", True) else 1
+                loops = QMediaPlayer.Infinite if getattr(self, "_video_loop_active", False) else 1
+
                 self.media_player.setLoops(loops)
                 self.media_player.play()
                 logger.debug(f"PreviewPanel: Reproduciendo video preview: {path}")

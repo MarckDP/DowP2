@@ -11,9 +11,11 @@ from PySide6.QtWidgets import (
     QFrame,
     QLineEdit,
     QPushButton,
+    QComboBox,
     QSlider,
     QScrollArea,
 )
+
 from PySide6.QtCore import Qt, QSize, QEvent, QPoint
 from PySide6.QtGui import QIcon
 
@@ -517,11 +519,12 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         controls_layout.addWidget(self.btn_play)
 
         # Botón Loop/Repetir para audio
-        self._audio_loop_active = True  # Por defecto EN loop
+        self._audio_loop_active = False  # Por defecto DESACTIVADO
         self.btn_loop_audio = QPushButton()
         self.btn_loop_audio.setIconSize(QSize(14, 14))
         self.btn_loop_audio.setFixedSize(26, 26)
-        apply_player_loop_button_style(self.btn_loop_audio, is_active=True, icon_size=14)
+        apply_player_loop_button_style(self.btn_loop_audio, is_active=False, icon_size=14)
+
         self.btn_loop_audio.clicked.connect(self._on_toggle_audio_loop)
         controls_layout.addWidget(self.btn_loop_audio)
 
@@ -696,8 +699,17 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         self.btn_reveal.clicked.connect(self._on_reveal_clicked)
         buttons_layout.addWidget(self.btn_reveal, 1)
 
+        # QComboBox de selección de etiquetas (estilo nativo de la app para medios web)
+        self.combo_tags = QComboBox()
+        self.combo_tags.setObjectName("tagsComboBox")
+        self.combo_tags.setFixedHeight(34)
+        self.combo_tags.setVisible(False)
+        self.combo_tags.currentIndexChanged.connect(self._on_label_combo_changed)
+        buttons_layout.addWidget(self.combo_tags, 1)
+
         # Botón para descargar archivo de Freesound (medios web)
         self.btn_download = AnimatedButton(self.tr("Descargar Medio"))
+
         self.btn_download.setObjectName("pathToolButton")
         self.btn_download.setFixedHeight(34)
         dl_icon = get_svg_icon("download.svg")
@@ -710,6 +722,7 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         buttons_layout.addWidget(self.btn_download, 1)
 
         info_layout.addLayout(buttons_layout)
+
 
         layout.addWidget(self.info_box, 1)
 
@@ -1076,7 +1089,44 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         self.sort_by = key
         short_label = label.split("(")[0].strip()
         self.btn_sort_by.setText(short_label)
-        self._apply_active_filters_fast()
+
+        self.btn_sort_by.setText(short_label)
+
+    def load_labels(self):
+        """Carga las etiquetas configuradas en la aplicación en el QComboBox de etiquetas."""
+        if not hasattr(self, "combo_tags"):
+            return
+        self.combo_tags.blockSignals(True)
+        self.combo_tags.clear()
+        self.combo_tags.addItem(self.tr("Etiqueta"), "")
+        
+        from core.utils.config_manager import get_config
+        from PySide6.QtGui import QColor
+        config = get_config()
+        labels = config.get("labels", [])
+        for label in labels:
+            name = label.get("name", "")
+            path = label.get("path", "")
+            color = label.get("color", "#B9E640")
+            idx = self.combo_tags.count()
+            self.combo_tags.addItem(name, path)
+            self.combo_tags.setItemData(idx, color, Qt.UserRole + 1)
+            self.combo_tags.setItemData(idx, QColor(color), Qt.ForegroundRole)
+        self.combo_tags.blockSignals(False)
+
+    def _on_label_combo_changed(self, index):
+        label_name = self.combo_tags.itemText(index) if index > 0 else None
+        self.last_selected_web_label = label_name
+
+        selected_item = self.media_list.currentItem()
+        if not selected_item:
+            return
+        item_data = selected_item.data(Qt.UserRole)
+        if isinstance(item_data, dict):
+            new_data = dict(item_data)
+            new_data["selected_label"] = label_name
+            selected_item.setData(Qt.UserRole, new_data)
+
 
     def _toggle_sort_direction(self):
         self._set_sort_direction(not getattr(self, "sort_ascending", True))

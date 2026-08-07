@@ -174,23 +174,23 @@ class FreesoundMixin:
         new_items = []
         for r in results:
             previews = r.get("previews", {})
-            preview_url = previews.get("preview-lq-mp3", previews.get("preview-hq-mp3", previews.get("preview-lq-ogg", "")))
-            if not preview_url:
+            preview_lq_url = previews.get("preview-lq-mp3", previews.get("preview-hq-mp3", previews.get("preview-lq-ogg", "")))
+            download_hq_url = previews.get("preview-hq-mp3", previews.get("preview-hq-ogg", preview_lq_url))
+            if not preview_lq_url:
                 continue
 
-            
             dur = r.get("duration", 0)
             dur_m = int(dur // 60)
             dur_s = int(dur % 60)
             dur_str = f"{dur_m:02d}:{dur_s:02d}"
-            
+
             size_val = r.get("filesize", 0)
             size_kb = size_val / 1024.0
             if size_kb > 1024:
                 size_str = f"{size_kb / 1024.0:.1f} MB"
             else:
                 size_str = f"{size_kb:.1f} KB"
-                
+
             sound_name = r.get("name", "Sonido sin nombre").strip()
             sound_type = r.get("type", "").strip().lower()
             if sound_type and not any(sound_name.lower().endswith(f".{ext}") for ext in ["wav", "mp3", "flac", "ogg", "aiff", "m4a", "aac"]):
@@ -198,7 +198,8 @@ class FreesoundMixin:
 
             new_items.append({
                 "nombre": sound_name,
-                "ruta": preview_url,
+                "ruta": preview_lq_url,
+                "download_url": download_hq_url,
                 "tipo": "audio",
                 "tamaño": size_str,
                 "duración": dur_str,
@@ -210,6 +211,7 @@ class FreesoundMixin:
                 "description": r.get("description", "-"),
                 "images": r.get("images", {})
             })
+
 
         
         self.online_results.extend(new_items)
@@ -253,16 +255,29 @@ class FreesoundMixin:
         if not item_data or not item_data.get("es_remoto"):
             return
             
-        url = item_data["ruta"]
+        url = item_data.get("download_url", item_data["ruta"])
         name = item_data["nombre"]
+
         
-        workspace_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-        downloads_dir = os.path.join(workspace_dir, "downloads", "freesound")
+        # Determinar carpeta de destino: Etiqueta seleccionada o carpeta Downloads del sistema
+        selected_label_name = item_data.get("selected_label")
+        from core.utils.config_manager import get_config
+        labels = get_config().get("labels", [])
+        matched_label = next((l for l in labels if l.get("name") == selected_label_name), None) if selected_label_name else None
+
+        if matched_label and matched_label.get("path"):
+            downloads_dir = matched_label["path"]
+        else:
+            downloads_dir = os.path.expanduser("~/Downloads")
+
+        
         os.makedirs(downloads_dir, exist_ok=True)
-        
         clean_name = "".join(c for c in name if c.isalnum() or c in (".", "_", " ", "-")).strip()
         dest_path = os.path.join(downloads_dir, clean_name).replace("\\", "/")
         
+        token = getattr(self.controller, "freesound_auth", {}).get("access_token", "")
+        fallback_url = item_data.get("ruta")
+
         from PySide6.QtWidgets import QProgressDialog
         progress_dialog = QProgressDialog(self.tr("Descargando sonido de Freesound..."), self.tr("Cancelar"), 0, 100, self)
         progress_dialog.setWindowModality(Qt.WindowModal)
@@ -274,44 +289,60 @@ class FreesoundMixin:
             finished = Signal(bool)
             error = Signal(str)
             
-            def __init__(self, client, url, path):
+            def __init__(self, client, url, path, token=None, fallback_url=None):
                 super().__init__()
                 self.client = client
                 self.url = url
                 self.path = path
+                self.token = token
+                self.fallback_url = fallback_url
                 
             def run(self):
                 try:
-                    success = self.client.download_file(self.url, self.path, self.progress.emit)
+                    success = self.client.download_file(self.url, self.path, token=self.token, progress_callback=self.progress.emit)
                     self.finished.emit(success)
                 except Exception as e:
+                    if self.fallback_url and self.fallback_url != self.url:
+                        try:
+                            success = self.client.download_file(self.fallback_url, self.path, token=self.token, progress_callback=self.progress.emit)
+                            self.finished.emit(success)
+                            return
+                        except Exception:
+                            pass
                     self.error.emit(str(e))
                     
-        self.dl_thread = DownloadThread(self.freesound_client, url, dest_path)
+        self.dl_thread = DownloadThread(self.freesound_client, url, dest_path, token=token, fallback_url=fallback_url)
+
         self.dl_thread.progress.connect(progress_dialog.setValue)
         
         def on_finished(success):
             progress_dialog.close()
             if success:
-                item_data["ruta"] = dest_path
-                item_data["es_remoto"] = False
-                
+                item_data["dest_path"] = dest_path
                 selected_item.setData(Qt.UserRole, item_data)
                 
+                # Pintar icono en verde
+                from gui.styles import get_theme_token
+                from gui.tabs.editing_media.editing_media_icons import get_colored_svg_icon
+                accent_green = get_theme_token("acento_primario", "#B9E640")
+                is_grid = getattr(self, "view_mode", "grid") == "grid"
+                selected_item.setIcon(get_colored_svg_icon("music_note.svg", accent_green, size=32 if is_grid else 18))
+
+                # Registrar en la colección 'Descargados'
+                self.controller.add_to_downloaded_collection(dest_path)
+                
+                # Actualizar botones
                 self.btn_reveal.setVisible(True)
                 self.btn_reveal.setEnabled(True)
-                self.btn_download.setVisible(False)
+                if hasattr(self, "combo_tags"):
+                    self.combo_tags.setVisible(False)
+
+                self.btn_download.setVisible(True)
                 self.btn_download.setEnabled(False)
+                self.btn_download.setText(self.tr("En Disco"))
                 self.metadata_labels["ruta"].setText(dest_path)
                 
-                for col_name in self.controller.collections.keys():
-                    if url in self.controller.collections[col_name]:
-                        idx = self.controller.collections[col_name].index(url)
-                        self.controller.collections[col_name][idx] = dest_path
-                self.controller.save_data()
-                
                 QMessageBox.information(self, self.tr("Descarga Completada"), self.tr(f"El sonido ha sido guardado exitosamente en:\n{dest_path}"))
-                self._update_media_list()
                 
         def on_error(err):
             progress_dialog.close()
@@ -322,3 +353,4 @@ class FreesoundMixin:
         
         progress_dialog.canceled.connect(self.dl_thread.terminate)
         self.dl_thread.start()
+

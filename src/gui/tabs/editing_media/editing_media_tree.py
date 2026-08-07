@@ -16,9 +16,11 @@ from gui.tabs.editing_media.editing_media_icons import (
     get_colored_svg_icon,
     get_colored_folder_icon,
     get_svg_icon,
+    get_contrast_svg_icon,
     get_folder_icon,
     get_placeholder_thumbnail_icon
 )
+
 from core.tabs.editing_media.folder_color_manager import get_item_color, set_item_color, get_random_label_color
 from core.tabs.editing_media.editing_media_logic import VALID_EXTS
 from core.tabs.editing_media.thumbnail_cache_manager import ThumbnailCacheManager
@@ -83,11 +85,15 @@ class TreeListMixin:
         for col_name in self.controller.collections.keys():
             item = QTreeWidgetItem(self.virtual_root, [col_name])
             color = get_item_color(f"col:{col_name}")
-            if color:
+            if col_name == "Descargados":
+                accent_color = get_theme_token("acento_primario", "#B9E640")
+                item.setIcon(0, get_colored_svg_icon("download.svg", color or accent_color))
+            elif color:
                 item.setIcon(0, get_colored_svg_icon("star.svg", color))
             else:
                 item.setIcon(0, get_svg_icon("star.svg"))
             item.setData(0, Qt.UserRole, {"tipo": "collection", "nombre": col_name})
+
 
         # Restaurar selección anterior guardada en sesión o seleccionar Directorios por defecto (primera vez)
         saved_target = getattr(self.controller, "last_selected_tree_node", None)
@@ -305,16 +311,60 @@ class TreeListMixin:
                 icon_sz = self.icon_size_slider.value() if hasattr(self, "icon_size_slider") else 100
                 grid_hint = QSize(icon_sz + 32, icon_sz + 46)
 
+                downloaded_list = self.controller.collections.get("Descargados", [])
+                accent_green = get_theme_token("acento_primario", "#B9E640")
+                user_dl_dir = os.path.expanduser("~/Downloads")
+
                 for item in self.online_results:
-                    list_item = QListWidgetItem(item["nombre"])
-                    if is_grid:
-                        list_item.setIcon(icon_cloud_grid)
-                        list_item.setSizeHint(grid_hint)
+                    list_item = MediaListWidgetItem(item["nombre"])
+                    file_name = item.get("nombre", "").strip()
+
+                    is_downloaded = False
+                    found_path = None
+
+                    # 1. Comprobar en la colección 'Descargados'
+                    for d_path in downloaded_list:
+                        if os.path.basename(d_path).strip().lower() == file_name.lower() and os.path.exists(d_path):
+                            is_downloaded = True
+                            found_path = d_path
+                            break
+
+                    # 2. Comprobar en la carpeta ~/Downloads
+                    if not is_downloaded:
+                        target = os.path.join(user_dl_dir, file_name)
+                        if os.path.exists(target):
+                            is_downloaded = True
+                            found_path = target
+
+                    # 3. Comprobar en rutas de etiquetas configuradas
+                    if not is_downloaded:
+                        from core.utils.config_manager import get_config
+                        labels = get_config().get("labels", [])
+                        for lbl in labels:
+                            lbl_p = lbl.get("path")
+                            if lbl_p and os.path.exists(lbl_p):
+                                target = os.path.join(lbl_p, file_name)
+                                if os.path.exists(target):
+                                    is_downloaded = True
+                                    found_path = target
+                                    break
+
+                    if is_downloaded and found_path:
+                        item["dest_path"] = found_path
+                        icon_green = get_colored_svg_icon("music_note.svg", accent_green, size=32 if is_grid else 18)
+                        list_item.setIcon(icon_green)
                     else:
-                        list_item.setIcon(icon_cloud_list)
+                        if is_grid:
+                            list_item.setIcon(icon_cloud_grid)
+                        else:
+                            list_item.setIcon(icon_cloud_list)
+
+                    if is_grid:
+                        list_item.setSizeHint(grid_hint)
                     list_item.setData(Qt.UserRole, item)
                     self.media_list.addItem(list_item)
                 return
+
             else:
                 media_items = self.controller.get_all_media_files()
 
@@ -418,32 +468,56 @@ class TreeListMixin:
                         icon_sz = self.media_list.iconSize().width()
                         grid_hint = QSize(icon_sz + 32, icon_sz + 46)
 
+                    downloaded_list = self.controller.collections.get("Descargados", [])
+
                     for i in range(start_idx, end_idx):
                         item = display_items[i]
                         list_item = MediaListWidgetItem(item["nombre"])
                         item_type = item["tipo"]
                         file_path = item.get("ruta", "")
+                        is_web_item = item.get("es_remoto", False) or file_path.startswith("http")
 
-                        cached_icon = thumb_mgr.get_cached_qicon(file_path) if file_path else None
-                        if cached_icon:
-                            list_item.setIcon(cached_icon)
+                        is_downloaded = False
+                        if is_web_item:
+                            # 1. Comprobar en colección Descargados
+                            for d_path in downloaded_list:
+                                if os.path.basename(d_path) == item.get("nombre") and os.path.exists(d_path):
+                                    is_downloaded = True
+                                    item["dest_path"] = d_path
+                                    break
+                            # 2. Comprobar en carpeta ~/Downloads del sistema
+                            if not is_downloaded:
+                                user_dl = os.path.join(os.path.expanduser("~/Downloads"), item.get("nombre", ""))
+                                if os.path.exists(user_dl):
+                                    is_downloaded = True
+                                    item["dest_path"] = user_dl
+
+                        if is_web_item and is_downloaded:
+                            accent_green = get_theme_token("acento_primario", "#B9E640")
+                            icon_green = get_colored_svg_icon("music_note.svg", accent_green, size=32 if is_grid else 18)
+                            list_item.setIcon(icon_green)
                         else:
-                            if is_grid:
-                                if item_type == "video":
-                                    list_item.setIcon(icon_video_grid)
-                                elif item_type == "imagen":
-                                    list_item.setIcon(icon_image_grid)
-                                elif item_type == "audio":
-                                    list_item.setIcon(icon_audio_grid)
+                            cached_icon = thumb_mgr.get_cached_qicon(file_path) if file_path and not is_web_item else None
+                            if cached_icon:
+                                list_item.setIcon(cached_icon)
                             else:
-                                if item_type == "video":
-                                    list_item.setIcon(icon_video_list)
-                                elif item_type == "imagen":
-                                    list_item.setIcon(icon_image_list)
-                                elif item_type == "audio":
-                                    list_item.setIcon(icon_audio_list)
+                                if is_grid:
+                                    if item_type == "video":
+                                        list_item.setIcon(icon_video_grid)
+                                    elif item_type == "imagen":
+                                        list_item.setIcon(icon_image_grid)
+                                    elif item_type == "audio":
+                                        list_item.setIcon(icon_audio_grid)
+                                else:
+                                    if item_type == "video":
+                                        list_item.setIcon(icon_video_list)
+                                    elif item_type == "imagen":
+                                        list_item.setIcon(icon_image_list)
+                                    elif item_type == "audio":
+                                        list_item.setIcon(icon_audio_list)
 
                         list_item.setData(Qt.UserRole, item)
+
                         if grid_hint:
                             list_item.setSizeHint(grid_hint)
                         self.media_list.addItem(list_item)
@@ -638,23 +712,42 @@ class TreeListMixin:
 
     def _on_tree_current_item_changed(self, current, previous):
         if current and current != previous:
-            self._on_tree_item_clicked(current, 0)
+            try:
+                self._on_tree_item_clicked(current, 0)
+            except RuntimeError:
+                pass
 
     def _on_current_item_changed(self, current, previous):
         if current:
-            self._on_media_clicked(current)
+            try:
+                self._on_media_clicked(current)
+            except RuntimeError:
+                pass
 
     def _on_tree_item_clicked(self, item, column):
         self._update_button_states()
         
-        data = item.data(0, Qt.UserRole) if item else None
-        
-        # Evitar re-ejecución duplicada si ya es el nodo seleccionado y renderizado
-        if getattr(self, "_active_tree_item", None) == item and getattr(self, "_active_tree_data", None) == data:
-            return
+        try:
+            data = item.data(0, Qt.UserRole) if item else None
             
+            # Evitar re-ejecución duplicada si ya es el nodo seleccionado y renderizado
+            if getattr(self, "_active_tree_item", None) == item and getattr(self, "_active_tree_data", None) == data:
+                return
+        except RuntimeError:
+            self._active_tree_item = None
+            self._active_tree_data = None
+            if not item:
+                return
+            try:
+                data = item.data(0, Qt.UserRole)
+            except RuntimeError:
+                return
+
         self._active_tree_item = item
         self._active_tree_data = data
+        self._max_display_count = 500
+
+
 
         # Limpiar selección previa del reproductor al cambiar de carpeta en el árbol
         self.current_playing_path = None
@@ -739,16 +832,43 @@ class TreeListMixin:
 
         self._update_media_list()
 
+    def _refresh_current_view(self):
+        """Refresca la vista actual (limpia cachés de medios/metadatos y re-escanea o re-ejecuta búsquedas)."""
+        if hasattr(self.controller, "_media_cache"):
+            self.controller._media_cache = {}
+        if hasattr(self, "_metadata_cache"):
+            self._metadata_cache = {}
+
+        selected = self.tree_folders.currentItem()
+        if selected:
+            try:
+                data = selected.data(0, Qt.UserRole)
+                if data and data.get("tipo") == "root_online":
+                    self.current_page = 1
+                    self.online_results = []
+                    self._exec_online_search()
+                    return
+            except RuntimeError:
+                pass
+
+        self._update_media_list()
+
     def _show_tree_context_menu(self, position):
         item = self.tree_folders.itemAt(position)
         menu = QMenu(self)
-        
+
+        act_refresh = menu.addAction(get_contrast_svg_icon("refresh.svg"), self.tr("Actualizar"))
+
+        act_refresh.triggered.connect(self._refresh_current_view)
+        menu.addSeparator()
+
         if not item:
             # Click derecho en zona vacía: ofrecer crear colección virtual
             act_new_col = menu.addAction(self.tr("Nueva Colección Virtual"))
             act_new_col.triggered.connect(self._on_add_collection_clicked)
             menu.exec(self.tree_folders.mapToGlobal(position))
             return
+
             
         data = item.data(0, Qt.UserRole)
         if not data:
@@ -907,7 +1027,12 @@ class TreeListMixin:
                     color: #555555;
                 }}
             """)
+            act_refresh = menu.addAction(get_contrast_svg_icon("refresh.svg"), self.tr("Actualizar Lista"))
+            act_refresh.triggered.connect(self._refresh_current_view)
+            menu.addSeparator()
+
             sort_sub = menu.addMenu(self.tr("Ordenar por"))
+
             options = [
                 ("nombre", self.tr("Nombre")),
                 ("mtime", self.tr("Fecha de Modificación")),
@@ -959,6 +1084,12 @@ class TreeListMixin:
         file_path = item_data["ruta"]
         menu = QMenu(self)
 
+        act_refresh = menu.addAction(get_contrast_svg_icon("refresh.svg"), self.tr("Actualizar Lista"))
+
+        act_refresh.triggered.connect(self._refresh_current_view)
+        menu.addSeparator()
+
+
         # Determinar si estamos visualizando una colección virtual
         tree_item = self.tree_folders.currentItem()
         is_viewing_collection = False
@@ -978,13 +1109,14 @@ class TreeListMixin:
             # Opción para añadir a una colección
             submenu = menu.addMenu(self.tr("Añadir a Colección"))
             
-            # Cargar colecciones dinámicamente
-            collections_list = list(self.controller.collections.keys())
+            # Cargar colecciones dinámicamente (excluyendo Descargados que es exclusiva para medios web)
+            collections_list = [c for c in self.controller.collections.keys() if c != "Descargados"]
             if collections_list:
                 for col_name in collections_list:
                     act_col = submenu.addAction(col_name)
                     # Usar captura de variable por scope en lambda
                     act_col.triggered.connect(lambda checked=False, cn=col_name: self._add_file_to_collection(cn, file_path))
+
             else:
                 act_none = submenu.addAction(self.tr("(Sin colecciones)"))
                 act_none.setEnabled(False)

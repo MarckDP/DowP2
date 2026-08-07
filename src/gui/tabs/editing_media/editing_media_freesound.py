@@ -218,16 +218,42 @@ class FreesoundMixin:
             if sound_type and not any(sound_name.lower().endswith(f".{ext}") for ext in ["wav", "mp3", "flac", "ogg", "aiff", "m4a", "aac"]):
                 sound_name = f"{sound_name}.{sound_type}"
 
+            raw_license = str(r.get("license", "")).lower()
+            if "zero" in raw_license or "cc0" in raw_license or "publicdomain" in raw_license:
+                license_clean = "CC0"
+            elif "by-nc" in raw_license or "noncommercial" in raw_license:
+                license_clean = "CC BY-NC"
+            elif "by" in raw_license or "attribution" in raw_license:
+                license_clean = "CC BY"
+            elif raw_license:
+                license_clean = r.get("license", "Freesound")
+            else:
+                license_clean = "CC0"
+
+            sr_val = r.get("samplerate")
+            if sr_val:
+                try:
+                    sr_num = int(sr_val)
+                    sample_rate_str = f"{sr_num / 1000.0:.1f} kHz" if sr_num >= 1000 else f"{sr_num} Hz"
+                except Exception:
+                    sample_rate_str = str(sr_val)
+            else:
+                sample_rate_str = "-"
+
             new_items.append({
                 "nombre": sound_name,
                 "ruta": preview_lq_url,
                 "download_url": download_hq_url,
                 "tipo": "audio",
+                "file_type": sound_type.upper() if sound_type else "AUDIO",
                 "tamaño": size_str,
                 "duración": dur_str,
+                "duration": dur,
                 "es_remoto": True,
                 "username": r.get("username", "-"),
-                "license": r.get("license", "-"),
+                "license": license_clean,
+                "library": "Freesound",
+                "sample_rate": sample_rate_str,
                 "avg_rating": f"{r.get('avg_rating', 0):.1f}",
                 "num_downloads": str(r.get("num_downloads", 0)),
                 "description": r.get("description", "-"),
@@ -254,9 +280,10 @@ class FreesoundMixin:
         if selected:
             data = selected.data(0, Qt.UserRole)
             if data and data.get("tipo") == "root_online":
-                max_scroll = self.media_list.verticalScrollBar().maximum()
+                scroll_widget = self.media_table if getattr(self, "view_mode", "grid") == "list" and hasattr(self, "media_table") else self.media_list
+                max_scroll = scroll_widget.verticalScrollBar().maximum()
                 # Si llega casi al final y no hay búsqueda activa, cargar la siguiente página
-                if value >= max_scroll - 5 and max_scroll > 0:
+                if value >= max_scroll - 15 and max_scroll > 0:
                     if not self.loading_next_page:
                         if hasattr(self, "online_search_thread") and self.online_search_thread and self.online_search_thread.isRunning():
                             return
@@ -270,10 +297,7 @@ class FreesoundMixin:
             self._request_visible_thumbnails()
 
     def _on_download_clicked(self):
-        selected_item = self.media_list.currentItem()
-        if not selected_item:
-            return
-        item_data = selected_item.data(Qt.UserRole)
+        item_data = self._get_current_media_data() if hasattr(self, "_get_current_media_data") else None
         if not item_data or not item_data.get("es_remoto"):
             return
             

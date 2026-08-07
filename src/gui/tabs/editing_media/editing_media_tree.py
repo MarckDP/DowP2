@@ -38,6 +38,19 @@ class MediaListWidgetItem(QListWidgetItem):
                     return str(v1) < str(v2)
         return super().__lt__(other)
 
+class MediaTreeWidgetItem(QTreeWidgetItem):
+    """QTreeWidgetItem personalizado con ordenamiento inteligente por tipo de datos (numérico, duración, texto)."""
+    def __lt__(self, other):
+        column = self.treeWidget().sortColumn() if self.treeWidget() else 0
+        v1 = self.data(column, Qt.UserRole + 1)
+        v2 = other.data(column, Qt.UserRole + 1)
+        if v1 is not None and v2 is not None:
+            try:
+                return v1 < v2
+            except Exception:
+                pass
+        return self.text(column).lower() < other.text(column).lower()
+
 class TreeListMixin:
     """Mixin que maneja el árbol de carpetas, lista de medios y menús contextuales."""
 
@@ -249,8 +262,80 @@ class TreeListMixin:
                     if file_path and item_type and not thumb_mgr.get_cached_qicon(file_path):
                         thumb_mgr.request_thumbnail(file_path, item_type)
 
+    def _create_table_item(self, item, icon):
+        """Crea un MediaTreeWidgetItem multi-columna para la vista tabular estilo SoundQ."""
+        tree_item = MediaTreeWidgetItem()
+        tree_item.setIcon(0, icon)
+        
+        file_name = str(item.get("nombre", "")).strip()
+        desc = str(item.get("description", item.get("desc", "-"))).strip()
+        if not desc:
+            desc = "-"
+        if len(desc) > 120:
+            desc = desc[:117] + "..."
+            
+        license_str = str(item.get("license", "Local")).strip()
+        if not license_str or license_str == "-":
+            license_str = "Local"
+            
+        dur_str = str(item.get("duración", item.get("duration_str", "-"))).strip()
+        if not dur_str:
+            dur_str = "-"
+            
+        lib_str = str(item.get("library", "Freesound" if item.get("es_remoto") else "Local")).strip()
+        
+        # Tipo de Archivo (WAV, MP3, FLAC, PNG, MP4, etc.)
+        file_type = item.get("file_type") or item.get("type", "")
+        if not file_type and "." in file_name:
+            ext = file_name.split(".")[-1].upper()
+            if len(ext) <= 5:
+                file_type = ext
+        if not file_type:
+            file_type = str(item.get("tipo", "ARCHIVO")).upper()
+        else:
+            file_type = str(file_type).upper()
+
+        # Sample Rate (44.1 kHz, 48.0 kHz, etc.)
+        sample_rate = item.get("sample_rate", item.get("samplerate", "-"))
+        if not sample_rate or sample_rate == "-":
+            # Si no está en item, comprobar caché de metadatos del controlador
+            file_p = item.get("ruta", "")
+            if hasattr(self, "_metadata_cache") and file_p in self._metadata_cache:
+                sample_rate = self._metadata_cache[file_p].get("samplerate", "-")
+        if not sample_rate:
+            sample_rate = "-"
+
+        tree_item.setText(0, "") # Ícono / Estado
+        tree_item.setText(1, file_name)
+        tree_item.setText(2, desc)
+        tree_item.setText(3, license_str)
+        tree_item.setText(4, dur_str)
+        tree_item.setText(5, lib_str)
+        tree_item.setText(6, str(file_type))
+        tree_item.setText(7, str(sample_rate))
+
+        # Metadatos para ordenamiento al hacer clic en encabezados
+        tree_item.setData(0, Qt.UserRole, item)
+        tree_item.setData(1, Qt.UserRole + 1, file_name.lower())
+        tree_item.setData(2, Qt.UserRole + 1, desc.lower())
+        tree_item.setData(3, Qt.UserRole + 1, license_str.lower())
+        
+        dur_sec = item.get("duration", 0)
+        if not dur_sec and ":" in dur_str:
+            try:
+                parts = dur_str.split(":")
+                dur_sec = int(parts[0]) * 60 + float(parts[1])
+            except Exception:
+                dur_sec = 0
+        tree_item.setData(4, Qt.UserRole + 1, dur_sec)
+        tree_item.setData(5, Qt.UserRole + 1, lib_str.lower())
+        tree_item.setData(6, Qt.UserRole + 1, str(file_type).lower())
+        tree_item.setData(7, Qt.UserRole + 1, str(sample_rate).lower())
+
+        return tree_item
+
     def _update_media_list(self):
-        """Refresca la lista central de medios con pre-filtrado en RAM, limite de paginación y miniaturas bajo demanda."""
+        """Refresca la lista central de medios con pre-filtrado en RAM, límite de paginación y miniaturas bajo demanda."""
         # Detener lote anterior si aún estaba procesándose
         if hasattr(self, "_batch_timer") and self._batch_timer and self._batch_timer.isActive():
             self._batch_timer.stop()
@@ -265,8 +350,12 @@ class TreeListMixin:
         was_blocked = self.media_list.signalsBlocked()
         self.media_list.blockSignals(True)
         self.media_list.setUpdatesEnabled(False)
+        if hasattr(self, "media_table"):
+            self.media_table.setUpdatesEnabled(False)
         try:
             self.media_list.clear()
+            if hasattr(self, "media_table"):
+                self.media_table.clear()
             
             selected = self.tree_folders.currentItem()
             tipo = None
@@ -295,17 +384,24 @@ class TreeListMixin:
                 is_grid = getattr(self, "view_mode", "grid") == "grid"
 
                 if not self.controller.is_freesound_authenticated:
-                    list_item = QListWidgetItem(self.tr("Inicia sesión con Freesound para buscar sonidos 🔑"))
+                    msg = self.tr("Inicia sesión con Freesound para buscar sonidos 🔑")
+                    list_item = QListWidgetItem(msg)
                     self.media_list.addItem(list_item)
+                    if hasattr(self, "media_table"):
+                        t_item = MediaTreeWidgetItem()
+                        t_item.setText(1, msg)
+                        self.media_table.addTopLevelItem(t_item)
                     return
 
                 if not self.online_results:
                     is_searching = self.online_search_thread and self.online_search_thread.isRunning()
-                    if is_searching:
-                        list_item = QListWidgetItem(self.tr("Buscando en Freesound..."))
-                    else:
-                        list_item = QListWidgetItem(self.tr("No se encontraron resultados o la búsqueda falló. Intente de nuevo."))
+                    msg = self.tr("Buscando en Freesound...") if is_searching else self.tr("No se encontraron resultados o la búsqueda falló. Intente de nuevo.")
+                    list_item = QListWidgetItem(msg)
                     self.media_list.addItem(list_item)
+                    if hasattr(self, "media_table"):
+                        t_item = MediaTreeWidgetItem()
+                        t_item.setText(1, msg)
+                        self.media_table.addTopLevelItem(t_item)
                     return
 
                 icon_sz = self.icon_size_slider.value() if hasattr(self, "icon_size_slider") else 100
@@ -352,8 +448,10 @@ class TreeListMixin:
                     if is_downloaded and found_path:
                         item["dest_path"] = found_path
                         icon_green = get_colored_svg_icon("music_note.svg", accent_green, size=32 if is_grid else 18)
+                        icon_table = get_colored_svg_icon("music_note.svg", accent_green, size=18)
                         list_item.setIcon(icon_green)
                     else:
+                        icon_table = icon_cloud_list
                         if is_grid:
                             list_item.setIcon(icon_cloud_grid)
                         else:
@@ -363,6 +461,12 @@ class TreeListMixin:
                         list_item.setSizeHint(grid_hint)
                     list_item.setData(Qt.UserRole, item)
                     self.media_list.addItem(list_item)
+                    if hasattr(self, "media_table"):
+                        t_item = self._create_table_item(item, icon_table)
+                        self.media_table.addTopLevelItem(t_item)
+                if hasattr(self, "media_table"):
+                    self.media_table.setUpdatesEnabled(True)
+                    self.media_table.update()
                 return
 
             else:
@@ -417,6 +521,12 @@ class TreeListMixin:
                 f.setPointSize(11)
                 empty_item.setFont(f)
                 self.media_list.addItem(empty_item)
+                if hasattr(self, "media_table"):
+                    t_item = MediaTreeWidgetItem()
+                    t_item.setText(1, msg)
+                    t_item.setFlags(Qt.NoItemFlags)
+                    t_item.setForeground(1, QColor("#a6adc8"))
+                    self.media_table.addTopLevelItem(t_item)
                 return
 
             # 2. Pre-ordenación ultrarrápida en RAM (0ms)
@@ -521,8 +631,15 @@ class TreeListMixin:
                         if grid_hint:
                             list_item.setSizeHint(grid_hint)
                         self.media_list.addItem(list_item)
+
+                        if hasattr(self, "media_table"):
+                            table_icon = list_item.icon()
+                            t_item = self._create_table_item(item, table_icon)
+                            self.media_table.addTopLevelItem(t_item)
                 finally:
                     self.media_list.setUpdatesEnabled(True)
+                    if hasattr(self, "media_table"):
+                        self.media_table.setUpdatesEnabled(True)
 
                 if end_idx < len(display_items):
                     from PySide6.QtCore import QTimer
@@ -555,6 +672,17 @@ class TreeListMixin:
                             more_item.setSizeHint(grid_hint)
 
                         self.media_list.addItem(more_item)
+
+                        if hasattr(self, "media_table"):
+                            t_more = MediaTreeWidgetItem()
+                            t_more.setText(1, self.tr(f"Mostrar todo ({total_count})"))
+                            t_more.setData(0, Qt.UserRole, {"tipo": "load_more"})
+                            accent_color = get_theme_token("acento_primario", "#B9E640")
+                            t_more.setForeground(1, QColor(accent_color))
+                            btn_icon = get_colored_svg_icon("arrow_circle_down.svg", accent_color, size=18)
+                            if not btn_icon.isNull():
+                                t_more.setIcon(0, btn_icon)
+                            self.media_table.addTopLevelItem(t_more)
 
                     # Restaurar selección previa si el ítem sigue en la lista
                     if target_path:

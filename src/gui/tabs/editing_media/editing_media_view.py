@@ -7,6 +7,9 @@ from PySide6.QtWidgets import (
     QSplitter,
     QLabel,
     QTreeWidget,
+    QTreeWidgetItem,
+    QHeaderView,
+    QStackedWidget,
     QListWidget,
     QFrame,
     QLineEdit,
@@ -431,7 +434,57 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
 
         layout.addLayout(btn_bar)
 
-        # Lista de archivos multimedia
+        # Contenedor apilado para alternar entre Vista de Lista Tabular (SoundQ) y Vista de Cuadrícula (Cards)
+        self.media_stack = QStackedWidget()
+
+        # 1. Modo Lista Tabular (QTreeWidget multi-columna estilo SoundQ)
+        self.media_table = QTreeWidget()
+        self.media_table.setObjectName("mediaTableWidget")
+        self.media_table.setColumnCount(8)
+        self.media_table.setHeaderLabels([
+            self.tr("Estado"),
+            self.tr("Nombre de Archivo"),
+            self.tr("Descripción"),
+            self.tr("Licencia"),
+            self.tr("Duración"),
+            self.tr("Origen"),
+            self.tr("Tipo de Archivo"),
+            self.tr("Sample Rate")
+        ])
+        self.media_table.setSortingEnabled(True)
+        self.media_table.setSelectionMode(QTreeWidget.SingleSelection)
+        self.media_table.setSelectionBehavior(QTreeWidget.SelectRows)
+        self.media_table.setAlternatingRowColors(True)
+        self.media_table.setRootIsDecorated(False)
+        self.media_table.setItemsExpandable(False)
+        self.media_table.setIconSize(QSize(18, 18))
+
+        # Estilizar encabezado de columnas (SoundQ style con redimensionamiento libre)
+        header = self.media_table.header()
+        header.setVisible(True)
+        header.setStretchLastSection(False)
+        header.setCascadingSectionResizes(True)
+        for c in range(8):
+            header.setSectionResizeMode(c, QHeaderView.Interactive)
+
+        # Anchos iniciales de columnas
+        self.media_table.setColumnWidth(0, 48)  # Estado / Ícono
+        self.media_table.setColumnWidth(1, 240) # Filename
+        self.media_table.setColumnWidth(2, 220) # Descripción
+        self.media_table.setColumnWidth(3, 110) # Licencia
+        self.media_table.setColumnWidth(4, 85)  # Duración
+        self.media_table.setColumnWidth(5, 110) # Origen
+        self.media_table.setColumnWidth(6, 110) # Tipo de Archivo
+        self.media_table.setColumnWidth(7, 95)  # Sample Rate
+
+        # Conectar eventos de la tabla
+        self.media_table.itemClicked.connect(self._on_media_clicked)
+        self.media_table.currentItemChanged.connect(self._on_current_item_changed)
+        self.media_table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.media_table.customContextMenuRequested.connect(self._show_media_context_menu)
+        self.media_table.verticalScrollBar().valueChanged.connect(self._on_list_scroll)
+        
+        # 2. Modo Cuadrícula (QListWidget IconMode)
         self.media_list = QListWidget()
         self.media_list.setObjectName("mediaListWidget")
         self.media_list.setSpacing(0)
@@ -440,14 +493,15 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         self.media_list.verticalScrollBar().setSingleStep(30)
         self.media_list.itemClicked.connect(self._on_media_clicked)
         self.media_list.currentItemChanged.connect(self._on_current_item_changed)
-        
-        # Activar menú contextual e infinite scroll
         self.media_list.setContextMenuPolicy(Qt.CustomContextMenu)
         self.media_list.customContextMenuRequested.connect(self._show_media_context_menu)
         self.media_list.verticalScrollBar().valueChanged.connect(self._on_list_scroll)
         self.media_list.viewport().installEventFilter(self)
+
+        self.media_stack.addWidget(self.media_table) # Index 0: Lista Tabular SoundQ
+        self.media_stack.addWidget(self.media_list)  # Index 1: Cuadrícula Cards
         
-        layout.addWidget(self.media_list, 1)
+        layout.addWidget(self.media_stack, 1)
 
         # Aplicar modo de vista guardado
         self.set_view_mode(self.view_mode)
@@ -771,6 +825,49 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
             }}
         """)
 
+        # Estilo para la tabla multi-columna de medios (Modo Lista Tabular SoundQ)
+        table_style = f"""
+            QTreeWidget#mediaTableWidget {{
+                background-color: {get_theme_token('fondo_principal', '#0a0a0a')};
+                border: 1px solid {borde_color};
+                padding: 0px;
+                color: {get_theme_token('texto_principal', '#cdd6f4')};
+                font-size: 12px;
+                alternate-background-color: {get_theme_token('fondo_secundario', '#121212')};
+                outline: none;
+            }}
+            QTreeWidget#mediaTableWidget::item {{
+                padding: 4px 8px;
+                border-bottom: 1px solid {get_theme_token('borde_normal', '#1f1f23')};
+                color: {get_theme_token('texto_principal', '#cdd6f4')};
+            }}
+            QTreeWidget#mediaTableWidget::item:hover {{
+                background-color: {get_theme_token('seleccion_fondo', '#2d2d2d')};
+            }}
+            QTreeWidget#mediaTableWidget::item:selected {{
+                background-color: {get_theme_token('seleccion_fondo', '#2d2d2d')};
+                color: {get_theme_token('acento_primario', '#B9E640')};
+                font-weight: bold;
+            }}
+            QHeaderView::section {{
+                background-color: {get_theme_token('fondo_elemento', '#1c1c1e')};
+                color: {get_theme_token('texto_secundario', '#a6adc8')};
+                padding: 6px 8px;
+                border: none;
+                border-right: 1px solid {borde_color};
+                border-bottom: 1px solid {get_theme_token('acento_primario', '#B9E640')};
+                font-weight: bold;
+                font-size: 11px;
+                text-transform: uppercase;
+            }}
+            QHeaderView::section:hover {{
+                background-color: {get_theme_token('seleccion_fondo', '#2d2d2d')};
+                color: {get_theme_token('acento_primario', '#B9E640')};
+            }}
+        """
+        if hasattr(self, "media_table"):
+            self.media_table.setStyleSheet(table_style)
+
         # Estilo para la lista de medios (Columna Central)
         list_style = f"""
             QListWidget {{
@@ -843,15 +940,15 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         self.tree_folders.setStyleSheet(tree_style)
 
     def set_view_mode(self, mode: str):
-        """Alterna entre vista de lista y vista de cuadrícula/miniaturas."""
+        """Alterna entre vista de lista tabular (SoundQ style) y vista de cuadrícula/miniaturas."""
         self.view_mode = mode
-        self.media_list.setUpdatesEnabled(False)
-        try:
+        if hasattr(self, "media_stack"):
             if mode == "grid":
                 self.btn_view_grid.setChecked(True)
                 self.btn_view_list.setChecked(False)
                 self.btn_view_grid.setIcon(get_colored_svg_icon("grid_view.svg", "#000000", size=14))
                 self.btn_view_list.setIcon(get_colored_svg_icon("view_list.svg", "#FFFFFF", size=14))
+                self.media_stack.setCurrentWidget(self.media_list)
                 self.media_list.setViewMode(QListWidget.IconMode)
                 self.media_list.setResizeMode(QListWidget.Adjust)
                 self.media_list.setMovement(QListWidget.Static)
@@ -868,19 +965,9 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
                 self.btn_view_grid.setIcon(get_colored_svg_icon("grid_view.svg", "#FFFFFF", size=14))
                 if hasattr(self, "grid_scale_popup"):
                     self.grid_scale_popup.hide()
-                self.media_list.setViewMode(QListWidget.ListMode)
-                self.media_list.setWordWrap(False)
-                self.media_list.setSpacing(2)
-                self.media_list.setGridSize(QSize())
-                self.media_list.setIconSize(QSize(24, 24))
-                self.media_list.setUniformItemSizes(True)
-                self.media_list.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+                self.media_stack.setCurrentWidget(self.media_table)
 
-            self._update_media_list()
-            self.media_list.doItemsLayout()
-            self.media_list.update()
-        finally:
-            self.media_list.setUpdatesEnabled(True)
+        self._update_media_list()
         
         # Persistir la preferencia de modo de vista
         cfg = get_config()
@@ -1154,3 +1241,22 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         finally:
             if hasattr(self, "search_spinner"):
                 self.search_spinner.stop()
+
+    def _get_current_media_item(self):
+        """Devuelve el ítem actualmente seleccionado en la vista activa (tabla o cuadrícula)."""
+        if getattr(self, "view_mode", "grid") == "list" and hasattr(self, "media_table"):
+            return self.media_table.currentItem()
+        elif hasattr(self, "media_list"):
+            return self.media_list.currentItem()
+        return None
+
+    def _get_current_media_data(self):
+        """Devuelve la estructura dict de datos del elemento actualmente seleccionado."""
+        item = self._get_current_media_item()
+        if not item:
+            return None
+        if hasattr(item, "childCount"): # QTreeWidgetItem
+            return item.data(0, Qt.UserRole)
+        elif hasattr(item, "data"): # QListWidgetItem
+            return item.data(Qt.UserRole)
+        return None

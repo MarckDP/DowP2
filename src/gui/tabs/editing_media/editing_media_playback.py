@@ -30,8 +30,16 @@ class PlaybackMixin:
         return 0.0
 
     def _on_media_clicked(self, list_item):
-        item_data = list_item.data(Qt.UserRole)
-        if not item_data:
+        if not list_item:
+            return
+        if hasattr(list_item, "childCount"): # QTreeWidgetItem
+            item_data = list_item.data(0, Qt.UserRole)
+        elif hasattr(list_item, "data"): # QListWidgetItem
+            item_data = list_item.data(Qt.UserRole)
+        else:
+            return
+
+        if not item_data or not isinstance(item_data, dict):
             return
 
         if item_data.get("tipo") == "load_more":
@@ -405,12 +413,8 @@ class PlaybackMixin:
             self.audio_output.setVolume(float_val)
 
     def _on_waveform_seek_requested(self, ratio):
-        selected_item = self.media_list.currentItem()
-        tipo = None
-        if selected_item:
-            item_data = selected_item.data(Qt.UserRole)
-            if item_data:
-                tipo = item_data.get("tipo")
+        item_data = self._get_current_media_data() if hasattr(self, "_get_current_media_data") else None
+        tipo = item_data.get("tipo") if item_data else None
 
         if tipo == "video":
             if self.preview_box and self.preview_box.media_player and self.preview_box.media_player.duration() > 0:
@@ -424,14 +428,12 @@ class PlaybackMixin:
     def _on_video_position_changed(self, position):
         if not self.preview_box or not self.preview_box.media_player:
             return
-        selected_item = self.media_list.currentItem()
-        if selected_item:
-            item_data = selected_item.data(Qt.UserRole)
-            if item_data and item_data.get("tipo") == "video":
-                duration = self.preview_box.media_player.duration()
-                if duration > 0:
-                    ratio = position / duration
-                    self.waveform_widget.set_playback_ratio(ratio)
+        item_data = self._get_current_media_data() if hasattr(self, "_get_current_media_data") else None
+        if item_data and item_data.get("tipo") == "video":
+            duration = self.preview_box.media_player.duration()
+            if duration > 0:
+                ratio = position / duration
+                self.waveform_widget.set_playback_ratio(ratio)
 
     def _format_time_ms(self, ms: int) -> str:
         """Formatea milisegundos a HH:MM:SS.mmm (estándar de edición de video)."""
@@ -525,10 +527,7 @@ class PlaybackMixin:
             self.license_panel.setVisible(False)
 
     def _on_reveal_clicked(self):
-        selected = self.media_list.currentItem()
-        if not selected:
-            return
-        item_data = selected.data(Qt.UserRole)
+        item_data = self._get_current_media_data() if hasattr(self, "_get_current_media_data") else None
         if item_data:
             path = item_data.get("dest_path") or item_data.get("ruta")
             if path and os.path.exists(path):

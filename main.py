@@ -88,6 +88,11 @@ def main():
     splash = SplashScreen()
     window_holder = [None]  # Usar lista para evitar GC
     
+    # Iniciar Master Manager de Editores (Adobe, DaVinci, Vegas)
+    from core.services.editor_integration_manager import EditorIntegrationManager
+    editor_manager = EditorIntegrationManager()
+    editor_manager.start_all_services()
+    
     def on_splash_ready(main_window):
         """Recibe la MainWindow ya construida desde el splash."""
         window_holder[0] = main_window
@@ -111,6 +116,10 @@ def main():
             get_queue_manager().stop_worker()
         except Exception as e:
             logger.debug(f"Error deteniendo QueueManager en salida: {e}")
+        try:
+            editor_manager.stop_all_services()
+        except BaseException as e:
+            logger.debug(f"Error deteniendo Editor Manager en salida: {e}")
 
     app.aboutToQuit.connect(on_app_exit)
 

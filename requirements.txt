@@ -6,3 +6,5 @@ pycryptodomex>=3.23.0
 websockets>=16.0
 brotli>=1.2.0
 watchdog>=6.0.0
+python-socketio>=5.11.0
+aiohttp>=3.9.5

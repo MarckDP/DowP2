@@ -238,11 +238,36 @@ class QueueWorker(QThread):
         config_to_use = config_to_use.copy()
         config_to_use["download_thumbnail_file"] = False
 
+        # GUARDIA DE MEMORIA: Proteger miniatura existente para evitar que yt-dlp la borre (al incrustar)
+        output_dir_guard = config_to_use.get("output_path") or self._default_output_path()
+        title_guard = config_to_use.get("title") or job.title or "download"
+        sanitized_title_guard = self._sanitize_filename(title_guard)
+        
+        guarded_thumbnails = {}
+        for ext in ['.jpg', '.jpeg', '.png', '.webp']:
+            thumb_path_guard = os.path.join(output_dir_guard, f"{sanitized_title_guard}{ext}")
+            if os.path.exists(thumb_path_guard):
+                try:
+                    with open(thumb_path_guard, "rb") as f:
+                        guarded_thumbnails[thumb_path_guard] = f.read()
+                except Exception:
+                    pass
+
         success, message = self._current_downloader.download(
             config_to_use,
             progress_callback=progress_callback,
             cancellation_event=self._cancellation_event
         )
+
+        # RESTAURAR GUARDIA DE MEMORIA
+        for thumb_path_guard, thumb_data in guarded_thumbnails.items():
+            if not os.path.exists(thumb_path_guard):
+                try:
+                    with open(thumb_path_guard, "wb") as f:
+                        f.write(thumb_data)
+                    logger.info(f"QueueWorker: Miniatura restaurada desde memoria: {thumb_path_guard}")
+                except Exception as e:
+                    logger.warning(f"QueueWorker: Fallo al restaurar miniatura: {e}")
 
         if success:
             job.status = JobStatus.COMPLETED

@@ -1,10 +1,13 @@
 # src/gui/main_window.py
 import sys
-from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QTabWidget, QApplication
-from PySide6.QtCore import Qt, QPoint
+import os
+from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QTabWidget, QApplication, QHBoxLayout, QPushButton
+from PySide6.QtCore import Qt, QPoint, QSize
+from PySide6.QtGui import QIcon
 from core.logger.logger_manager import logger
 from gui.styles import load_stylesheet
 from gui.widgets.title_bar import CustomTitleBar
+from core.utils.i18n import load_language
 from core.utils.config_manager import get_config
 
 # Import Tab Views
@@ -14,6 +17,88 @@ from gui.tabs.image_tools.image_tools_view import ImageToolsTab
 from gui.tabs.video_tools.video_tools_view import VideoToolsTab
 from gui.tabs.editing_media.editing_media_view import EditingMediaTab
 from gui.tabs.settings.settings_view import SettingsTab
+
+class EditorStatusCornerWidget(QWidget):
+    """Widget de la esquina superior derecha para el control global de NLEs."""
+    def __init__(self, main_window, parent=None):
+        super().__init__(parent)
+        self.main_window = main_window
+        from PySide6.QtWidgets import QHBoxLayout, QPushButton
+        from PySide6.QtGui import QIcon
+        from PySide6.QtCore import Qt, QSize
+        import os
+        
+        self.layout = QHBoxLayout(self)
+        self.layout.setContentsMargins(5, 2, 10, 2)
+        self.layout.setSpacing(5)
+        
+        self.btn_toggle = QPushButton()
+        self.btn_toggle.setCheckable(True)
+        self.btn_toggle.setChecked(True)
+        self.btn_toggle.setFixedSize(QSize(28, 28))
+        self.btn_toggle.setCursor(Qt.PointingHandCursor)
+        
+        self.btn_settings = QPushButton()
+        self.btn_settings.setFixedSize(QSize(28, 28))
+        self.btn_settings.setCursor(Qt.PointingHandCursor)
+        self.btn_settings.setToolTip("Ajustes de Integraciones")
+        
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        icons_dir = os.path.join(os.path.dirname(base_dir), "assets", "icons", "svg")
+        self.btn_settings.setIcon(QIcon(os.path.join(icons_dir, "settings.svg")))
+        
+        self._icon_green = QIcon(os.path.join(icons_dir, "check_circle_green.svg"))
+        self._icon_yellow = QIcon(os.path.join(icons_dir, "warning.svg")) # or some other icon
+        self._icon_red = QIcon(os.path.join(icons_dir, "error_red.svg"))
+        self._icon_off = QIcon(os.path.join(icons_dir, "pause.svg"))
+        
+        self.btn_toggle.toggled.connect(self.on_toggle)
+        self.btn_settings.clicked.connect(self.on_settings_clicked)
+        
+        self.layout.addWidget(self.btn_toggle)
+        self.layout.addWidget(self.btn_settings)
+        
+        self._active_editor = None
+        self.update_ui_state()
+        
+    def late_init(self):
+        """Llamado después de que EditorIntegrationManager se inicializa en main.py"""
+        from core.services.editor_integration_manager import EditorIntegrationManager
+        self.editor_manager = EditorIntegrationManager.get_instance()
+        if self.editor_manager:
+            self.editor_manager.active_editor_changed.connect(self.on_editor_changed)
+            self._active_editor = self.editor_manager.active_editor
+            self.btn_toggle.setChecked(self.editor_manager.is_auto_send_enabled)
+        self.update_ui_state()
+            
+    def on_editor_changed(self, editor_name):
+        self._active_editor = editor_name
+        self.update_ui_state()
+        
+    def on_toggle(self, checked):
+        if hasattr(self, 'editor_manager') and self.editor_manager:
+            self.editor_manager.is_auto_send_enabled = checked
+        self.update_ui_state()
+        
+    def update_ui_state(self):
+        is_on = self.btn_toggle.isChecked()
+        if not is_on:
+            self.btn_toggle.setIcon(self._icon_off)
+            self.btn_toggle.setToolTip("Auto-enviar: PAUSADO")
+        else:
+            if self._active_editor:
+                self.btn_toggle.setIcon(self._icon_green)
+                self.btn_toggle.setToolTip(f"Auto-enviar a {self._active_editor}: ACTIVO")
+            else:
+                self.btn_toggle.setIcon(self._icon_yellow)
+                self.btn_toggle.setToolTip("Auto-enviar: ESPERANDO CONEXIÓN")
+                
+    def on_settings_clicked(self):
+        # Ir a la pestaña principal de Ajustes (índice 5 en main_window.tabs)
+        self.main_window.tabs.setCurrentIndex(5)
+        # Ir a la sub-pestaña de Integraciones
+        settings_tab = self.main_window.tab_settings
+        settings_tab.btn_integrations.click()
 
 
 class MainWindow(QMainWindow):
@@ -74,6 +159,10 @@ class MainWindow(QMainWindow):
         # 6. Ajustes
         self.tab_settings = SettingsTab()
         self.tabs.addTab(self.tab_settings, self.tr("Ajustes"))
+        
+        # Corner Widget (Editor Status)
+        self.editor_status_widget = EditorStatusCornerWidget(self)
+        self.tabs.setCornerWidget(self.editor_status_widget, Qt.TopRightCorner)
 
         self.main_layout.addWidget(self.tabs)
 
@@ -96,6 +185,10 @@ class MainWindow(QMainWindow):
         super().showEvent(event)
         from core.utils.clipboard_monitor import ClipboardURLMonitor
         ClipboardURLMonitor.instance().check_clipboard(force=True)
+        # Conectar el corner widget al EditorManager (que ya fue inicializado en main.py)
+        if hasattr(self, 'editor_status_widget') and not getattr(self, '_editor_status_initialized', False):
+            self.editor_status_widget.late_init()
+            self._editor_status_initialized = True
 
     def update_theme(self, theme_name):
         logger.info(f"MainWindow: Cambiando tema a {theme_name}")

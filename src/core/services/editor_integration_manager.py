@@ -1,3 +1,4 @@
+import os
 from PySide6.QtCore import QObject, Signal
 from core.logger.logger_manager import logger
 
@@ -17,6 +18,7 @@ class EditorIntegrationManager(QObject):
     def __init__(self):
         super().__init__()
         self.active_editor = None
+        self.is_auto_send_enabled = True
         
         # Servicios
         self.adobe_service = AdobeSocketServer()
@@ -100,3 +102,128 @@ class EditorIntegrationManager(QObject):
         else:
             logger.error(f"[EditorManager] Editor desconocido: {self.active_editor}")
             return False
+
+    def connect_to_queue(self, queue_mgr):
+        """Conecta el gestor de editores con el QueueManager para auto-enviar descargas."""
+        queue_mgr.job_status_changed.connect(self._on_job_status_changed)
+        self._queue_mgr = queue_mgr
+        logger.info("[EditorManager] Conectado al QueueManager.")
+
+    def _on_job_status_changed(self, job_id, status):
+        """Callback cuando cambia el estado de un trabajo en el QueueManager."""
+        if not self.is_auto_send_enabled:
+            return
+            
+        if status == "COMPLETED" and self.active_editor:
+            job = self._queue_mgr.get_job(job_id)
+            if job and job.final_filepath:
+                self.process_completed_job(job)
+
+    def process_completed_job(self, job):
+        """Empaqueta y envía un trabajo de cola completado al editor activo."""
+        self.process_raw_download(job.final_filepath, job.request_data)
+
+    def process_raw_download(self, final_filepath, request_data):
+        """Empaqueta y envía un archivo descargado al editor activo."""
+        if not final_filepath or not os.path.exists(final_filepath):
+            return
+            
+        output_dir = os.path.dirname(final_filepath)
+        raw_base_name = os.path.splitext(os.path.basename(final_filepath))[0]
+        
+        selected_fragments = request_data.get("selected_fragments", []) if request_data else []
+        is_fragmented = bool(selected_fragments)
+        
+        # Determinar el nombre base limpio de forma 100% precisa
+        if is_fragmented:
+            last_frag = selected_fragments[-1]
+            last_suffix = last_frag[2] if len(last_frag) > 2 else "fragment"
+            target_suffix = f"_{last_suffix}"
+            if raw_base_name.endswith(target_suffix):
+                clean_base_name = raw_base_name[:-len(target_suffix)]
+            else:
+                clean_base_name = raw_base_name
+        else:
+            clean_base_name = raw_base_name
+            # Si fue descagado individualmente con suffixos de DowP Lite (_recoded)
+            if clean_base_name.endswith('_recoded'):
+                clean_base_name = clean_base_name.rsplit('_recoded', 1)[0]
+                
+        expected_thumb_path = os.path.join(output_dir, f"{clean_base_name}.jpg")
+        if not os.path.exists(expected_thumb_path):
+            expected_thumb_path = None
+        else:
+            expected_thumb_path = expected_thumb_path.replace('\\', '/')
+            
+        file_packages = []
+        
+        # Si fue descarga de múltiples fragmentos, generamos sus nombres exactos.
+        if is_fragmented:
+            try:
+                for i, frag in enumerate(selected_fragments):
+                    suffix = frag[2] if len(frag) > 2 else f"fragment{i+1:02d}"
+                    frag_base = f"{clean_base_name}_{suffix}"
+                    
+                    # Buscar el archivo de video (podría ser .mp4, .mkv, etc)
+                    vid_path = None
+                    for ext in ('.mp4', '.mkv', '.webm', '.mov', '.avi', '.flv', '.wmv', '.m4v', '.mp3', '.m4a', '.wav', '.flac', '.aac', '.ogg', '.opus', '.weba'):
+                        candidate = os.path.join(output_dir, frag_base + ext)
+                        if os.path.exists(candidate):
+                            vid_path = candidate.replace('\\', '/')
+                            break
+                            
+                    if vid_path:
+                        # Buscar subtítulo exacto para este fragmento
+                        sub_path = None
+                        for s in os.listdir(output_dir):
+                            if s.startswith(frag_base) and s.lower().endswith('.srt'):
+                                sub_path = os.path.join(output_dir, s).replace('\\', '/')
+                                break
+                                
+                        # Buscar miniatura específica de este fragmento
+                        frag_thumb_path = os.path.join(output_dir, f"{frag_base}.jpg")
+                        if not os.path.exists(frag_thumb_path):
+                            frag_thumb_path = expected_thumb_path # Fallback a la miniatura base si existe
+                        else:
+                            frag_thumb_path = frag_thumb_path.replace('\\', '/')
+                                
+                        file_packages.append({
+                            "video": vid_path,
+                            "thumbnail": frag_thumb_path,
+                            "subtitle": sub_path
+                        })
+            except Exception as e:
+                logger.error(f"Error empaquetando fragmentos: {e}")
+        else:
+            # Archivo único normal
+            vid_path = final_filepath.replace('\\', '/')
+            sub_path = None
+            try:
+                for s in os.listdir(output_dir):
+                    if s.startswith(clean_base_name) and s.lower().endswith('.srt'):
+                        sub_path = os.path.join(output_dir, s).replace('\\', '/')
+                        break
+            except Exception: pass
+            
+            if final_filepath.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
+                file_packages.append({
+                    "video": None,
+                    "thumbnail": vid_path,
+                    "subtitle": None
+                })
+            else:
+                file_packages.append({
+                    "video": vid_path,
+                    "thumbnail": expected_thumb_path,
+                    "subtitle": sub_path
+                })
+                
+        if not file_packages:
+            return
+            
+        if len(file_packages) == 1:
+            logger.info(f"[EditorManager] Paquete listo para enviar: {file_packages[0]}")
+            self.send_file(file_packages[0])
+        else:
+            logger.info(f"[EditorManager] Lote de {len(file_packages)} archivos (fragmentos) listos para enviar.")
+            self.send_batch(file_packages)

@@ -369,9 +369,19 @@ class QuickDownloadController(QObject):
         self.download_text_changed.emit(self.tr("Descargar") if hasattr(self, "tr") else "Descargar")
         
         if success:
+            from core.services.editor_integration_manager import EditorIntegrationManager
+            editor_mgr = EditorIntegrationManager.get_instance()
+            
             for row in self.current_item_rows:
                 row.update_progress(100, status=self.tr("Completado") if hasattr(self, "tr") else "Completado")
                 row.mark_completed()
+                
+                # Enviar al editor si corresponde
+                if editor_mgr and editor_mgr.is_auto_send_enabled and hasattr(row, 'downloaded_filepath') and row.downloaded_filepath:
+                    # En modo rápido, podemos pasar last_request_data. Para playlists es posible que el título 
+                    # de la fila sea más preciso pero last_request_data es suficiente por ahora.
+                    editor_mgr.process_raw_download(row.downloaded_filepath, self.last_request_data)
+                    
             title = self.last_request_data.get("title", "").strip()
             output_dir = self.last_request_data.get("output_path", "")
             if title and output_dir:

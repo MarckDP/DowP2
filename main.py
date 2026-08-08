@@ -90,8 +90,10 @@ def main():
     
     # Iniciar Master Manager de Editores (Adobe, DaVinci, Vegas)
     from core.services.editor_integration_manager import EditorIntegrationManager
+    from core.utils.queue_manager import get_queue_manager
     editor_manager = EditorIntegrationManager()
     editor_manager.start_all_services()
+    editor_manager.connect_to_queue(get_queue_manager())
     
     def on_splash_ready(main_window):
         """Recibe la MainWindow ya construida desde el splash."""

@@ -1036,12 +1036,12 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
                 # Ajustar columnas de la tabla 
                 self.media_table.setColumnWidth(0, 48)  # Estado / Ícono
                 self.media_table.setColumnWidth(1, 240) # Filename
-                self.media_table.setColumnWidth(2, 220) # Descripción
-                self.media_table.setColumnWidth(3, 110) # Licencia
-                self.media_table.setColumnWidth(4, 85)  # Duración
-                self.media_table.setColumnWidth(5, 110) # Origen
-                self.media_table.setColumnWidth(6, 110) # Tipo de Archivo
-                self.media_table.setColumnWidth(7, 95)  # Sample Rate
+                self.media_table.setColumnWidth(2, 95)  # Descripción (Web) / Tamaño (Local)
+                self.media_table.setColumnWidth(3, 110) # Licencia (Web) / Tipo de Archivo (Local)
+                self.media_table.setColumnWidth(4, 140) # Duración (Web) / Fecha Modificación (Local)
+                self.media_table.setColumnWidth(5, 300) # Origen (Web) / Ruta Completa (Local)
+                self.media_table.setColumnWidth(6, 110) # Tipo de Archivo (Web)
+                self.media_table.setColumnWidth(7, 150) # Detalles (Web)
 
         self._update_media_list()
         
@@ -1092,7 +1092,7 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
             
             icon_size = self.icon_size_slider.value() if hasattr(self, "icon_size_slider") else 112
             base_cell_w = icon_size + 32
-            cell_h = icon_size + 46
+            cell_h = icon_size + 56
             
             spacing = 4
             # Ancho efectivo reservado para columnas (considerando márgenes laterales)
@@ -1108,8 +1108,12 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
             leftover = avail_w - (fluid_cell_w * num_cols)
             final_spacing = spacing + (leftover // (num_cols + 1))
             
+            grid_sz = QSize(fluid_cell_w, cell_h)
             self.media_list.setSpacing(max(1, final_spacing))
-            self.media_list.setGridSize(QSize(fluid_cell_w, cell_h))
+            self.media_list.setGridSize(grid_sz)
+            
+            if hasattr(self, "media_model"):
+                self.media_model.set_view_mode("grid", grid_size_hint=grid_sz)
             
             self.media_list.doItemsLayout()
         finally:
@@ -1165,8 +1169,11 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
     def _apply_icon_size(self, size: int):
         self.media_list.setIconSize(QSize(size, size))
         cell_w = size + 32
-        cell_h = size + 46
-        self.media_list.setGridSize(QSize(cell_w, cell_h))
+        cell_h = size + 56
+        grid_sz = QSize(cell_w, cell_h)
+        self.media_list.setGridSize(grid_sz)
+        if hasattr(self, "media_model"):
+            self.media_model.set_view_mode("grid", grid_size_hint=grid_sz)
 
         self._recalculate_grid_spacing()
 
@@ -1230,18 +1237,39 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
                 self.media_model.dataChanged.emit(idx, idx, [])
 
     def _on_global_sort_requested(self, column: int, is_ascending: bool):
-        """Maneja la petición de ordenamiento global (local) originada por clic en las cabeceras del modelo MVC."""
-        mapping = {
-            1: "nombre",
-            2: "nombre", # Descripción no implementada en ordenamiento local aún, fallback a nombre
-            3: "nombre", # Licencia
-            4: "duration",
-            5: "nombre", # Library
-            6: "tipo",
-            7: "nombre"  # Sample Rate
-        }
-        self.sort_by = mapping.get(column, "nombre")
-        self.sort_ascending = is_ascending
+        """Maneja la petición de ordenamiento global originada por clic en las cabeceras del modelo MVC."""
+        is_online = getattr(self.media_model, "_is_online_mode", False)
+        if is_online:
+            mapping = {
+                1: "nombre",
+                2: "nombre",
+                3: "license",
+                4: "duration",
+                5: "nombre",
+                6: "tipo",
+                7: "nombre"
+            }
+        else:
+            mapping = {
+                1: "nombre",
+                2: "size",
+                3: "tipo",
+                4: "mtime",
+                5: "ruta",
+                6: "tipo",
+                7: "nombre"
+            }
+        new_sort_by = mapping.get(column, "nombre")
+        
+        if new_sort_by != getattr(self, "sort_by", "nombre"):
+            # Al seleccionar Tamaño o Fecha por primera vez, ordenar de mayor a menor (descendente)
+            if new_sort_by in ("size", "mtime"):
+                self.sort_ascending = False
+            else:
+                self.sort_ascending = True
+            self.sort_by = new_sort_by
+        else:
+            self.sort_ascending = is_ascending
         
         # Dispara la actualización completa (donde se ordenan los 10,000 items locales)
         if hasattr(self, "_update_media_list"):

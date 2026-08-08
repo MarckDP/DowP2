@@ -381,6 +381,52 @@ class PlaybackMixin:
         if not hasattr(self, "_metadata_cache"):
             self._metadata_cache = {}
         self._metadata_cache[path] = meta
+        
+        # Actualizar el item en el modelo
+        if hasattr(self, "media_model"):
+            idx = self.media_model.find_item_index_by_path(path)
+            if idx.isValid():
+                item = self.media_model.get_item(idx)
+                if item:
+                    item["duración"] = meta.get("duración", "-")
+                    tipo = item.get("tipo", "")
+                    
+                    # Guardar resolución (útil para imágenes y videos)
+                    if meta.get("resolución") and meta.get("resolución") != "-":
+                        item["resolución"] = meta.get("resolución")
+                    
+                    if tipo == "video":
+                        res = meta.get("resolución", "")
+                        res = res if res != "-" else ""
+                        
+                        fps = str(meta.get("fps", "")).replace(" fps", "").replace("fps", "").strip()
+                        fps_str = f" | {fps} fps" if fps and fps != "-" else ""
+                        
+                        codec = meta.get("video_codec", "")
+                        codec_str = f" | {codec}" if codec and codec != "-" else ""
+                        
+                        item["detalles_video"] = f"{res}{fps_str}{codec_str}".strip(" |")
+                        
+                    elif tipo == "audio":
+                        sr = meta.get("samplerate", "")
+                        sr = sr if sr != "-" else ""
+                        
+                        ch = meta.get("canales", "")
+                        ch_str = f" | {ch}" if ch and ch != "-" else ""
+                        
+                        br = meta.get("bitrate_audio", "")
+                        br_str = f" | {br}" if br and br != "-" else ""
+                        
+                        codec_audio = meta.get("audio_codec", "")
+                        codec_audio_str = f" | {codec_audio}" if codec_audio and codec_audio != "-" else ""
+                        
+                        item["detalles_audio"] = f"{sr}{ch_str}{br_str}{codec_audio_str}".strip(" |")
+                    
+                    self.media_model.dataChanged.emit(
+                        self.media_model.index(idx.row(), 0), 
+                        self.media_model.index(idx.row(), self.media_model.columnCount() - 1)
+                    )
+
 
         # Si el archivo procesado es el que se está mostrando actualmente en la UI, actualizar panel
         if getattr(self, "current_playing_path", None) == path:

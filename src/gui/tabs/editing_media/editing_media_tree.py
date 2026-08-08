@@ -197,6 +197,17 @@ class TreeListMixin:
         if hasattr(self, "license_container"):
             self.license_container.setVisible(is_online)
             
+        # Ocultar columnas innecesarias para medios locales y actualizar headers
+        if hasattr(self, "media_model"):
+            self.media_model.set_online_mode(is_online)
+        if hasattr(self, "media_table"):
+            self.media_table.setColumnHidden(2, False) # Tamaño (Local) / Descripción (Web)
+            self.media_table.setColumnHidden(3, False) # Tipo (Local) / Licencia (Web)
+            self.media_table.setColumnHidden(4, False) # Modificado (Local) / Duración (Web)
+            self.media_table.setColumnHidden(5, False) # Ruta (Local) / Origen (Web)
+            self.media_table.setColumnHidden(6, not is_online) # Tipo de Archivo (Web)
+            self.media_table.setColumnHidden(7, not is_online) # Detalles (Web)
+            
         # Si es online, forzar el filtro "Audios" y deshabilitar los otros
         if is_online:
             for btn in self.filter_buttons:
@@ -377,7 +388,14 @@ class TreeListMixin:
                 elif sort_by == "size":
                     return item.get("size_bytes", 0)
                 elif sort_by == "tipo":
-                    return item.get("tipo", "")
+                    ext = os.path.splitext(item.get("nombre", ""))[1].lower()
+                    if not ext:
+                        ext = str(item.get("file_type", item.get("tipo", ""))).lower()
+                    return ext
+                elif sort_by == "ruta":
+                    return item.get("ruta", "").lower()
+                elif sort_by == "license":
+                    return str(item.get("license", "")).lower()
                 elif sort_by == "duration":
                     d = item.get("duration", 0)
                     if isinstance(d, (int, float)): return float(d)
@@ -761,134 +779,135 @@ class TreeListMixin:
         view_widget = self.media_table if is_list_view else self.media_list
         index = view_widget.indexAt(position)
         
-        if not index.isValid():
-            menu = QMenu(self)
-            menu.setStyleSheet(f"""
-                QMenu {{
-                    background-color: {get_theme_token('fondo_elemento', '#1e1e1e')};
-                    border: 1px solid {get_theme_token('borde_normal', '#3d3d3d')};
-                    padding: 4px;
-                    border-radius: 6px;
-                }}
-                QMenu::item {{
-                    padding: 6px 20px 6px 20px;
-                    border-radius: 4px;
-                    color: {get_theme_token('texto_principal', '#cdd6f4')};
-                    font-size: 11px;
-                }}
-                QMenu::item:selected {{
-                    background-color: {get_theme_token('acento_primario', '#B9E640')};
-                    color: {get_theme_token('fondo_principal', '#0a0a0a')};
-                    font-weight: bold;
-                }}
-                QMenu::item:disabled {{
-                    color: #555555;
-                }}
-            """)
-            act_refresh = menu.addAction(get_contrast_svg_icon("refresh.svg"), self.tr("Actualizar Lista"))
-            act_refresh.triggered.connect(self._refresh_current_view)
-            menu.addSeparator()
-
-            sort_sub = menu.addMenu(self.tr("Ordenar por"))
-
-            options = [
-                ("nombre", self.tr("Nombre")),
-                ("mtime", self.tr("Fecha de Modificación")),
-                ("ctime", self.tr("Fecha de Creación")),
-                ("size", self.tr("Tamaño")),
-                ("tipo", self.tr("Tipo de Medio")),
-            ]
-            curr_sort = getattr(self, "sort_by", "nombre")
-            active_filter = getattr(self, "active_filter", "Todos")
-
-            for key, label in options:
-                act = sort_sub.addAction(label)
-                act.setCheckable(True)
-                if key == curr_sort:
-                    act.setChecked(True)
-                if key == "tipo" and active_filter != "Todos":
-                    act.setEnabled(False)
-                act.triggered.connect(lambda checked, k=key, l=label: self._on_sort_option_selected(k, l))
-
-            sort_sub.addSeparator()
-            act_asc = sort_sub.addAction(self.tr("Ascendente (A-Z, Antiguos)"))
-            act_asc.setCheckable(True)
-            act_asc.setChecked(getattr(self, "sort_ascending", True))
-            act_asc.triggered.connect(lambda: self._set_sort_direction(True))
-
-            act_desc = sort_sub.addAction(self.tr("Descendente (Z-A, Recientes)"))
-            act_desc.setCheckable(True)
-            act_desc.setChecked(not getattr(self, "sort_ascending", True))
-            act_desc.triggered.connect(lambda: self._set_sort_direction(False))
-
-            view_sub = menu.addMenu(self.tr("Vista"))
-            act_grid = view_sub.addAction(self.tr("Cuadrícula"))
-            act_grid.setCheckable(True)
-            act_grid.setChecked(getattr(self, "view_mode", "grid") == "grid")
-            act_grid.triggered.connect(lambda: self.set_view_mode("grid"))
-
-            act_list = view_sub.addAction(self.tr("Lista"))
-            act_list.setCheckable(True)
-            act_list.setChecked(getattr(self, "view_mode", "grid") == "list")
-            act_list.triggered.connect(lambda: self.set_view_mode("list"))
-
-            menu.exec(view_widget.mapToGlobal(position))
-            return
-
-        item_data = self.media_model.get_item(index)
-        if not item_data:
-            return
-
-        file_path = item_data.get("ruta", "")
         menu = QMenu(self)
+        menu.setStyleSheet(f"""
+            QMenu {{
+                background-color: {get_theme_token('fondo_elemento', '#1e1e1e')};
+                border: 1px solid {get_theme_token('borde_normal', '#3d3d3d')};
+                padding: 4px;
+                border-radius: 6px;
+            }}
+            QMenu::item {{
+                padding: 6px 20px 6px 20px;
+                border-radius: 4px;
+                color: {get_theme_token('texto_principal', '#cdd6f4')};
+                font-size: 11px;
+            }}
+            QMenu::item:selected {{
+                background-color: {get_theme_token('acento_primario', '#B9E640')};
+                color: {get_theme_token('fondo_principal', '#0a0a0a')};
+                font-weight: bold;
+            }}
+            QMenu::item:disabled {{
+                color: #555555;
+            }}
+        """)
 
+        # 1. Acciones específicas si se hace clic sobre un archivo
+        if index.isValid():
+            item_data = self.media_model.get_item(index)
+            if item_data:
+                file_path = item_data.get("ruta", "")
+                
+                # Determinar si estamos visualizando una colección virtual
+                tree_item = self.tree_folders.currentItem()
+                is_viewing_collection = False
+                current_col_name = ""
+                if tree_item:
+                    tree_data = tree_item.data(0, Qt.UserRole)
+                    if tree_data and tree_data.get("tipo") == "collection":
+                        is_viewing_collection = True
+                        current_col_name = tree_data.get("nombre")
+
+                if is_viewing_collection:
+                    act_remove = menu.addAction(self.tr("Quitar de esta Colección"))
+                    act_remove.triggered.connect(lambda: self._remove_file_from_collection(current_col_name, file_path))
+                else:
+                    submenu = menu.addMenu(self.tr("Añadir a Colección"))
+                    collections_list = [c for c in self.controller.collections.keys() if c != "Descargados"]
+                    if collections_list:
+                        for col_name in collections_list:
+                            act_col = submenu.addAction(col_name)
+                            act_col.triggered.connect(lambda checked=False, cn=col_name: self._add_file_to_collection(cn, file_path))
+                    else:
+                        act_none = submenu.addAction(self.tr("(Sin colecciones)"))
+                        act_none.setEnabled(False)
+
+                is_remote = file_path.startswith("http://") or file_path.startswith("https://")
+                if is_remote:
+                    act_download = menu.addAction(get_svg_icon("download.svg"), self.tr("Descargar Medio"))
+                    act_download.triggered.connect(self._on_download_clicked)
+                else:
+                    act_reveal = menu.addAction(get_svg_icon("folder_open.svg"), self.tr("Abrir en Explorador"))
+                    act_reveal.triggered.connect(self._on_reveal_clicked)
+                
+                menu.addSeparator()
+
+        # 2. Acciones Generales (Actualizar, Ordenar por, Vista)
         act_refresh = menu.addAction(get_contrast_svg_icon("refresh.svg"), self.tr("Actualizar Lista"))
-
         act_refresh.triggered.connect(self._refresh_current_view)
         menu.addSeparator()
 
+        # Detectar si estamos navegando en modo online (Freesound)
+        selected_tree = self.tree_folders.currentItem()
+        is_online_mode = False
+        if selected_tree:
+            t_data = selected_tree.data(0, Qt.UserRole)
+            if t_data and t_data.get("tipo") == "root_online":
+                is_online_mode = True
 
-        # Determinar si estamos visualizando una colección virtual
-        tree_item = self.tree_folders.currentItem()
-        is_viewing_collection = False
-        current_col_name = ""
-        
-        if tree_item:
-            tree_data = tree_item.data(0, Qt.UserRole)
-            if tree_data and tree_data.get("tipo") == "collection":
-                is_viewing_collection = True
-                current_col_name = tree_data.get("nombre")
+        sort_sub = menu.addMenu(self.tr("Ordenar por"))
 
-        if is_viewing_collection:
-            # Opción para quitar de la colección actual
-            act_remove = menu.addAction(self.tr("Quitar de esta Colección"))
-            act_remove.triggered.connect(lambda: self._remove_file_from_collection(current_col_name, file_path))
+        if is_online_mode:
+            options = [
+                ("nombre", self.tr("Nombre")),
+                ("duration", self.tr("Duración")),
+                ("license", self.tr("Licencia")),
+            ]
         else:
-            # Opción para añadir a una colección
-            submenu = menu.addMenu(self.tr("Añadir a Colección"))
-            
-            # Cargar colecciones dinámicamente (excluyendo Descargados que es exclusiva para medios web)
-            collections_list = [c for c in self.controller.collections.keys() if c != "Descargados"]
-            if collections_list:
-                for col_name in collections_list:
-                    act_col = submenu.addAction(col_name)
-                    # Usar captura de variable por scope en lambda
-                    act_col.triggered.connect(lambda checked=False, cn=col_name: self._add_file_to_collection(cn, file_path))
+            options = [
+                ("nombre", self.tr("Nombre")),
+                ("size", self.tr("Tamaño")),
+                ("tipo", self.tr("Tipo de Archivo")),
+                ("mtime", self.tr("Fecha de Modificación")),
+                ("ruta", self.tr("Ruta Completa")),
+            ]
+        curr_sort = getattr(self, "sort_by", "nombre")
+        active_filter = getattr(self, "active_filter", "Todos")
 
-            else:
-                act_none = submenu.addAction(self.tr("(Sin colecciones)"))
-                act_none.setEnabled(False)
+        for key, label in options:
+            act = sort_sub.addAction(label)
+            act.setCheckable(True)
+            if key == curr_sort:
+                act.setChecked(True)
+            if key == "tipo" and active_filter != "Todos":
+                act.setEnabled(False)
+            act.triggered.connect(lambda checked, k=key, l=label: self._on_sort_option_selected(k, l))
 
-        is_remote = file_path.startswith("http://") or file_path.startswith("https://")
-        menu.addSeparator()
-        if is_remote:
-            act_download = menu.addAction(get_svg_icon("download.svg"), self.tr("Descargar Medio"))
-            act_download.triggered.connect(self._on_download_clicked)
-        else:
-            act_reveal = menu.addAction(get_svg_icon("folder_open.svg"), self.tr("Abrir en Explorador"))
-            act_reveal.triggered.connect(self._on_reveal_clicked)
+        sort_sub.addSeparator()
+        act_asc = sort_sub.addAction(self.tr("Ascendente (A-Z, Menor a Mayor)"))
+        act_asc.setCheckable(True)
+        act_asc.setChecked(getattr(self, "sort_ascending", True))
+        act_asc.triggered.connect(lambda: self._set_sort_direction(True))
+
+        act_desc = sort_sub.addAction(self.tr("Descendente (Z-A, Mayor a Menor)"))
+        act_desc.setCheckable(True)
+        act_desc.setChecked(not getattr(self, "sort_ascending", True))
+        act_desc.triggered.connect(lambda: self._set_sort_direction(False))
+
+        view_sub = menu.addMenu(self.tr("Vista"))
+        act_grid = view_sub.addAction(self.tr("Cuadrícula"))
+        act_grid.setCheckable(True)
+        act_grid.setChecked(getattr(self, "view_mode", "grid") == "grid")
+        act_grid.triggered.connect(lambda: self.set_view_mode("grid"))
+
+        act_list = view_sub.addAction(self.tr("Lista"))
+        act_list.setCheckable(True)
+        act_list.setChecked(getattr(self, "view_mode", "grid") == "list")
+        act_list.triggered.connect(lambda: self.set_view_mode("list"))
 
         menu.exec(view_widget.mapToGlobal(position))
+
 
     def _add_file_to_collection(self, col_name, file_path):
         success = self.controller.add_to_collection(col_name, file_path)

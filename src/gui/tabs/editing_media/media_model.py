@@ -36,7 +36,7 @@ class MediaTableModel(QAbstractTableModel):
             "Duración",
             "Origen",
             "Tipo de Archivo",
-            "Sample Rate"
+            "Detalles"
         ]
 
     def set_view_mode(self, mode: str, grid_size_hint: QSize = None):
@@ -64,8 +64,22 @@ class MediaTableModel(QAbstractTableModel):
             return 0
         return len(self.headers)
         
+    def set_online_mode(self, is_online: bool):
+        """Alterna el modo online/local para la presentación de cabeceras."""
+        self._is_online_mode = is_online
+        self.headerDataChanged.emit(Qt.Horizontal, 0, len(self.headers) - 1)
+
     def headerData(self, section, orientation, role=Qt.DisplayRole):
         if orientation == Qt.Horizontal and role == Qt.DisplayRole:
+            if not getattr(self, "_is_online_mode", False):
+                if section == 2:
+                    return "Tamaño"
+                elif section == 3:
+                    return "Tipo de Archivo"
+                elif section == 4:
+                    return "Fecha Modificación"
+                elif section == 5:
+                    return "Ruta Completa"
             return self.headers[section]
         return None
 
@@ -103,18 +117,55 @@ class MediaTableModel(QAbstractTableModel):
                 if col == 0: return "" # Ícono
                 elif col == 1: return item.get("nombre", "")
                 elif col == 2: 
+                    if not is_web:
+                        return str(item.get("tamaño", "-"))
                     desc = str(item.get("description", item.get("desc", "-"))).strip()
                     return desc[:117] + "..." if len(desc) > 120 else (desc if desc else "-")
-                elif col == 3: return str(item.get("license", "Local")).strip() or "Local"
-                elif col == 4: return str(item.get("duración", item.get("duration_str", "-"))).strip() or "-"
-                elif col == 5: return str(item.get("library", "Freesound" if is_web else "Local")).strip()
+                elif col == 3: 
+                    if not is_web:
+                        file_type = item.get("file_type") or item.get("type", "")
+                        if not file_type and "." in item.get("nombre", ""):
+                            ext = item.get("nombre", "").split(".")[-1].upper()
+                            if len(ext) <= 5: file_type = ext
+                        return str(file_type).upper() if file_type else str(tipo).upper()
+                    return str(item.get("license", "Local")).strip() or "Local"
+                elif col == 4: 
+                    if not is_web:
+                        mtime = item.get("mtime", 0)
+                        if mtime:
+                            import datetime
+                            try:
+                                return datetime.datetime.fromtimestamp(mtime).strftime("%d/%m/%Y %H:%M")
+                            except Exception:
+                                pass
+                        return "-"
+                    return str(item.get("duración", item.get("duration_str", "-"))).strip() or "-"
+                elif col == 5: 
+                    if not is_web:
+                        return str(item.get("ruta", "-")).strip() or "-"
+                    return str(item.get("library", "Freesound" if is_web else "Local")).strip()
                 elif col == 6: 
                     file_type = item.get("file_type") or item.get("type", "")
                     if not file_type and "." in item.get("nombre", ""):
                         ext = item.get("nombre", "").split(".")[-1].upper()
                         if len(ext) <= 5: file_type = ext
                     return str(file_type).upper() if file_type else str(tipo).upper()
-                elif col == 7: return str(item.get("sample_rate", item.get("samplerate", "-")))
+                elif col == 7: 
+                    if tipo == "audio":
+                        detalles = item.get("detalles_audio")
+                        if detalles: return detalles
+                        return str(item.get("sample_rate", item.get("samplerate", "-")))
+                    elif tipo == "video":
+                        detalles = item.get("detalles_video")
+                        if detalles: return detalles
+                        res = item.get("resolución", "")
+                        fps = item.get("fps", "")
+                        if res and fps: return f"{res} {fps}fps".strip()
+                        return "-"
+                    elif tipo == "imagen":
+                        res = item.get("resolución", "")
+                        return res if res else "-"
+                    return "-"
         
         elif role == Qt.DecorationRole and col == 0:
             accent_green = get_theme_token("acento_primario", "#B9E640")
@@ -240,28 +291,40 @@ class MediaTableModel(QAbstractTableModel):
 
         if column == 1: # Nombre de Archivo
             key_func = lambda item: item.get("nombre", "").lower()
-        elif column == 2: # Descripción
-            key_func = lambda item: item.get("description", "").lower()
-        elif column == 3: # Licencia
-            key_func = lambda item: item.get("license", "").lower()
-        elif column == 4: # Duración
-            def dur_key(item):
-                if "duration" in item:
-                    return safe_float(item["duration"])
-                if "duración" in item:
-                    dur_str = str(item["duración"])
-                    if ":" in dur_str:
-                        parts = dur_str.split(":")
-                        if len(parts) == 2:
-                            return safe_float(parts[0])*60 + safe_float(parts[1])
-                return 0.0
-            key_func = dur_key
-        elif column == 5: # Origen
-            key_func = lambda item: item.get("library", "Local").lower()
+        elif column == 2: # Descripción (Web) / Tamaño (Local)
+            if not getattr(self, "_is_online_mode", False):
+                key_func = lambda item: safe_float(item.get("size_bytes", 0))
+            else:
+                key_func = lambda item: item.get("description", "").lower()
+        elif column == 3: # Licencia (Web) / Tipo de Archivo (Local)
+            if not getattr(self, "_is_online_mode", False):
+                key_func = lambda item: item.get("file_type", "").lower()
+            else:
+                key_func = lambda item: item.get("license", "").lower()
+        elif column == 4: # Duración (Web) / Fecha Modificación (Local)
+            if not getattr(self, "_is_online_mode", False):
+                key_func = lambda item: safe_float(item.get("mtime", 0))
+            else:
+                def dur_key(item):
+                    if "duration" in item:
+                        return safe_float(item["duration"])
+                    if "duración" in item:
+                        dur_str = str(item["duración"])
+                        if ":" in dur_str:
+                            parts = dur_str.split(":")
+                            if len(parts) == 2:
+                                return safe_float(parts[0])*60 + safe_float(parts[1])
+                    return 0.0
+                key_func = dur_key
+        elif column == 5: # Origen (Web) / Ruta (Local)
+            if not getattr(self, "_is_online_mode", False):
+                key_func = lambda item: item.get("ruta", "").lower()
+            else:
+                key_func = lambda item: item.get("library", "Local").lower()
         elif column == 6: # Tipo de Archivo
             key_func = lambda item: item.get("file_type", "").lower()
-        elif column == 7: # Sample Rate
-            key_func = lambda item: str(item.get("sample_rate", "")).lower()
+        elif column == 7: # Detalles
+            key_func = lambda item: str(item.get("detalles_audio", item.get("detalles_video", item.get("sample_rate", "")))).lower()
         else: # Estado o fallback (columna 0)
             key_func = lambda item: str(item.get("estado", "")).lower()
 

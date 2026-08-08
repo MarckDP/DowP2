@@ -173,7 +173,13 @@ class PreviewContainerWidget(QFrame):
         if w > 0:
             avail_h = int(w * 0.6)
             self.setFixedHeight(avail_h)
-            if hasattr(self, "_current_image_path") and self._current_image_path and self.placeholder_label.isVisible():
+            if hasattr(self, "_current_movie") and self._current_movie and self.placeholder_label.isVisible():
+                movie = self._current_movie
+                orig_size = movie.currentImage().size()
+                if orig_size.isValid() and not orig_size.isEmpty():
+                    scaled_size = orig_size.scaled(max(50, w - 10), max(50, avail_h - 10), Qt.KeepAspectRatio)
+                    movie.setScaledSize(scaled_size)
+            elif hasattr(self, "_current_image_path") and self._current_image_path and self.placeholder_label.isVisible():
                 pixmap = QPixmap(self._current_image_path)
                 if not pixmap.isNull():
                     scaled = pixmap.scaled(
@@ -185,8 +191,17 @@ class PreviewContainerWidget(QFrame):
                     self.placeholder_label.setPixmap(scaled)
 
     def stop_media(self):
-        """Detiene cualquier reproducción de video activa."""
+        """Detiene cualquier reproducción de video o animación GIF activa."""
         self._current_image_path = None
+        if hasattr(self, "_current_movie") and self._current_movie:
+            try:
+                self._current_movie.stop()
+            except Exception:
+                pass
+            self._current_movie = None
+        if hasattr(self, "placeholder_label") and self.placeholder_label:
+            self.placeholder_label.setMovie(None)
+
         if self.media_player:
             try:
                 self.media_player.stop()
@@ -217,6 +232,25 @@ class PreviewContainerWidget(QFrame):
         self.placeholder_label.setVisible(True)
         self.placeholder_label.setText("")
         
+        # Reproducir animación si es un GIF animado
+        if path.lower().endswith(".gif"):
+            from PySide6.QtGui import QMovie
+            movie = QMovie(path)
+            if movie.isValid():
+                self._current_movie = movie
+                movie.jumpToFrame(0)
+                orig_size = movie.currentImage().size()
+                avail_w = max(50, self.width() - 10)
+                avail_h = max(50, self.height() - 10)
+                if orig_size.isValid() and not orig_size.isEmpty():
+                    scaled_size = orig_size.scaled(avail_w, avail_h, Qt.KeepAspectRatio)
+                    movie.setScaledSize(scaled_size)
+                else:
+                    movie.setScaledSize(QSize(avail_w, avail_h))
+                self.placeholder_label.setMovie(movie)
+                movie.start()
+                return
+
         pixmap = QPixmap(path)
         if not pixmap.isNull():
             avail_w = max(50, self.width() - 10)

@@ -142,6 +142,12 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         self.controller.disk_changed.connect(self._on_disk_changed)
         self.controller.collections_changed.connect(self._on_collections_changed)
         
+        self.controller.indexing_started.connect(self._on_indexing_started)
+        self.controller.indexing_progress.connect(self._on_indexing_progress)
+        self.controller.indexing_finished.connect(self._on_indexing_finished)
+        
+        QTimer.singleShot(200, self.controller.trigger_async_indexing)
+        
         # Detener el Watchdog y la música cuando se destruya el widget
         self.destroyed.connect(self._cleanup)
 
@@ -281,6 +287,11 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         self.btn_add_folder.setFixedHeight(32)
         self.btn_add_folder.clicked.connect(self._on_add_folder_clicked)
         layout.addWidget(self.btn_add_folder)
+
+        self.lbl_indexed_count = QLabel("")
+        self.lbl_indexed_count.setAlignment(Qt.AlignCenter)
+        self.lbl_indexed_count.setStyleSheet(f"font-size: 11px; color: {get_theme_token('texto_secundario', '#a6adc8')}; margin-top: 4px;")
+        layout.addWidget(self.lbl_indexed_count)
 
         return col
 
@@ -1260,3 +1271,20 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         if not index:
             return None
         return self.media_model.get_item(index)
+
+    def _on_indexing_started(self):
+        if hasattr(self, "lbl_indexed_count"):
+            self.lbl_indexed_count.setText("Iniciando indexación...")
+
+    def _on_indexing_progress(self, count):
+        if hasattr(self, "lbl_indexed_count"):
+            self.lbl_indexed_count.setText(f"Indexando... ({count} encontrados)")
+
+    def _on_indexing_finished(self, files):
+        if hasattr(self, "lbl_indexed_count"):
+            total = len(files)
+            self.lbl_indexed_count.setText(f"{total} Medios Indexados en Total")
+        # Si estamos viendo 'Todos los locales', actualizamos automáticamente
+        current_item = self.tree_folders.currentItem()
+        if current_item and current_item.data(0, Qt.UserRole).get("tipo") == "root_physical":
+            self._update_media_list()

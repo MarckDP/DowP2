@@ -126,11 +126,61 @@ else:
         pass
 
 
+class AsyncIndexerThread(QThread):
+    progress = Signal(int)
+    finished_indexing = Signal(list)
+
+    def __init__(self, indexed_folders, collections, build_entry_func, scan_func, parent=None):
+        super().__init__(parent)
+        self.indexed_folders = indexed_folders
+        self.collections = collections
+        self._build_file_entry = build_entry_func
+        self._scan_folder_fast = scan_func
+
+    def run(self):
+        files = []
+        seen_paths = set()
+        count = 0
+
+        # Escanear carpetas
+        for folder in self.indexed_folders:
+            folder_files = self._scan_folder_fast(folder)
+            for f_entry in folder_files:
+                norm = f_entry["ruta"]
+                if norm not in seen_paths:
+                    seen_paths.add(norm)
+                    files.append(f_entry)
+                    count += 1
+                    if count % 10 == 0:
+                        self.progress.emit(count)
+
+        # Escanear colecciones
+        for col_name in self.collections.keys():
+            for path in self.collections[col_name]:
+                norm_path = path.replace("\\", "/")
+                if os.path.exists(norm_path) and os.path.isfile(norm_path):
+                    if norm_path not in seen_paths:
+                        seen_paths.add(norm_path)
+                        name = os.path.basename(norm_path)
+                        ext = os.path.splitext(name)[1].lower()
+                        files.append(self._build_file_entry(norm_path, name, ext))
+                        count += 1
+                        if count % 10 == 0:
+                            self.progress.emit(count)
+
+        self.progress.emit(count)
+        self.finished_indexing.emit(files)
+
+
 class EditingMediaController(QObject):
     """Controlador que gestiona la lógica de indexación, colecciones y monitoreo en tiempo real."""
     
     disk_changed = Signal()
     collections_changed = Signal()
+    
+    indexing_started = Signal()
+    indexing_progress = Signal(int)
+    indexing_finished = Signal(list)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -492,40 +542,37 @@ class EditingMediaController(QObject):
         self._media_cache[cache_key] = files
         return files
 
+    def trigger_async_indexing(self):
+        """Dispara la indexación en segundo plano de todos los medios."""
+        if hasattr(self, "_async_indexer") and self._async_indexer.isRunning():
+            return
+            
+        self.indexing_started.emit()
+        self._async_indexer = AsyncIndexerThread(
+            self.indexed_folders,
+            self.collections,
+            self._build_file_entry,
+            self._scan_folder_fast
+        )
+        self._async_indexer.progress.connect(self.indexing_progress.emit)
+        self._async_indexer.finished_indexing.connect(self._on_async_indexing_finished)
+        self._async_indexer.start()
+
+    def _on_async_indexing_finished(self, files):
+        if not hasattr(self, "_media_cache"):
+            self._media_cache = {}
+        self._media_cache["__all__"] = files
+        self.indexing_finished.emit(files)
+
     def get_all_media_files(self) -> list:
         """Escanéa todas las carpetas indexadas recursivamente y colecciones, retornando la lista consolidada (con cache)."""
         cache_key = "__all__"
         if hasattr(self, "_media_cache") and cache_key in self._media_cache:
             return self._media_cache[cache_key]
         
-        if not hasattr(self, "_media_cache"):
-            self._media_cache = {}
-
-        files = []
-        seen_paths = set()
-        
-        # 1. Escanear carpetas físicas indexadas de forma recursiva con os.scandir
-        for folder in self.indexed_folders:
-            folder_files = self._scan_folder_fast(folder)
-            for f_entry in folder_files:
-                norm = f_entry["ruta"]
-                if norm not in seen_paths:
-                    seen_paths.add(norm)
-                    files.append(f_entry)
-
-        # 2. Agregar archivos en colecciones
-        for col_name in self.collections.keys():
-            for path in self.collections[col_name]:
-                norm_path = path.replace("\\", "/")
-                if os.path.exists(norm_path) and os.path.isfile(norm_path):
-                    if norm_path not in seen_paths:
-                        seen_paths.add(norm_path)
-                        name = os.path.basename(norm_path)
-                        ext = os.path.splitext(name)[1].lower()
-                        files.append(self._build_file_entry(norm_path, name, ext))
-
-        self._media_cache[cache_key] = files
-        return files
+        # Si no está en caché, disparamos asíncronamente y devolvemos lista vacía
+        self.trigger_async_indexing()
+        return []
 
 
 class WaveformExtractorThread(QThread):

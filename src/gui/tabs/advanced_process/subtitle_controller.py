@@ -223,6 +223,8 @@ class SubtitleController(QObject):
                     found_subs.append(sub_file)
 
         files_to_process = found_subs[:1] if self._subtitle_target_path else found_subs
+        
+        final_files_for_editor = []
 
         for sub_file in files_to_process:
             logger.info(f"AdvancedProcessTab: Subtítulo encontrado: {sub_file}")
@@ -243,8 +245,20 @@ class SubtitleController(QObject):
                         os.path.exists(sub_file) and 
                         os.path.normpath(sub_file) != os.path.normpath(self._subtitle_target_path)):
                         os.remove(sub_file)
+                        
+                    final_files_for_editor.append(self._subtitle_target_path)
                 except Exception as e:
                     logger.error(f"AdvancedProcessTab: Error al mover subtítulo al destino final: {e}")
+            else:
+                # Si no había ruta de destino (como en fragmentos), el archivo original es el final
+                final_files_for_editor.append(sub_file)
+                
+        # Integración con el editor
+        from core.services.editor_integration_manager import EditorIntegrationManager
+        editor_mgr = EditorIntegrationManager.get_instance()
+        if editor_mgr and editor_mgr.is_auto_send_enabled:
+            for filepath in final_files_for_editor:
+                editor_mgr.process_raw_download(filepath, request_data)
         
         # Resetear la ruta objetivo tras procesar
         self._subtitle_target_path = None

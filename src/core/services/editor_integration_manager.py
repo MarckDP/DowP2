@@ -215,6 +215,12 @@ class EditorIntegrationManager(QObject):
                     "thumbnail": vid_path,
                     "subtitle": None
                 })
+            elif final_filepath.lower().endswith(('.srt', '.vtt', '.ass', '.ssa', '.sub', '.ttml')) and os.path.exists(final_filepath):
+                file_packages.append({
+                    "video": None,
+                    "thumbnail": None,
+                    "subtitle": vid_path
+                })
             else:
                 # Si ni el video ni la miniatura ni el subtitulo existen, ignoramos
                 if vid_path or expected_thumb_path or sub_path:

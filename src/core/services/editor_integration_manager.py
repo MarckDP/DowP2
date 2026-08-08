@@ -125,7 +125,11 @@ class EditorIntegrationManager(QObject):
 
     def process_raw_download(self, final_filepath, request_data):
         """Empaqueta y envía un archivo descargado al editor activo."""
-        if not final_filepath or not os.path.exists(final_filepath):
+        if not final_filepath:
+            return
+            
+        mode = request_data.get("mode") if request_data else None
+        if mode not in ("thumbnail_only", "subtitle_only") and not os.path.exists(final_filepath):
             return
             
         output_dir = os.path.dirname(final_filepath)
@@ -196,7 +200,7 @@ class EditorIntegrationManager(QObject):
                 logger.error(f"Error empaquetando fragmentos: {e}")
         else:
             # Archivo único normal
-            vid_path = final_filepath.replace('\\', '/')
+            vid_path = final_filepath.replace('\\', '/') if os.path.exists(final_filepath) else None
             sub_path = None
             try:
                 for s in os.listdir(output_dir):
@@ -205,18 +209,20 @@ class EditorIntegrationManager(QObject):
                         break
             except Exception: pass
             
-            if final_filepath.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
+            if final_filepath.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')) and os.path.exists(final_filepath):
                 file_packages.append({
                     "video": None,
                     "thumbnail": vid_path,
                     "subtitle": None
                 })
             else:
-                file_packages.append({
-                    "video": vid_path,
-                    "thumbnail": expected_thumb_path,
-                    "subtitle": sub_path
-                })
+                # Si ni el video ni la miniatura ni el subtitulo existen, ignoramos
+                if vid_path or expected_thumb_path or sub_path:
+                    file_packages.append({
+                        "video": vid_path,
+                        "thumbnail": expected_thumb_path,
+                        "subtitle": sub_path
+                    })
                 
         if not file_packages:
             return

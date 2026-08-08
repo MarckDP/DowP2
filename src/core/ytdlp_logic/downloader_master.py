@@ -103,10 +103,19 @@ class DownloaderMaster:
                 )
 
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    ydl.download([url])
+                    info = ydl.extract_info(url, download=True)
+                    
+                    if ydl_opts.get('skip_download') and progress_callback:
+                        if 'entries' in info:
+                            for entry in info['entries']:
+                                if entry:
+                                    filename = ydl.prepare_filename(entry)
+                                    progress_callback({'status': 'finished', 'filename': filename, 'info_dict': entry})
+                        else:
+                            filename = ydl.prepare_filename(info)
+                            progress_callback({'status': 'finished', 'filename': filename, 'info_dict': info})
                     
                     if needs_local_cut:
-                        info = ydl.extract_info(url, download=False)
                         filename = ydl.prepare_filename(info)
                         self._handle_local_cuts(
                             filename, fragments, 
@@ -123,7 +132,6 @@ class DownloaderMaster:
                             self._handle_subtitle_processing_only_sub(request_data, fragments)
                         elif not needs_local_cut and request_data.get("standardize_srt"):
                             # Descarga de video normal sin recorte pero con estandarización
-                            info = ydl.extract_info(url, download=False)
                             filename = ydl.prepare_filename(info)
                             self._handle_subtitle_standardization(filename, request_data)
 
@@ -484,9 +492,13 @@ class DownloaderMaster:
                 ydl_opts['writesubtitles'] = not subtitle_is_auto
                 ydl_opts['writeautomaticsub'] = subtitle_is_auto
         elif mode == "thumbnail_only":
+            if 'format' in ydl_opts:
+                del ydl_opts['format']
+                
             ydl_opts.update({
                 'skip_download': True,
                 'writethumbnail': True,
+                'ignore_no_formats_error': True,
             })
             # Asegurar el convertidor de formato a jpg
             ydl_opts['postprocessors'].append({

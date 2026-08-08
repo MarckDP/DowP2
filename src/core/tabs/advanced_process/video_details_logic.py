@@ -33,6 +33,13 @@ def download_thumbnail(widget):
         if save_path:
             try:
                 widget.thumb_container._pixmap.save(save_path)
+                
+                # Send to Adobe if integration is active
+                from core.services.editor_integration_manager import EditorIntegrationManager
+                editor_mgr = EditorIntegrationManager.get_instance()
+                if editor_mgr and editor_mgr.is_auto_send_enabled:
+                    editor_mgr.process_raw_download(save_path, None)
+                    
                 from gui.dialogs.dialogs import show_info
                 show_info(widget, widget.tr("Éxito"), widget.tr("Miniatura guardada correctamente."))
             except Exception as e:

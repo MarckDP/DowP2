@@ -1,8 +1,41 @@
 import os
-from PySide6.QtCore import QObject, Signal
+import subprocess
+from PySide6.QtCore import QObject, Signal, QThread
 from core.logger.logger_manager import logger
 
 from core.services.adobe_socket_server import AdobeSocketServer
+from core.services.davinci_integration_service import DaVinciIntegrationService
+
+class ProcessMonitorThread(QThread):
+    processes_updated = Signal(dict)
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.is_running = True
+        self.targets = {
+            "premiere": "Adobe Premiere Pro.exe",
+            "aftereffects": "AfterFX.exe",
+            "davinci": "Resolve.exe"
+        }
+        
+    def run(self):
+        import time
+        while self.is_running:
+            try:
+                # Use tasklist on Windows to quickly check running processes
+                output = subprocess.check_output('tasklist', creationflags=subprocess.CREATE_NO_WINDOW).decode('utf-8', errors='ignore')
+                status = {}
+                for app_id, exe_name in self.targets.items():
+                    status[app_id] = (exe_name in output)
+                self.processes_updated.emit(status)
+            except Exception as e:
+                pass
+            time.sleep(3.0)
+            
+    def stop(self):
+        self.is_running = False
+        self.wait()
+
 
 class EditorIntegrationManager(QObject):
     """
@@ -12,6 +45,8 @@ class EditorIntegrationManager(QObject):
     """
     # Se emite cuando el editor activo cambia (ej. None -> 'premiere' o viceversa)
     active_editor_changed = Signal(object)
+    # Se emite cuando cambia el estado de proceso en el SO {app_id: bool}
+    process_status_changed = Signal(dict)
     
     _instance = None
 
@@ -19,33 +54,46 @@ class EditorIntegrationManager(QObject):
         super().__init__()
         self.active_editor = None
         self.is_auto_send_enabled = True
+        self.process_status = {}
         
         # Servicios
         self.adobe_service = AdobeSocketServer()
+        self.davinci_service = DaVinciIntegrationService.get_instance()
         
         # Conectar señales del servicio Adobe
         self.adobe_service.active_target_changed.connect(self._on_adobe_target_changed)
         
         # Futuros servicios irán aquí:
-        # self.davinci_service = DaVinciIntegrationService()
         # self.vegas_service = VegasIntegrationService()
 
         EditorIntegrationManager._instance = self
+        
+        # Monitor de procesos
+        self.process_monitor = ProcessMonitorThread()
+        self.process_monitor.processes_updated.connect(self._on_processes_updated)
 
     @classmethod
     def get_instance(cls):
         return cls._instance
+        
+    def _on_processes_updated(self, status_dict):
+        self.process_status = status_dict
+        self.process_status_changed.emit(status_dict)
 
     def start_all_services(self):
         """Inicia todos los servidores de comunicación en segundo plano."""
         logger.info("[EditorManager] Iniciando servicios de integración...")
         self.adobe_service.start()
-        # self.davinci_service.start()
+        self.process_monitor.start()
         # self.vegas_service.start()
 
     def stop_all_services(self):
         """Detiene todos los servicios al cerrar la aplicación."""
         logger.info("[EditorManager] Deteniendo servicios de integración...")
+        try:
+            self.process_monitor.stop()
+        except Exception: pass
+        
         try:
             self.adobe_service.stop()
         except Exception as e:
@@ -64,7 +112,13 @@ class EditorIntegrationManager(QObject):
         self.active_editor_changed.emit(self.active_editor)
 
     def force_adobe_target(self, target_app):
-        """Intenta forzar el objetivo activo en el servidor de Adobe."""
+        """Intenta forzar el objetivo activo. Soporta Adobe y DaVinci."""
+        if target_app == "davinci":
+            self.active_editor = "davinci"
+            logger.info(f"[EditorManager] Editor activo establecido a: {self.active_editor}")
+            self.active_editor_changed.emit(self.active_editor)
+            return True
+            
         if self.adobe_service:
             return self.adobe_service.force_active_target(target_app)
         return False
@@ -80,8 +134,7 @@ class EditorIntegrationManager(QObject):
         if self.active_editor in ('premiere', 'aftereffects'):
             return self.adobe_service.send_file_to_adobe(file_package)
         elif self.active_editor == 'davinci':
-            # return self.davinci_service.send_file(file_package)
-            pass
+            return self.davinci_service.send_files_to_davinci([file_package])
         elif self.active_editor == 'vegas':
             # return self.vegas_service.send_file(file_package)
             pass
@@ -100,8 +153,7 @@ class EditorIntegrationManager(QObject):
         if self.active_editor in ('premiere', 'aftereffects'):
             return self.adobe_service.send_batch_to_adobe(files, target_bin)
         elif self.active_editor == 'davinci':
-            # return self.davinci_service.send_batch(files)
-            pass
+            return self.davinci_service.send_files_to_davinci(files)
         elif self.active_editor == 'vegas':
             # return self.vegas_service.send_batch(files)
             pass
@@ -134,8 +186,40 @@ class EditorIntegrationManager(QObject):
         if not final_filepath:
             return
             
+        import os
+        import re
+        
+        # Buscar el archivo real descargado si la ruta temporal fue eliminada (ej. Streams HLS / merger)
+        actual_filepath = final_filepath
+        if not os.path.exists(final_filepath):
+            parent_dir = os.path.dirname(final_filepath)
+            if os.path.exists(parent_dir):
+                base_name = os.path.splitext(os.path.basename(final_filepath))[0]
+                for temp_ext in ['.temp', '.ytdl', '.part']:
+                    if base_name.endswith(temp_ext):
+                        base_name = base_name[:-len(temp_ext)]
+                base_name = re.sub(r'\.f[a-zA-Z0-9-]+$', '', base_name)
+                
+                best_match = None
+                try:
+                    for entry in os.scandir(parent_dir):
+                        if entry.is_file():
+                            entry_base = os.path.splitext(entry.name)[0]
+                            if entry_base == base_name:
+                                actual_filepath = entry.path
+                                break
+                            if entry_base.startswith(base_name):
+                                best_match = entry.path
+                except Exception:
+                    pass
+                if actual_filepath == final_filepath and best_match:
+                    actual_filepath = best_match
+                    
+        final_filepath = actual_filepath
+        
         mode = request_data.get("mode") if request_data else None
         if mode not in ("thumbnail_only", "subtitle_only") and not os.path.exists(final_filepath):
+            logger.error(f"[EditorManager] No se pudo encontrar el archivo final para enviar: {final_filepath}")
             return
             
         output_dir = os.path.dirname(final_filepath)

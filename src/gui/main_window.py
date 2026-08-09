@@ -23,6 +23,11 @@ class EditorStatusCornerWidget(QWidget):
     def __init__(self, main_window, parent=None):
         super().__init__(parent)
         self.main_window = main_window
+        from PySide6.QtWidgets import QHBoxLayout, QPushButton, QLabel, QGraphicsOpacityEffect
+        from PySide6.QtGui import QIcon, QPixmap
+        from PySide6.QtCore import Qt, QSize
+        import os
+        import subprocess
         from PySide6.QtWidgets import QHBoxLayout, QPushButton
         from PySide6.QtGui import QIcon
         from PySide6.QtCore import Qt, QSize
@@ -55,10 +60,54 @@ class EditorStatusCornerWidget(QWidget):
         self.btn_toggle.toggled.connect(self.on_toggle)
         self.btn_settings.clicked.connect(self.on_settings_clicked)
         
+        # Diccionario para almacenar los iconos de apps
+        self.app_icons = {}
+        
+        # Cargar configuración para ver qué apps están habilitadas
+        config = get_config()
+        integrations = config.get('integrations', {})
+        
+        apps = [
+            ("premiere", "premiere pro.svg", "Adobe Premiere Pro"),
+            ("aftereffects", "after effects.svg", "Adobe After Effects"),
+            ("davinci", "davinci resolve.svg", "DaVinci Resolve")
+        ]
+        
+        for app_id, svg_name, app_name in apps:
+            is_enabled = integrations.get(f"{app_id}_enabled", False)
+            if is_enabled:
+                lbl = QLabel()
+                lbl.setFixedSize(28, 28)
+                lbl.setAlignment(Qt.AlignCenter)
+                lbl.setCursor(Qt.PointingHandCursor)
+                lbl.setToolTip(f"{app_name} (Cerrado)")
+                
+                # Cargar pixmap
+                icon_path = os.path.join(icons_dir, svg_name)
+                # Escalar a 24x24 para dejar espacio al borde de 2px (24 + 2 + 2 = 28)
+                pixmap = QPixmap(icon_path).scaled(24, 24, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                lbl.setPixmap(pixmap)
+                
+                # Efecto de opacidad/color
+                effect = QGraphicsOpacityEffect(lbl)
+                effect.setOpacity(0.3) # Estado 1: Cerrado = opaco
+                lbl.setGraphicsEffect(effect)
+                
+                # Guardar info en el label para click handling
+                lbl.setProperty("app_id", app_id)
+                lbl.setProperty("app_name", app_name)
+                lbl.setProperty("exe_path", integrations.get(f"{app_id}_path", ""))
+                lbl.setProperty("state", 1) # 1=Closed, 2=Open, 3=Connected
+                lbl.mousePressEvent = lambda e, l=lbl: self.on_app_icon_clicked(l)
+                
+                self.layout.addWidget(lbl)
+                self.app_icons[app_id] = lbl
+        
         self.layout.addWidget(self.btn_toggle)
         self.layout.addWidget(self.btn_settings)
         
         self._active_editor = None
+        self._process_status = {}
         self.update_ui_state()
         
     def late_init(self):
@@ -67,12 +116,19 @@ class EditorStatusCornerWidget(QWidget):
         self.editor_manager = EditorIntegrationManager.get_instance()
         if self.editor_manager:
             self.editor_manager.active_editor_changed.connect(self.on_editor_changed)
+            self.editor_manager.process_status_changed.connect(self.on_process_changed)
+            
             self._active_editor = self.editor_manager.active_editor
+            self._process_status = self.editor_manager.process_status
             self.btn_toggle.setChecked(self.editor_manager.is_auto_send_enabled)
         self.update_ui_state()
             
     def on_editor_changed(self, editor_name):
         self._active_editor = editor_name
+        self.update_ui_state()
+        
+    def on_process_changed(self, status_dict):
+        self._process_status = status_dict
         self.update_ui_state()
         
     def on_toggle(self, checked):
@@ -81,6 +137,7 @@ class EditorStatusCornerWidget(QWidget):
         self.update_ui_state()
         
     def update_ui_state(self):
+        # 1. Update toggle button
         is_on = self.btn_toggle.isChecked()
         if not is_on:
             self.btn_toggle.setIcon(self._icon_off)
@@ -92,6 +149,79 @@ class EditorStatusCornerWidget(QWidget):
             else:
                 self.btn_toggle.setIcon(self._icon_yellow)
                 self.btn_toggle.setToolTip("Auto-enviar: ESPERANDO CONEXIÓN")
+                
+        # 2. Update App Icons
+        for app_id, lbl in self.app_icons.items():
+            is_running = self._process_status.get(app_id, False)
+            is_active = (self._active_editor == app_id)
+            
+            effect = lbl.graphicsEffect()
+            if is_active:
+                lbl.setProperty("state", 3)
+                effect.setOpacity(1.0)
+                lbl.setStyleSheet("border: 2px solid #55ff55; border-radius: 6px; background-color: rgba(85, 255, 85, 0.1);") # Brillante / Marco
+                lbl.setToolTip(f"{lbl.property('app_name')} (Conectado)")
+            elif is_running:
+                lbl.setProperty("state", 2)
+                effect.setOpacity(0.8) # Abierto pero sin conexión (opaco pero a color)
+                lbl.setStyleSheet("border: 2px solid transparent; border-radius: 6px;")
+                lbl.setToolTip(f"{lbl.property('app_name')} (Abierto - Sin vincular)")
+            else:
+                lbl.setProperty("state", 1)
+                effect.setOpacity(0.3) # Cerrado (grisáceo / opaco)
+                lbl.setStyleSheet("border: 2px solid transparent; border-radius: 6px;")
+                lbl.setToolTip(f"{lbl.property('app_name')} (Cerrado - Clic para abrir)")
+                
+    def on_app_icon_clicked(self, lbl):
+        import subprocess
+        import os
+        from PySide6.QtCore import QTimer
+        from PySide6.QtGui import QPixmap
+        
+        state = lbl.property("state")
+        app_id = lbl.property("app_id")
+        exe_path = lbl.property("exe_path")
+        
+        # Animación de "Click" (Pop effect)
+        svg_name = ""
+        if app_id == "premiere": svg_name = "premiere pro.svg"
+        elif app_id == "aftereffects": svg_name = "after effects.svg"
+        elif app_id == "davinci": svg_name = "davinci resolve.svg"
+        
+        if svg_name:
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            icons_dir = os.path.join(os.path.dirname(base_dir), "assets", "icons", "svg")
+            icon_path = os.path.join(icons_dir, svg_name)
+            
+            # Achicar
+            pixmap_small = QPixmap(icon_path).scaled(20, 20, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            lbl.setPixmap(pixmap_small)
+            
+            # Restaurar
+            def restore_size():
+                pixmap_normal = QPixmap(icon_path).scaled(24, 24, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                lbl.setPixmap(pixmap_normal)
+            QTimer.singleShot(120, restore_size)
+        
+        if state == 1:
+            # Launch app
+            if exe_path and os.path.exists(exe_path):
+                from core.logger.logger_manager import logger
+                logger.info(f"Lanzando: {exe_path}")
+                try:
+                    subprocess.Popen(exe_path)
+                except Exception as e:
+                    logger.error(f"Error lanzando {app_id}: {e}")
+            else:
+                from gui.dialogs.dialogs import show_warning
+                show_warning(self.main_window, "Ruta no encontrada", f"No se encontró el ejecutable en:\n{exe_path}\nConfigura la ruta en Ajustes -> Integraciones.")
+        elif state == 2:
+            # Force active (if supported)
+            if hasattr(self, 'editor_manager') and self.editor_manager:
+                success = self.editor_manager.force_adobe_target(app_id)
+                if not success:
+                    from gui.dialogs.dialogs import show_info
+                    show_info(self.main_window, "DowP Importer", "La extensión no está respondiendo. Abre el panel de DowP en tu editor para conectar.")
                 
     def on_settings_clicked(self):
         # Ir a la pestaña principal de Ajustes (índice 5 en main_window.tabs)

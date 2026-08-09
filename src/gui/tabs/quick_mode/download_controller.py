@@ -298,6 +298,43 @@ class QuickDownloadController(QObject):
         self.download_text_changed.emit(self.tr("Descargar") if hasattr(self, "tr") else "Descargar")
         self.progress_updated.emit(0, self.tr("Cancelando descarga...") if hasattr(self, "tr") else "Cancelando descarga...", "wait")
 
+    def _find_actual_downloaded_file(self, filepath):
+        """Busca el archivo real descargado ignorando extensiones temporales."""
+        if not filepath:
+            return None
+            
+        import os
+        if os.path.exists(filepath):
+            return filepath
+            
+        parent_dir = os.path.dirname(filepath)
+        if not os.path.exists(parent_dir):
+            return None
+            
+        base_name = os.path.splitext(os.path.basename(filepath))[0]
+        
+        for temp_ext in ['.temp', '.ytdl', '.part']:
+            if base_name.endswith(temp_ext):
+                base_name = base_name[:-len(temp_ext)]
+                
+        # Handle HLS temp files like .fhls-761
+        import re
+        base_name = re.sub(r'\.f[a-zA-Z0-9-]+$', '', base_name)
+                
+        best_match = None
+        try:
+            for entry in os.scandir(parent_dir):
+                if entry.is_file():
+                    entry_base = os.path.splitext(entry.name)[0]
+                    if entry_base == base_name:
+                        return entry.path
+                    if entry_base.startswith(base_name):
+                        best_match = entry.path
+        except Exception:
+            pass
+            
+        return best_match
+
     def _on_download_progress(self, data):
         if data.get("status") == "downloading":
             from core.ytdlp_logic.analyzer import strip_ansi_codes
@@ -378,9 +415,8 @@ class QuickDownloadController(QObject):
                 
                 # Enviar al editor si corresponde
                 if editor_mgr and editor_mgr.is_auto_send_enabled and hasattr(row, 'downloaded_filepath') and row.downloaded_filepath:
-                    # En modo rápido, podemos pasar last_request_data. Para playlists es posible que el título 
-                    # de la fila sea más preciso pero last_request_data es suficiente por ahora.
-                    editor_mgr.process_raw_download(row.downloaded_filepath, self.last_request_data)
+                    actual_path = self._find_actual_downloaded_file(row.downloaded_filepath)
+                    editor_mgr.process_raw_download(actual_path or row.downloaded_filepath, self.last_request_data)
                     
             title = self.last_request_data.get("title", "").strip()
             output_dir = self.last_request_data.get("output_path", "")

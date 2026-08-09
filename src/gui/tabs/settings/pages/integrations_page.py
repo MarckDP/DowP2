@@ -1,8 +1,9 @@
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
-                                 QFrame, QScrollArea, QPushButton, QSizePolicy)
+                                 QFrame, QScrollArea, QPushButton, QSizePolicy, QCheckBox, QLineEdit, QFileDialog)
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QIcon, QPixmap
 from core.services.editor_integration_manager import EditorIntegrationManager
+from core.utils.config_manager import get_config, save_config
 import os
 
 class IntegrationsPage(QWidget):
@@ -97,35 +98,46 @@ class IntegrationsPage(QWidget):
         header_layout.addWidget(self.adobe_status_lbl)
         card_layout.addLayout(header_layout)
         
-        # Icons & Description
-        content_layout = QHBoxLayout()
+        # Cargar configuración
+        config = get_config()
+        integrations = config.get('integrations', {})
         
-        icons_layout = QHBoxLayout()
-        icons_layout.setSpacing(10)
+        pr_default = self.detect_adobe_path("premiere") or "C:\\Program Files\\Adobe\\Adobe Premiere Pro 2024\\Adobe Premiere Pro.exe"
+        ae_default = self.detect_adobe_path("aftereffects") or "C:\\Program Files\\Adobe\\Adobe After Effects 2024\\Support Files\\AfterFX.exe"
         
-        self.lbl_icon_pr = QLabel()
-        self.lbl_icon_pr.setFixedSize(48, 48)
-        self.lbl_icon_pr.setCursor(Qt.PointingHandCursor)
-        self.lbl_icon_pr.mousePressEvent = lambda e: self.force_target('premiere')
-        self.set_icon(self.lbl_icon_pr, "premiere pro.svg", opacity=0.3)
+        # Premiere Pro Settings
+        pr_layout = self.create_app_setting(
+            app_id="premiere",
+            app_name="Adobe Premiere Pro",
+            icon_name="premiere pro.svg",
+            default_path=pr_default,
+            is_enabled=integrations.get('premiere_enabled', False),
+            current_path=integrations.get('premiere_path', '')
+        )
+        card_layout.addLayout(pr_layout)
         
-        self.lbl_icon_ae = QLabel()
-        self.lbl_icon_ae.setFixedSize(48, 48)
-        self.lbl_icon_ae.setCursor(Qt.PointingHandCursor)
-        self.lbl_icon_ae.mousePressEvent = lambda e: self.force_target('aftereffects')
-        self.set_icon(self.lbl_icon_ae, "after effects.svg", opacity=0.3)
+        card_layout.addSpacing(10)
         
-        icons_layout.addWidget(self.lbl_icon_pr)
-        icons_layout.addWidget(self.lbl_icon_ae)
+        # After Effects Settings
+        ae_layout = self.create_app_setting(
+            app_id="aftereffects",
+            app_name="Adobe After Effects",
+            icon_name="after effects.svg",
+            default_path=ae_default,
+            is_enabled=integrations.get('aftereffects_enabled', False),
+            current_path=integrations.get('aftereffects_path', '')
+        )
+        card_layout.addLayout(ae_layout)
         
-        desc = QLabel(self.tr("Instala la extensión DowP Importer en Adobe Premiere Pro o After Effects. Al mantener la ventana de la extensión abierta, DowP se conectará automáticamente para enviar medios y subtítulos."))
+        # Description
+        desc = QLabel(self.tr("Instala la extensión DowP Importer en Premiere o After Effects. Activa los interruptores arriba y configura la ruta para lanzar las aplicaciones desde DowP."))
         desc.setWordWrap(True)
-        desc.setStyleSheet("color: #aaaaaa;")
+        desc.setStyleSheet("color: #aaaaaa; margin-top: 10px;")
+        card_layout.addWidget(desc)
         
-        content_layout.addLayout(icons_layout)
-        content_layout.addSpacing(20)
-        content_layout.addWidget(desc, 1)
-        card_layout.addLayout(content_layout)
+        # Mantener referencias para estado visual (compatibilidad anterior por ahora)
+        self.lbl_icon_pr = pr_layout.icon_lbl
+        self.lbl_icon_ae = ae_layout.icon_lbl
         
         self.content_layout.addWidget(self.adobe_card)
 
@@ -141,41 +153,178 @@ class IntegrationsPage(QWidget):
         title.setObjectName("settingsSectionTitle")
         title.setStyleSheet("font-size: 16px; font-weight: bold;")
         
-        status_lbl = QLabel(self.tr("Próximamente"))
-        status_lbl.setStyleSheet("color: #888888; font-weight: bold;")
+        self.davinci_status_lbl = QLabel(self.tr("Desconectado"))
+        self.davinci_status_lbl.setStyleSheet("color: #ff5555; font-weight: bold;")
         
         header_layout.addWidget(title)
         header_layout.addStretch()
-        header_layout.addWidget(status_lbl)
+        header_layout.addWidget(self.davinci_status_lbl)
         card_layout.addLayout(header_layout)
         
-        # Icons & Description
-        content_layout = QHBoxLayout()
+        # Cargar configuración
+        config = get_config()
+        integrations = config.get('integrations', {})
         
-        lbl_icon_dv = QLabel()
-        lbl_icon_dv.setFixedSize(48, 48)
-        self.set_icon(lbl_icon_dv, "davinci resolve.svg", opacity=1.0)
+        dv_layout = self.create_app_setting(
+            app_id="davinci",
+            app_name="DaVinci Resolve",
+            icon_name="davinci resolve.svg",
+            default_path="C:\\Program Files\\Blackmagic Design\\DaVinci Resolve\\Resolve.exe",
+            is_enabled=integrations.get('davinci_enabled', False),
+            current_path=integrations.get('davinci_path', '')
+        )
+        card_layout.addLayout(dv_layout)
         
-        desc = QLabel(self.tr("La integración directa con DaVinci Resolve estará disponible en una futura actualización."))
+        # Configuración adicional de DaVinci (Timeline, Carpetas, etc)
+        settings_layout = QVBoxLayout()
+        settings_layout.setContentsMargins(40, 10, 0, 0)
+        settings_layout.setSpacing(10)
+        
+        self.cb_dv_timeline = QCheckBox(self.tr("Importar automáticamente a la línea de tiempo (Playhead)"))
+        self.cb_dv_timeline.setChecked(integrations.get('davinci_import_timeline', True))
+        self.cb_dv_timeline.toggled.connect(lambda checked: self._save_integration_setting("davinci", "import_timeline", checked))
+        settings_layout.addWidget(self.cb_dv_timeline)
+        
+        self.cb_dv_images_timeline = QCheckBox(self.tr("Importar también imágenes a la línea de tiempo"))
+        self.cb_dv_images_timeline.setChecked(integrations.get('davinci_import_images_timeline', False))
+        self.cb_dv_images_timeline.toggled.connect(lambda checked: self._save_integration_setting("davinci", "import_images_timeline", checked))
+        settings_layout.addWidget(self.cb_dv_images_timeline)
+        
+        self.cb_dv_folders = QCheckBox(self.tr("Crear estructura de carpetas (DowP Imports / Audio / Video)"))
+        self.cb_dv_folders.setChecked(integrations.get('davinci_create_folders', True))
+        self.cb_dv_folders.toggled.connect(lambda checked: self._save_integration_setting("davinci", "create_folders", checked))
+        settings_layout.addWidget(self.cb_dv_folders)
+        
+        card_layout.addLayout(settings_layout)
+        
+        desc = QLabel(self.tr("La integración de DaVinci usa la API nativa de scripting. Asegúrate de tener DaVinci abierto y permitir scripts (Preferencias -> Sistema -> General -> External scripting = Local)."))
         desc.setWordWrap(True)
-        desc.setStyleSheet("color: #aaaaaa;")
-        
-        content_layout.addWidget(lbl_icon_dv)
-        content_layout.addSpacing(20)
-        content_layout.addWidget(desc, 1)
-        card_layout.addLayout(content_layout)
+        desc.setStyleSheet("color: #aaaaaa; margin-top: 10px;")
+        card_layout.addWidget(desc)
         
         self.content_layout.addWidget(self.davinci_card)
+        self.lbl_icon_dv = dv_layout.icon_lbl
         
-    def set_icon(self, label, icon_name, opacity=1.0):
+    def detect_adobe_path(self, app_id):
+        import platform
+        if platform.system() != 'Windows':
+            return ""
+            
+        base_path = "C:\\Program Files\\Adobe"
+        if not os.path.exists(base_path):
+            return ""
+            
+        candidates = []
+        target_folder_keyword = "Premiere Pro" if app_id == "premiere" else "After Effects"
+        exe_name = "Adobe Premiere Pro.exe" if app_id == "premiere" else "Support Files\\AfterFX.exe"
+        
+        try:
+            for item in os.listdir(base_path):
+                if target_folder_keyword in item:
+                    full_exe_path = os.path.join(base_path, item, exe_name)
+                    if os.path.exists(full_exe_path):
+                        import re
+                        match = re.search(r'\d{4}', item)
+                        year = int(match.group()) if match else 2000
+                        candidates.append((year, full_exe_path))
+        except Exception:
+            pass
+            
+        if candidates:
+            # Sort by year descending and return the highest
+            candidates.sort(key=lambda x: x[0], reverse=True)
+            return candidates[0][1]
+            
+        return ""
+        
+    def create_app_setting(self, app_id, app_name, icon_name, default_path, is_enabled, current_path):
+        layout = QVBoxLayout()
+        layout.setSpacing(8)
+        
+        # Top row: Checkbox + Icon
+        top_row = QHBoxLayout()
+        
+        icon_lbl = QLabel()
+        icon_lbl.setFixedSize(32, 32)
+        self.set_icon(icon_lbl, icon_name, opacity=1.0 if is_enabled else 0.3)
+        
+        checkbox = QCheckBox(f"Activar acceso directo a {app_name}")
+        checkbox.setChecked(is_enabled)
+        checkbox.setStyleSheet("font-weight: bold; font-size: 14px;")
+        
+        top_row.addWidget(icon_lbl)
+        top_row.addWidget(checkbox)
+        top_row.addStretch()
+        layout.addLayout(top_row)
+        
+        # Bottom row: Path input
+        path_row = QHBoxLayout()
+        path_row.setContentsMargins(40, 0, 0, 0) # Indent
+        
+        path_input = QLineEdit()
+        path_input.setPlaceholderText(default_path)
+        path_input.setText(current_path)
+        
+        # Autodetect if empty and enabled
+        if is_enabled and not current_path and os.path.exists(default_path):
+            path_input.setText(default_path)
+            self._save_integration_setting(app_id, "path", default_path)
+            
+        path_input.textChanged.connect(lambda text: self._save_integration_setting(app_id, "path", text))
+        
+        btn_browse = QPushButton("Explorar...")
+        btn_browse.clicked.connect(lambda: self._browse_exe(app_id, path_input))
+        
+        path_row.addWidget(QLabel("Ruta:"))
+        path_row.addWidget(path_input)
+        path_row.addWidget(btn_browse)
+        layout.addLayout(path_row)
+        
+        # Connect checkbox
+        checkbox.toggled.connect(lambda checked: self._on_app_toggled(app_id, checked, icon_lbl, path_input, default_path))
+        path_input.setEnabled(is_enabled)
+        btn_browse.setEnabled(is_enabled)
+        
+        # Attach icon_lbl to layout object for later reference
+        layout.icon_lbl = icon_lbl
+        
+        return layout
+        
+    def _browse_exe(self, app_id, line_edit):
+        file_path, _ = QFileDialog.getOpenFileName(self, self.tr("Seleccionar Ejecutable"), "C:\\Program Files", "Ejecutables (*.exe *.app)")
+        if file_path:
+            file_path = os.path.normpath(file_path)
+            line_edit.setText(file_path)
+            self._save_integration_setting(app_id, "path", file_path)
+            
+    def _on_app_toggled(self, app_id, checked, icon_lbl, path_input, default_path):
+        self._save_integration_setting(app_id, "enabled", checked)
+        self.set_icon(icon_lbl, icon_lbl.property("icon_name") or f"{app_id}.svg", opacity=1.0 if checked else 0.3)
+        path_input.setEnabled(checked)
+        
+        # Auto-fill if enabling and empty
+        if checked and not path_input.text() and os.path.exists(default_path):
+            path_input.setText(default_path)
+            
+        # Emitir señal o refrescar UI superior (pendiente)
+        
+    def _save_integration_setting(self, app_id, key, value):
+        config = get_config()
+        if 'integrations' not in config:
+            config['integrations'] = {}
+            
+        config_key = f"{app_id}_{key}"
+        config['integrations'][config_key] = value
+        save_config(config)
+        
+    def set_icon(self, label, icon_name, opacity=1.0, size=32):
         # Asegurar que el icono existe
+        label.setProperty("icon_name", icon_name) # Guardar nombre para restaurar luego
         icon_path = os.path.join("src", "assets", "icons", "svg", icon_name)
         if os.path.exists(icon_path):
-            pixmap = QPixmap(icon_path).scaled(48, 48, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            pixmap = QPixmap(icon_path).scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             label.setPixmap(pixmap)
             
-            # Simple forma de aplicar opacidad: usar QGraphicsOpacityEffect o StyleSheet, 
-            # pero dado que es SVG plano, podemos bajar la opacidad con QGraphicsOpacityEffect
             from PySide6.QtWidgets import QGraphicsOpacityEffect
             effect = QGraphicsOpacityEffect(label)
             effect.setOpacity(opacity)

@@ -35,7 +35,15 @@ def get_config():
         "labels": [],
         "editing_media_view_mode": "grid",
         "editing_media_icon_size": 112,
-        "editing_media_splitter_sizes": [240, 480, 480]
+        "editing_media_splitter_sizes": [240, 480, 480],
+        "integrations": {
+            "premiere_enabled": False,
+            "premiere_path": "",
+            "aftereffects_enabled": False,
+            "aftereffects_path": "",
+            "davinci_enabled": False,
+            "davinci_path": ""
+        }
     }
     for k, v in defaults.items():
         if k not in _cached_config:

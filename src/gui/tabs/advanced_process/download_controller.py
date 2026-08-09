@@ -117,7 +117,8 @@ class DownloadController(QObject):
                 from core.services.editor_integration_manager import EditorIntegrationManager
                 editor_mgr = EditorIntegrationManager.get_instance()
                 if editor_mgr and editor_mgr.is_auto_send_enabled:
-                    editor_mgr.process_raw_download(self.last_downloaded_filepath, self.solo_request_data)
+                    actual_path = self._find_actual_downloaded_file(self.last_downloaded_filepath)
+                    editor_mgr.process_raw_download(actual_path or self.last_downloaded_filepath, self.solo_request_data)
             else:
                 self.tab.output_options.set_progress(0, self.tab.tr(f"Error: {message}"), "wait")
                 logger.error(f"AdvancedProcessTab: Error en descarga directa SOLO: {message}")

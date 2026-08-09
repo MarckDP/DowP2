@@ -223,6 +223,55 @@ class FreesoundPreviewCacheProvider(BaseCacheProvider):
         }
 
 
+class WaveformCacheProvider(BaseCacheProvider):
+    """Proveedor de caché para las ondas de audio cacheadas (waveforms)."""
+
+    @property
+    def key(self) -> str:
+        return "waveforms"
+
+    @property
+    def name(self) -> str:
+        return "Caché de Ondas de Audio"
+
+    @property
+    def description(self) -> str:
+        return "Formas de onda (waveforms) cacheadas para visualización instantánea en la cuadrícula y reproductor."
+
+    def get_stats(self) -> Dict[str, Any]:
+        from core.utils.paths import get_waveform_cache_dir
+        wf_dir = get_waveform_cache_dir()
+        file_count = 0
+        total_size = 0
+
+        if os.path.exists(wf_dir):
+            for entry in os.scandir(wf_dir):
+                if entry.is_file():
+                    file_count += 1
+                    try:
+                        total_size += entry.stat().st_size
+                    except Exception:
+                        pass
+
+        return {
+            "key": self.key,
+            "name": self.name,
+            "description": self.description,
+            "file_count": file_count,
+            "size_bytes": total_size,
+            "formatted_size": format_bytes(total_size)
+        }
+
+    def clear(self) -> Dict[str, Any]:
+        stats_before = self.get_stats()
+        from core.tabs.editing_media.waveform_cache_manager import WaveformCacheManager
+        deleted_count = WaveformCacheManager.get_instance().clear_cache()
+        return {
+            "files_removed": deleted_count,
+            "bytes_freed": stats_before["size_bytes"]
+        }
+
+
 class CacheManager:
     """Servicio centralizado que administra todos los proveedores de caché de la aplicación."""
 
@@ -243,6 +292,7 @@ class CacheManager:
         self.register_provider(ImageThumbnailCacheProvider())
         self.register_provider(IndexingMetadataCacheProvider())
         self.register_provider(FreesoundPreviewCacheProvider())
+        self.register_provider(WaveformCacheProvider())
 
 
     def register_provider(self, provider: BaseCacheProvider):

@@ -146,33 +146,30 @@ class PlaybackMixin:
                     self.remote_waveform_thread.start()
 
             else:
-                # Obtener duración en segundos para el muestreo progresivo
+                # Obtener duración en segundos para el muestreo progresivo (usado solo si se extrae con Thread heredado)
                 dur_str = item_data.get("duración", "-")
                 if not is_remote:
                     dur_str = self._metadata_cache[path].get("duración", "-")
                 if dur_str == "-":
                     dur_str = self.controller.get_media_duration_for_file(path)
-                duration_sec = self._parse_duration_to_seconds(dur_str)
-
-                # Iniciar extracción asíncrona progresiva de amplitudes reales
-                self.waveform_thread = WaveformExtractorThread(
-                    audio_path=path,
-                    num_peaks=num_peaks,
-                    duration_sec=duration_sec,
-                    parent=self
-                )
                 
-                # Conectar la señal de actualización progresiva
-                self.waveform_thread.peaks_updated.connect(self.waveform_widget.set_peaks)
+                # Iniciar extracción y renderizado mediante caché global
+                from core.tabs.editing_media.waveform_cache_manager import WaveformCacheManager
+                wf_mgr = WaveformCacheManager.get_instance()
                 
-                if tipo == "video":
-                    # Para videos: si no hay audio, ocultar el panel automáticamente
-                    self.waveform_thread.finished_extraction.connect(
-                        lambda peaks: self._on_video_waveform_ready(peaks)
-                    )
+                if not getattr(self, "_waveform_cache_connected", False):
+                    wf_mgr.waveform_loaded.connect(self._on_local_waveform_loaded)
+                    self._waveform_cache_connected = True
+                
+                cached_peaks = wf_mgr.get_cached_peaks(path)
+                if cached_peaks is not None:
+                    # HIT: Renderizado instantáneo
+                    self.waveform_widget.set_peaks(cached_peaks)
+                    if tipo == "video":
+                        self._on_video_waveform_ready(cached_peaks)
                 else:
-                    self.waveform_thread.finished_extraction.connect(self.waveform_widget.set_peaks)
-                self.waveform_thread.start()
+                    # MISS: Extracción asíncrona optimizada
+                    wf_mgr.request_waveform(path, num_peaks)
 
             # Controles de reproducción de audio solo para archivos de audio puros
             if tipo == "audio" and self.audio_player:
@@ -518,20 +515,29 @@ class PlaybackMixin:
             self.lbl_time.setText(f"{self._format_time_ms(pos)} / {self._format_time_ms(duration)}")
 
     def _on_freesound_preview_ready(self, url: str, local_path: str):
-        """Callback cuando la descarga en segundo plano de la previa de Freesound se completa."""
-        if getattr(self, "active_remote_audio_url", None) == url and self.audio_player:
-            try:
+        """Maneja la finalización de la descarga rápida en caché LRU."""
+        if getattr(self, "active_remote_audio_url", None) == url:
+            if local_path and os.path.exists(local_path):
                 self.audio_player.setSource(QUrl.fromLocalFile(local_path))
                 loops = QMediaPlayer.Infinite if getattr(self, "_audio_loop_active", False) else 1
-
                 self.audio_player.setLoops(loops)
                 self.audio_player.play()
                 from gui.styles import apply_player_play_button_style
                 apply_player_play_button_style(self.btn_play, is_playing=True, icon_size=14)
-                logger.info(f"PlaybackMixin: Reproducción de archivo local en caché iniciada para {url}")
-            except Exception as e:
-                logger.error(f"PlaybackMixin: Error aplicando fuente en caché para {url}: {e}")
-
+            else:
+                logger.error(f"PlaybackMixin: Error al descargar previa de Freesound para {url}")
+                
+    def _on_local_waveform_loaded(self, file_path: str, peaks: list):
+        """Maneja la recepción de picos de audio de la caché para archivos locales."""
+        if self.waveform_widget.audio_path == file_path:
+            item_data = self._get_current_media_data()
+            tipo = item_data.get("tipo") if item_data else None
+            
+            if tipo == "video":
+                self._on_video_waveform_ready(peaks)
+            else:
+                self.waveform_widget.set_peaks(peaks)
+                
     def _prefetch_next_freesound_item(self, current_index):
         """Pre-carga de forma transparente únicamente el archivo de audio N+1 (siguiente fila) y su forma de onda."""
         if not current_index or not current_index.isValid():

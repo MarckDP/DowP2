@@ -42,6 +42,12 @@ def get_freesound_cache_dir() -> str:
     os.makedirs(fs_dir, exist_ok=True)
     return fs_dir
 
+def get_waveform_cache_dir() -> str:
+    """Retorna el directorio de caché para las ondas de audio cacheadas (waveforms)."""
+    wf_dir = os.path.join(get_cache_dir(), "waveforms")
+    os.makedirs(wf_dir, exist_ok=True)
+    return wf_dir
+
 
 def get_config_path() -> str:
     """Retorna la ruta al archivo de configuración general config.json."""

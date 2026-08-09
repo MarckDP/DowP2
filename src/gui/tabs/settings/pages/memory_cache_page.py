@@ -239,6 +239,40 @@ class MemoryCachePage(QWidget):
         action_hbox.addWidget(self.btn_clear_all)
         total_layout.addLayout(action_hbox)
 
+        # Límite de Caché
+        from PySide6.QtWidgets import QDoubleSpinBox, QAbstractSpinBox
+        from core.utils.config_manager import get_config
+        
+        limit_hbox = QHBoxLayout()
+        self.lbl_limit = QLabel(self.tr("Límite máximo:"))
+        self.lbl_limit.setStyleSheet("color: #aaaaaa; font-size: 13px;")
+        
+        self.limit_spinbox = QDoubleSpinBox()
+        self.limit_spinbox.setRange(0.0, 999.0)
+        self.limit_spinbox.setDecimals(1)
+        self.limit_spinbox.setSingleStep(1.0)
+        self.limit_spinbox.setSuffix(self.tr(" GB"))
+        self.limit_spinbox.setSpecialValueText(self.tr("Sin límite"))
+        self.limit_spinbox.setFixedWidth(140)
+        self.limit_spinbox.setButtonSymbols(QAbstractSpinBox.PlusMinus)
+        self.limit_spinbox.setStyleSheet("""
+            QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {
+                font-size: 9px;
+                padding: 0px;
+            }
+        """)
+        
+        # Cargar valor inicial
+        current_limit = get_config().get("max_cache_size_gb", 0.0)
+        self.limit_spinbox.setValue(current_limit)
+        self.limit_spinbox.valueChanged.connect(self.on_limit_changed)
+
+        limit_hbox.addWidget(self.lbl_limit)
+        limit_hbox.addWidget(self.limit_spinbox)
+        limit_hbox.addStretch()
+
+        total_layout.addLayout(limit_hbox)
+
         self.content_layout.addWidget(self.total_card)
 
         # ---------------- SECCIÓN DE CACHÉS INDIVIDUALES ----------------
@@ -281,9 +315,24 @@ class MemoryCachePage(QWidget):
         )
 
         # Actualizar medidor (barra visual)
-        # 100MB se toma como referencia de 100% para dar retroalimentación visual progresiva
-        max_reference_bytes = 100 * 1024 * 1024
-        percentage = min(100, int((total_bytes / max_reference_bytes) * 100)) if total_bytes > 0 else 0
+        from core.utils.config_manager import get_config
+        limit_gb = get_config().get("max_cache_size_gb", 0.0)
+
+        if limit_gb > 0:
+            max_reference_bytes = limit_gb * 1024 * 1024 * 1024
+        else:
+            import os
+            import shutil
+            try:
+                # Obtenemos el espacio libre del disco donde está AppData
+                app_data = os.getenv('APPDATA', 'C:\\')
+                total, used, free = shutil.disk_usage(app_data)
+                # El tamaño visual máximo será el caché actual + el espacio libre que le queda al disco
+                max_reference_bytes = total_bytes + free
+            except Exception:
+                max_reference_bytes = 100 * 1024 * 1024
+
+        percentage = min(100, int((total_bytes / max_reference_bytes) * 100)) if max_reference_bytes > 0 else 0
         self.meter_bar.setValue(percentage if total_bytes > 0 else 0)
 
         # Actualizar tarjetas individuales
@@ -325,10 +374,18 @@ class MemoryCachePage(QWidget):
         )
         if reply == QMessageBox.Yes:
             res = CacheManager.get_instance().clear_all()
-            QMessageBox.information(
-                self,
-                self.tr("Caché Total Limpiada"),
-                self.tr(f"Limpieza total completada con éxito.\nSe eliminaron {res.get('files_removed', 0)} archivos y se liberaron {res.get('formatted_freed', '0 B')}.")
-            )
+            if res:
+                QMessageBox.information(
+                    self,
+                    self.tr("Caché Total Limpiada"),
+                    self.tr(f"Limpieza total completada con éxito.\nSe eliminaron {res.get('files_removed', 0)} archivos y se liberaron {res.get('formatted_freed', '0 B')}.")
+                )
+                self.refresh_stats()
 
-            self.refresh_stats()
+    def on_limit_changed(self, value):
+        from core.utils.config_manager import get_config, save_config
+        config = get_config()
+        config["max_cache_size_gb"] = value
+        save_config(config)
+        # Refrescar la barra para que recalcule de inmediato con el nuevo límite
+        self.refresh_stats()

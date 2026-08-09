@@ -25,6 +25,14 @@ class MediaTableModel(QAbstractTableModel):
         thumb_mgr = ThumbnailCacheManager.get_instance()
         thumb_mgr.thumbnail_loaded.connect(self._on_thumbnail_loaded)
         
+        from core.tabs.editing_media.waveform_cache_manager import WaveformCacheManager
+        wf_mgr = WaveformCacheManager.get_instance()
+        wf_mgr.waveform_loaded.connect(self._on_waveform_loaded)
+
+        from core.tabs.editing_media.freesound_preview_cache import FreesoundPreviewCacheManager
+        fs_mgr = FreesoundPreviewCacheManager.get_instance()
+        fs_mgr.waveform_peaks_ready.connect(self._on_freesound_waveform_loaded)
+        
         # Para caché rápido de íconos base y colores
         self._icon_cache = {}
         
@@ -180,16 +188,40 @@ class MediaTableModel(QAbstractTableModel):
             is_downloaded = False
             if is_web and "dest_path" in item:
                 is_downloaded = True
+                file_path = item["dest_path"]
 
-            if is_web and is_downloaded:
-                return self.get_cached_icon("music_note.svg", accent_green, size=32 if self._view_mode=="grid" else 18)
-            elif is_web:
+            from core.tabs.editing_media.waveform_cache_manager import WaveformCacheManager
+            wf_mgr = WaveformCacheManager.get_instance()
+
+            if tipo == "audio":
+                if (not is_web) or (is_web and is_downloaded):
+                    cached_icon = wf_mgr.get_cached_qicon(file_path)
+                    if cached_icon is not None:
+                        return cached_icon
+                    else:
+                        wf_mgr.request_waveform(file_path)
+                        # Devolver ícono por defecto mientras carga
+                        if self._view_mode == "grid":
+                            return self.get_cached_icon("music_note.svg_placeholder", "#3498db")
+                        else:
+                            return self.get_cached_icon("music_note.svg", "#3498db", size=18)
+
+            if is_web and not is_downloaded:
+                if tipo == "audio" and "images" in item and item["images"].get("waveform_m"):
+                    waveform_url = item["images"]["waveform_m"]
+                    from core.tabs.editing_media.freesound_preview_cache import FreesoundPreviewCacheManager
+                    fs_cache = FreesoundPreviewCacheManager.get_instance()
+                    peaks = fs_cache.get_cached_waveform_peaks(waveform_url)
+                    if peaks is not None:
+                        from core.tabs.editing_media.waveform_cache_manager import render_waveform_icon
+                        return render_waveform_icon(peaks)
+
                 if self._view_mode == "grid":
                     return self.get_cached_icon("travel_explore.svg_placeholder", "#3498db")
                 else:
                     return self.get_cached_icon("travel_explore.svg", "#3498db", size=18)
 
-            # Si es local, cargar miniatura
+            # Si es local y es video/imagen, cargar miniatura
             thumb_mgr = ThumbnailCacheManager.get_instance()
             cached_icon = thumb_mgr.get_cached_qicon(file_path)
             
@@ -232,16 +264,29 @@ class MediaTableModel(QAbstractTableModel):
                 
         return None
         
-    def _on_thumbnail_loaded(self, file_path: str, thumb_path: str):
-        """Al terminar de generar una miniatura, notificar a la vista para que se actualice."""
-        if not hasattr(self, "_path_to_row"):
-            return
-            
-        if file_path in self._path_to_row:
-            row = self._path_to_row[file_path]
-            idx_start = self.index(row, 0)
-            idx_end = self.index(row, self.columnCount() - 1)
-            self.dataChanged.emit(idx_start, idx_end, [Qt.DecorationRole])
+    def _on_thumbnail_loaded(self, file_path: str, thumbnail_path: str):
+        """Se llama cuando una miniatura se ha cacheado exitosamente."""
+        for i, item in enumerate(self._media_items):
+            if item.get("ruta") == file_path:
+                idx = self.index(i, 0)
+                self.dataChanged.emit(idx, idx, [Qt.DecorationRole])
+                
+    def _on_waveform_loaded(self, file_path: str, peaks: list):
+        """Se llama cuando una onda de audio se ha procesado exitosamente."""
+        for i, item in enumerate(self._media_items):
+            is_web = item.get("source") == "Freesound" or item.get("is_web", False)
+            ruta = item.get("dest_path") if is_web else item.get("ruta")
+            if ruta == file_path:
+                idx = self.index(i, 0)
+                self.dataChanged.emit(idx, idx, [Qt.DecorationRole])
+
+    def _on_freesound_waveform_loaded(self, waveform_url: str, peaks: list):
+        """Se llama cuando los picos de Freesound se descargan en segundo plano."""
+        for i, item in enumerate(self._media_items):
+            is_web = item.get("source") == "Freesound" or item.get("is_web", False)
+            if is_web and "images" in item and item["images"].get("waveform_m") == waveform_url:
+                idx = self.index(i, 0)
+                self.dataChanged.emit(idx, idx, [Qt.DecorationRole])
 
     def set_data(self, media_items):
         """Reemplaza los datos del modelo."""

@@ -75,6 +75,7 @@ class FreesoundPreviewCacheManager(QObject):
     """Gestor de caché LRU para vistas previas de audio de Freesound (máximo 10 archivos)."""
 
     preview_ready = Signal(str, str)  # (url, local_path)
+    waveform_peaks_ready = Signal(str, list) # (url, peaks)
 
     _instance = None
 
@@ -236,6 +237,9 @@ class FreesoundPreviewCacheManager(QObject):
 
             self._waveform_peaks_cache[waveform_url] = peaks
             self._waveform_access_order.append(waveform_url)
+
+        # Notificar al resto de la aplicación (ej. MediaListModel) que los picos de esta URL están listos
+        self.waveform_peaks_ready.emit(waveform_url, peaks)
 
     def clear_cache(self) -> int:
         """Elimina todas las vistas previas de Freesound almacenadas en disco y en memoria."""

@@ -331,15 +331,10 @@ class MainWindow(QMainWindow):
             import ctypes.wintypes
             msg = ctypes.wintypes.MSG.from_address(int(message))
             if msg.message == 0x0084: # WM_NCHITTEST
-                x_screen = msg.pt.x
-                y_screen = msg.pt.y
-                
-                # Ajustar las coordenadas físicas del mouse por el factor de escala DPI
-                dpr = self.devicePixelRatioF()
-                x_logical = x_screen / dpr
-                y_logical = y_screen / dpr
-                
-                local_pos = self.mapFromGlobal(QPoint(int(x_logical), int(y_logical)))
+                # Usa QCursor.pos() porque Qt ya se encarga de normalizar las coordenadas 
+                # a nivel lógico para todos los monitores independientemente de su DPI.
+                from PySide6.QtGui import QCursor
+                local_pos = self.mapFromGlobal(QCursor.pos())
                 x = local_pos.x()
                 y = local_pos.y()
                 

@@ -19,6 +19,10 @@ from PySide6.QtWidgets import (
     QSlider,
     QScrollArea,
     QApplication,
+    QAbstractItemView,
+    QToolButton,
+    QMenu,
+    QSizePolicy,
 )
 
 from PySide6.QtCore import Qt, QSize, QEvent, QPoint, QTimer
@@ -194,6 +198,13 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
 
         # Aplicar hojas de estilo para contenedores y listas
         self._apply_custom_styles()
+        
+        # Conectar manager de editores
+        from core.services.editor_integration_manager import EditorIntegrationManager
+        editor_mgr = EditorIntegrationManager.get_instance()
+        if editor_mgr:
+            editor_mgr.active_editor_changed.connect(lambda active: self._update_send_button_state())
+            self._update_send_button_state()
 
     def set_license_info(self, title: str, desc: str, color_hex: str, credits_text: str = None, icon_name: str = "copyright.svg"):
         """Actualiza el panel de licencias con los datos (Título, Descripción, Color, y opcionalmente el texto TASL e icono)."""
@@ -507,7 +518,7 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         self.media_table.setObjectName("mediaTableWidget")
         self.media_table.setModel(self.media_model)
         self.media_table.setSortingEnabled(True) # Activamos sort (manejado nativamente por MediaTableModel)
-        self.media_table.setSelectionMode(QTreeView.SingleSelection)
+        self.media_table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.media_table.setSelectionBehavior(QTreeView.SelectRows)
         self.media_table.setAlternatingRowColors(True)
         self.media_table.setRootIsDecorated(False)
@@ -525,8 +536,7 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         # Los anchos iniciales se ajustarán luego
         
         # Conectar eventos de la tabla
-        self.media_table.clicked.connect(self._on_media_clicked)
-        self.media_table.selectionModel().currentChanged.connect(lambda current, previous: self._on_media_clicked(current))
+        self.media_table.selectionModel().selectionChanged.connect(self._on_selection_changed)
         self.media_table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.media_table.customContextMenuRequested.connect(self._show_media_context_menu)
         self.media_table.verticalScrollBar().valueChanged.connect(self._on_list_scroll)
@@ -540,8 +550,8 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         self.media_list.setUniformItemSizes(True)
         self.media_list.setVerticalScrollMode(QListView.ScrollPerPixel)
         self.media_list.verticalScrollBar().setSingleStep(30)
-        self.media_list.clicked.connect(self._on_media_clicked)
-        self.media_list.selectionModel().currentChanged.connect(lambda current, previous: self._on_media_clicked(current))
+        self.media_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.media_list.setSelectionModel(self.media_table.selectionModel())
         self.media_list.setContextMenuPolicy(Qt.CustomContextMenu)
         self.media_list.customContextMenuRequested.connect(self._show_media_context_menu)
         self.media_list.verticalScrollBar().valueChanged.connect(self._on_list_scroll)
@@ -656,6 +666,37 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         lbl_section = QLabel(self.tr("Vista Previa & Detalles"))
         lbl_section.setStyleSheet("font-weight: bold; font-size: 14px; color: white;")
         layout.addWidget(lbl_section)
+
+        # Contenedor para Modo Carrusel
+        self.carousel_nav_widget = QWidget()
+        self.carousel_nav_widget.setObjectName("carouselNavWidget")
+        self.carousel_nav_widget.setVisible(False)
+        self.carousel_nav_widget.setFixedHeight(30)
+        carousel_layout = QHBoxLayout(self.carousel_nav_widget)
+        carousel_layout.setContentsMargins(0, 0, 0, 0)
+        carousel_layout.setSpacing(10)
+        
+        self.btn_carousel_prev = QPushButton("<")
+        self.btn_carousel_prev.setFixedSize(24, 24)
+        self.btn_carousel_prev.setStyleSheet("background: transparent; font-weight: bold; color: white;")
+        self.btn_carousel_prev.clicked.connect(self._on_carousel_prev)
+        
+        self.lbl_carousel_status = QLabel("1 de 1")
+        self.lbl_carousel_status.setAlignment(Qt.AlignCenter)
+        self.lbl_carousel_status.setStyleSheet("color: #a6adc8; font-weight: bold;")
+        
+        self.btn_carousel_next = QPushButton(">")
+        self.btn_carousel_next.setFixedSize(24, 24)
+        self.btn_carousel_next.setStyleSheet("background: transparent; font-weight: bold; color: white;")
+        self.btn_carousel_next.clicked.connect(self._on_carousel_next)
+        
+        carousel_layout.addStretch()
+        carousel_layout.addWidget(self.btn_carousel_prev)
+        carousel_layout.addWidget(self.lbl_carousel_status)
+        carousel_layout.addWidget(self.btn_carousel_next)
+        carousel_layout.addStretch()
+        
+        layout.addWidget(self.carousel_nav_widget)
 
         # Contenedor de Vista Previa Cuadrado
         self.preview_box = PreviewContainerWidget()
@@ -808,16 +849,61 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         buttons_layout.setSpacing(8)
 
         # Botón para revelar/abrir en el explorador de archivos
-        self.btn_reveal = AnimatedButton(self.tr("Abrir en Explorador"))
+        self.btn_reveal = AnimatedButton("")
+        self.btn_reveal.setToolTip(self.tr("Abrir en Explorador"))
         self.btn_reveal.setObjectName("pathToolButton")
-        self.btn_reveal.setFixedHeight(34)
+        self.btn_reveal.setFixedSize(34, 34)
         reveal_icon = get_svg_icon("folder_open.svg")
         if not reveal_icon.isNull():
             self.btn_reveal.setIcon(reveal_icon)
             self.btn_reveal.setIconSize(QSize(20, 20))
         self.btn_reveal.setEnabled(False)
         self.btn_reveal.clicked.connect(self._on_reveal_clicked)
-        buttons_layout.addWidget(self.btn_reveal, 1)
+        buttons_layout.addWidget(self.btn_reveal)
+
+        # Boton Split para enviar a editor
+        self.btn_send_editor = QToolButton()
+        self.btn_send_editor.setObjectName("sendEditorButton")
+        self.btn_send_editor.setFixedHeight(34)
+        self.btn_send_editor.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.btn_send_editor.setPopupMode(QToolButton.MenuButtonPopup)
+        self.btn_send_editor.setText(self.tr("Ningún editor conectado"))
+        self.btn_send_editor.setEnabled(False)
+        self.btn_send_editor.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.btn_send_editor.setStyleSheet(f"""
+            QToolButton {{
+                background-color: {get_theme_token('fondo_elemento', '#2d2d2d')};
+                border: 1px solid {get_theme_token('borde_normal', '#2d2d2d')};
+                border-radius: 8px;
+                color: #cdd6f4;
+                padding-left: 10px;
+                padding-right: 10px;
+                font-weight: 500;
+            }}
+            QToolButton::menu-button {{
+                border-left: 1px solid {get_theme_token('borde_normal', '#444444')};
+                width: 22px;
+                border-top-right-radius: 8px;
+                border-bottom-right-radius: 8px;
+            }}
+            QToolButton:hover {{
+                background-color: {get_theme_token('seleccion_fondo', '#3d3d3d')};
+            }}
+            QToolButton:disabled {{
+                color: #6c7086;
+                background-color: {get_theme_token('fondo_elemento', '#1e1e1e')};
+            }}
+        """)
+        
+        # Menu del boton send editor
+        self.send_editor_menu = QMenu(self.btn_send_editor)
+        self.action_send_single = self.send_editor_menu.addAction(self.tr("Enviar solo este medio (1)"))
+        self.btn_send_editor.setMenu(self.send_editor_menu)
+        
+        self.btn_send_editor.clicked.connect(self._on_send_editor_clicked)
+        self.action_send_single.triggered.connect(self._on_send_editor_single_clicked)
+        
+        buttons_layout.addWidget(self.btn_send_editor, 2)
 
         # QComboBox de selección de etiquetas (estilo nativo de la app para medios web)
         self.combo_tags = QComboBox()

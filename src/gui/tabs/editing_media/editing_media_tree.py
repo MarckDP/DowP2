@@ -803,12 +803,19 @@ class TreeListMixin:
             }}
         """)
 
-        # 1. Acciones específicas si se hace clic sobre un archivo
-        if index.isValid():
-            item_data = self.media_model.get_item(index)
-            if item_data:
-                file_path = item_data.get("ruta", "")
-                
+        # 1. Acciones específicas si se hace clic sobre uno o varios archivos
+        selected_indexes = getattr(self, "_selected_indexes", [])
+        if index.isValid() and index not in selected_indexes:
+            selected_indexes = [index] # Si el click derecho fue fuera de la selección, solo usamos el item clickeado
+            
+        if selected_indexes:
+            file_paths = []
+            for idx in selected_indexes:
+                item_data = self.media_model.get_item(idx)
+                if item_data and "ruta" in item_data:
+                    file_paths.append(item_data["ruta"])
+
+            if file_paths:
                 # Determinar si estamos visualizando una colección virtual
                 tree_item = self.tree_folders.currentItem()
                 is_viewing_collection = False
@@ -818,28 +825,32 @@ class TreeListMixin:
                     if tree_data and tree_data.get("tipo") == "collection":
                         is_viewing_collection = True
                         current_col_name = tree_data.get("nombre")
+                        
+                count_str = f" ({len(file_paths)})" if len(file_paths) > 1 else ""
 
                 if is_viewing_collection:
-                    act_remove = menu.addAction(self.tr("Quitar de esta Colección"))
-                    act_remove.triggered.connect(lambda: self._remove_file_from_collection(current_col_name, file_path))
+                    act_remove = menu.addAction(self.tr(f"Quitar de esta Colección{count_str}"))
+                    act_remove.triggered.connect(lambda: [self._remove_file_from_collection(current_col_name, fp) for fp in file_paths])
                 else:
-                    submenu = menu.addMenu(self.tr("Añadir a Colección"))
+                    submenu = menu.addMenu(self.tr(f"Añadir a Colección{count_str}"))
                     collections_list = [c for c in self.controller.collections.keys() if c != "Descargados"]
                     if collections_list:
                         for col_name in collections_list:
                             act_col = submenu.addAction(col_name)
-                            act_col.triggered.connect(lambda checked=False, cn=col_name: self._add_file_to_collection(cn, file_path))
+                            act_col.triggered.connect(lambda checked=False, cn=col_name, paths=file_paths: [self._add_file_to_collection(cn, fp) for fp in paths])
                     else:
                         act_none = submenu.addAction(self.tr("(Sin colecciones)"))
                         act_none.setEnabled(False)
 
-                is_remote = file_path.startswith("http://") or file_path.startswith("https://")
-                if is_remote:
-                    act_download = menu.addAction(get_svg_icon("download.svg"), self.tr("Descargar Medio"))
-                    act_download.triggered.connect(self._on_download_clicked)
-                else:
-                    act_reveal = menu.addAction(get_svg_icon("folder_open.svg"), self.tr("Abrir en Explorador"))
-                    act_reveal.triggered.connect(self._on_reveal_clicked)
+                # Solo habilitar estas opciones si se selecciona 1 solo elemento, o implementarlo para todos
+                if len(file_paths) == 1:
+                    is_remote = file_paths[0].startswith("http://") or file_paths[0].startswith("https://")
+                    if is_remote:
+                        act_download = menu.addAction(get_svg_icon("download.svg"), self.tr("Descargar Medio"))
+                        act_download.triggered.connect(self._on_download_clicked)
+                    else:
+                        act_reveal = menu.addAction(get_svg_icon("folder_open.svg"), self.tr("Abrir en Explorador"))
+                        act_reveal.triggered.connect(self._on_reveal_clicked)
                 
                 menu.addSeparator()
 

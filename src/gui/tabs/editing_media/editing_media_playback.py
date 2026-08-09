@@ -29,6 +29,147 @@ class PlaybackMixin:
             pass
         return 0.0
 
+    def _on_selection_changed(self, selected, deselected):
+        # Usamos media_table.selectionModel() porque es compartido
+        indexes = self.media_table.selectionModel().selectedIndexes()
+        
+        # Filtramos solo columna 0 para evitar conteos duplicados en tabla
+        self._selected_indexes = sorted([idx for idx in indexes if idx.column() == 0], key=lambda x: x.row())
+        
+        if len(self._selected_indexes) > 1:
+            self.carousel_nav_widget.setVisible(True)
+            
+            newly_selected = [idx for idx in selected.indexes() if idx.column() == 0]
+            if newly_selected:
+                try:
+                    self._carousel_index = self._selected_indexes.index(newly_selected[-1])
+                except ValueError:
+                    if not hasattr(self, "_carousel_index") or self._carousel_index >= len(self._selected_indexes):
+                        self._carousel_index = 0
+            else:
+                if not hasattr(self, "_carousel_index") or self._carousel_index >= len(self._selected_indexes):
+                    self._carousel_index = 0
+                    
+            self._update_carousel_ui()
+            self._on_media_clicked(self._selected_indexes[self._carousel_index])
+        elif len(self._selected_indexes) == 1:
+            self.carousel_nav_widget.setVisible(False)
+            self._on_media_clicked(self._selected_indexes[0])
+            self._update_send_button_state()
+        else:
+            self.carousel_nav_widget.setVisible(False)
+            self._clear_metadata()
+            self._stop_audio_playback()
+            self._update_send_button_state()
+
+    def _on_carousel_prev(self):
+        if hasattr(self, "_selected_indexes") and len(self._selected_indexes) > 1:
+            self._carousel_index = (self._carousel_index - 1) % len(self._selected_indexes)
+            self._update_carousel_ui()
+            self._on_media_clicked(self._selected_indexes[self._carousel_index])
+
+    def _on_carousel_next(self):
+        if hasattr(self, "_selected_indexes") and len(self._selected_indexes) > 1:
+            self._carousel_index = (self._carousel_index + 1) % len(self._selected_indexes)
+            self._update_carousel_ui()
+            self._on_media_clicked(self._selected_indexes[self._carousel_index])
+
+    def _update_carousel_ui(self):
+        if hasattr(self, "_selected_indexes") and len(self._selected_indexes) > 1:
+            self.lbl_carousel_status.setText(f"{self._carousel_index + 1} de {len(self._selected_indexes)}")
+            self._update_send_button_state()
+
+    def _update_send_button_state(self, editor_name=None):
+        if not hasattr(self, 'btn_send_editor'):
+            return
+            
+        from core.services.editor_integration_manager import EditorIntegrationManager
+        from PySide6.QtGui import QIcon
+        from PySide6.QtCore import QSize
+        editor_mgr = EditorIntegrationManager.get_instance()
+        if not editor_mgr or not editor_mgr.active_editor:
+            self.btn_send_editor.setText(self.tr("Ningún editor conectado"))
+            self.btn_send_editor.setIcon(QIcon())
+            self.btn_send_editor.setEnabled(False)
+            return
+
+        active = editor_mgr.active_editor
+        if active == "premiere":
+            icon = get_svg_icon("premiere pro.svg") 
+            name = "Premiere Pro"
+        elif active == "davinci":
+            icon = get_svg_icon("davinci resolve.svg")
+            name = "DaVinci Resolve"
+        else:
+            icon = QIcon()
+            name = "Editor"
+
+        count = len(getattr(self, "_selected_indexes", []))
+        if count > 1:
+            self.btn_send_editor.setText(self.tr(f"Enviar ({count})"))
+        else:
+            self.btn_send_editor.setText(self.tr(f"Enviar"))
+            
+        if not icon.isNull():
+            self.btn_send_editor.setIcon(icon)
+            self.btn_send_editor.setIconSize(QSize(20, 20))
+        self.btn_send_editor.setEnabled(True)
+
+    def _on_send_editor_clicked(self):
+        selected_indexes = getattr(self, "_selected_indexes", [])
+        if not selected_indexes:
+            return
+        
+        from core.services.editor_integration_manager import EditorIntegrationManager
+        editor_mgr = EditorIntegrationManager.get_instance()
+        if not editor_mgr:
+            return
+            
+        packages = []
+        for idx in selected_indexes:
+            item_data = self.media_model.get_item(idx)
+            if item_data and "ruta" in item_data and item_data["ruta"]:
+                path = item_data["ruta"]
+                ext = os.path.splitext(path)[1].lower()
+                if ext in ('.jpg', '.jpeg', '.png', '.webp', '.bmp', '.svg'):
+                    pkg = {"video": None, "thumbnail": path, "subtitle": None}
+                elif ext in ('.srt', '.vtt', '.ass', '.sub'):
+                    pkg = {"video": None, "thumbnail": None, "subtitle": path}
+                else:
+                    pkg = {"video": path, "thumbnail": None, "subtitle": None}
+                packages.append(pkg)
+                
+        if not packages:
+            return
+
+        if len(packages) == 1:
+            logger.info(f"[EditingMedia] Enviando 1 medio al editor activo: {packages[0]}")
+            editor_mgr.send_file(packages[0])
+        else:
+            logger.info(f"[EditingMedia] Enviando lote de {len(packages)} medios al editor activo.")
+            editor_mgr.send_batch(packages)
+
+    def _on_send_editor_single_clicked(self):
+        path = getattr(self, "last_selected_media_path", None)
+        if not path:
+            return
+            
+        from core.services.editor_integration_manager import EditorIntegrationManager
+        editor_mgr = EditorIntegrationManager.get_instance()
+        if not editor_mgr:
+            return
+            
+        ext = os.path.splitext(path)[1].lower()
+        if ext in ('.jpg', '.jpeg', '.png', '.webp', '.bmp', '.svg'):
+            pkg = {"video": None, "thumbnail": path, "subtitle": None}
+        elif ext in ('.srt', '.vtt', '.ass', '.sub'):
+            pkg = {"video": None, "thumbnail": None, "subtitle": path}
+        else:
+            pkg = {"video": path, "thumbnail": None, "subtitle": None}
+            
+        logger.info(f"[EditingMedia] Enviando 1 medio actual ({path}) al editor activo.")
+        editor_mgr.send_file(pkg)
+
     def _on_media_clicked(self, index):
         if not index or not hasattr(index, "isValid") or not index.isValid():
             return

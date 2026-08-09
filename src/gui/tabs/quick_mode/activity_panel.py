@@ -48,10 +48,15 @@ class ActivityPanel(QFrame):
         layout.setContentsMargins(12, 10, 12, 10)
         layout.setSpacing(8)
 
-        # Barra de encabezado con botón "Limpiar todo"
+        # Barra de encabezado con título y botón "Limpiar todo"
         header_layout = QHBoxLayout()
         header_layout.setContentsMargins(0, 0, 0, 0)
         header_layout.setSpacing(6)
+        
+        self.lbl_title = QLabel(self.tr("Lista de descargas") if hasattr(self, "tr") else "Lista de descargas")
+        self.lbl_title.setStyleSheet(f"color: {get_theme_token('texto_secundario', '#888888')}; font-size: 11px; font-weight: bold;")
+        header_layout.addWidget(self.lbl_title)
+        
         header_layout.addStretch(1)
 
         icon_dir = os.path.normpath(os.path.join(
@@ -80,9 +85,17 @@ class ActivityPanel(QFrame):
             }}
         """)
         self.btn_clear_all.clicked.connect(self.clear_all_requested.emit)
-        self.btn_clear_all.hide()
+        # El botón siempre estará visible a petición del usuario
         header_layout.addWidget(self.btn_clear_all)
         layout.addLayout(header_layout)
+        
+        # Línea separadora sutil
+        self.header_line = QFrame()
+        self.header_line.setFrameShape(QFrame.HLine)
+        self.header_line.setFrameShadow(QFrame.Sunken)
+        self.header_line.setStyleSheet(f"background-color: {get_theme_token('borde_normal', '#2d2d2d')};")
+        self.header_line.setFixedHeight(1)
+        layout.addWidget(self.header_line)
 
         # ScrollArea
         self.activity_scroll = QScrollArea()
@@ -155,4 +168,3 @@ class ActivityPanel(QFrame):
         
         if not self.item_rows:
             self.empty_lbl.show()
-            self.btn_clear_all.hide()

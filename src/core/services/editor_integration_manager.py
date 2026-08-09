@@ -63,6 +63,12 @@ class EditorIntegrationManager(QObject):
             
         self.active_editor_changed.emit(self.active_editor)
 
+    def force_adobe_target(self, target_app):
+        """Intenta forzar el objetivo activo en el servidor de Adobe."""
+        if self.adobe_service:
+            return self.adobe_service.force_active_target(target_app)
+        return False
+
     def send_file(self, file_package):
         """
         Envía un archivo descargado al editor activo actual.

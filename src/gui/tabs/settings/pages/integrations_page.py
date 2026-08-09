@@ -105,10 +105,14 @@ class IntegrationsPage(QWidget):
         
         self.lbl_icon_pr = QLabel()
         self.lbl_icon_pr.setFixedSize(48, 48)
+        self.lbl_icon_pr.setCursor(Qt.PointingHandCursor)
+        self.lbl_icon_pr.mousePressEvent = lambda e: self.force_target('premiere')
         self.set_icon(self.lbl_icon_pr, "premiere pro.svg", opacity=0.3)
         
         self.lbl_icon_ae = QLabel()
         self.lbl_icon_ae.setFixedSize(48, 48)
+        self.lbl_icon_ae.setCursor(Qt.PointingHandCursor)
+        self.lbl_icon_ae.mousePressEvent = lambda e: self.force_target('aftereffects')
         self.set_icon(self.lbl_icon_ae, "after effects.svg", opacity=0.3)
         
         icons_layout.addWidget(self.lbl_icon_pr)
@@ -193,4 +197,11 @@ class IntegrationsPage(QWidget):
             self.adobe_status_lbl.setStyleSheet("color: #ff5555; font-weight: bold;")
             self.set_icon(self.lbl_icon_pr, "premiere pro.svg", opacity=0.3)
             self.set_icon(self.lbl_icon_ae, "after effects.svg", opacity=0.3)
+
+    def force_target(self, target_app):
+        from gui.dialogs.dialogs import show_info
+        if self.editor_mgr:
+            success = self.editor_mgr.force_adobe_target(target_app)
+            if not success:
+                show_info(self, self.tr("DowP Importer"), self.tr(f"No se detecta conexión con {target_app}. Asegúrate de tener la extensión abierta."))
 

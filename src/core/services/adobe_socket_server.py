@@ -88,6 +88,29 @@ class AdobeSocketServer(QThread):
                 await self.sio.emit('active_target_update', {'activeTarget': None})
                 self.active_target_changed.emit(None)
 
+    def force_active_target(self, app_identifier):
+        """Forces the active target to the given app_identifier if it is currently connected."""
+        target_sid = None
+        for sid, app_id in self.clients.items():
+            if app_id == app_identifier:
+                target_sid = sid
+                break
+                
+        if target_sid:
+            self.active_target_sid = target_sid
+            logger.info(f"[Socket.IO] Active target forced to: {app_identifier} ({target_sid})")
+            
+            if self.loop and self.loop.is_running():
+                asyncio.run_coroutine_threadsafe(
+                    self.sio.emit('active_target_update', {'activeTarget': app_identifier}),
+                    self.loop
+                )
+            self.active_target_changed.emit(app_identifier)
+            return True
+        else:
+            logger.warning(f"[Socket.IO] Cannot force target to {app_identifier}, not connected.")
+            return False
+
     def send_file_to_adobe(self, file_package):
         """
         Sends a new file package to the active Adobe application.

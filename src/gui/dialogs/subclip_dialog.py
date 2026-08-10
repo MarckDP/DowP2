@@ -98,23 +98,38 @@ class SubclipWaveformWidget(QWidget):
             return
         
         self._display_peaks = []
-        for i in range(target):
-            # Rango de índices originales que cubre este píxel
-            start_f = i * n / target
-            end_f = (i + 1) * n / target
-            start_idx = int(start_f)
-            end_idx = max(start_idx + 1, int(end_f))
-            end_idx = min(end_idx, n)
-            
-            block_min = 0.0
-            block_max = 0.0
-            for j in range(start_idx, end_idx):
-                mn, mx = self._hires_peaks[j]
-                if mn < block_min:
-                    block_min = mn
-                if mx > block_max:
-                    block_max = mx
-            self._display_peaks.append((block_min, block_max))
+        if target <= n:
+            # Downsampling: tomar el pico mínimo y máximo del bloque
+            for i in range(target):
+                start_f = i * n / target
+                end_f = (i + 1) * n / target
+                start_idx = int(start_f)
+                end_idx = max(start_idx + 1, int(end_f))
+                end_idx = min(end_idx, n)
+                
+                block_min = 0.0
+                block_max = 0.0
+                for j in range(start_idx, end_idx):
+                    mn, mx = self._hires_peaks[j]
+                    if mn < block_min:
+                        block_min = mn
+                    if mx > block_max:
+                        block_max = mx
+                self._display_peaks.append((block_min, block_max))
+        else:
+            # Upsampling (Zoom in profundo): Interpolación lineal suave entre picos
+            for i in range(target):
+                pos = i * (n - 1) / max(1, target - 1)
+                idx = int(pos)
+                frac = pos - idx
+                if idx >= n - 1:
+                    self._display_peaks.append(self._hires_peaks[-1])
+                else:
+                    mn1, mx1 = self._hires_peaks[idx]
+                    mn2, mx2 = self._hires_peaks[idx + 1]
+                    interp_min = mn1 * (1.0 - frac) + mn2 * frac
+                    interp_max = mx1 * (1.0 - frac) + mx2 * frac
+                    self._display_peaks.append((interp_min, interp_max))
 
     def resizeEvent(self, event):
         self._resample_to_width()
@@ -138,31 +153,35 @@ class SubclipWaveformWidget(QWidget):
             if w <= 0:
                 return
             x = event.position().x()
+            y = event.position().y()
             ratio = max(0.0, min(x / w, 1.0))
             
             x_in = self.in_ratio * w
             x_out = self.out_ratio * w
             
-            if abs(x - x_in) <= 12:
+            if abs(x - x_in) <= 10:
                 self._drag_mode = "in"
-            elif abs(x - x_out) <= 12:
+            elif abs(x - x_out) <= 10:
                 self._drag_mode = "out"
-            elif x_in < x < x_out:
+            elif y <= 16 and x_in <= x <= x_out:
+                # Arrastrar el rango de selección desde la barra/agarrador superior sin mover el playhead
                 self._drag_mode = "range"
                 self._drag_offset = ratio - self.in_ratio
-                self.seek_requested.emit(ratio)
             else:
                 self._drag_mode = "none"
                 self.seek_requested.emit(ratio)
 
     def mouseMoveEvent(self, event):
+        w = self.width()
+        if w <= 0:
+            return
+        x = event.position().x()
+        y = event.position().y()
+        ratio = max(0.0, min(x / w, 1.0))
+        x_in = self.in_ratio * w
+        x_out = self.out_ratio * w
+
         if event.buttons() & Qt.LeftButton:
-            w = self.width()
-            if w <= 0:
-                return
-            x = event.position().x()
-            ratio = max(0.0, min(x / w, 1.0))
-            
             if self._drag_mode == "in":
                 self.in_ratio = min(ratio, self.out_ratio - 0.01)
                 self.range_changed.emit(self.in_ratio, self.out_ratio)
@@ -177,13 +196,38 @@ class SubclipWaveformWidget(QWidget):
                 self.in_ratio = new_in
                 self.out_ratio = new_in + range_span
                 self.range_changed.emit(self.in_ratio, self.out_ratio)
-                self.seek_requested.emit(ratio)
                 self.update()
             else:
                 self.seek_requested.emit(ratio)
+        else:
+            # Feedback visual de cursores al pasar por encima
+            if abs(x - x_in) <= 10 or abs(x - x_out) <= 10:
+                self.setCursor(Qt.SizeHorCursor)
+            elif y <= 16 and x_in <= x <= x_out:
+                self.setCursor(Qt.SizeAllCursor)
+            else:
+                self.setCursor(Qt.PointingHandCursor)
 
     def mouseReleaseEvent(self, event):
         self._drag_mode = "none"
+
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            w = self.width()
+            if w <= 0:
+                return
+            x = event.position().x()
+            y = event.position().y()
+            
+            x_in = self.in_ratio * w
+            x_out = self.out_ratio * w
+            
+            # Si hace doble clic en el área del agarrador superior, resetear in/out
+            if y <= 16 and x_in <= x <= x_out:
+                self.in_ratio = 0.0
+                self.out_ratio = 1.0
+                self.range_changed.emit(self.in_ratio, self.out_ratio)
+                self.update()
 
     def paintEvent(self, event):
         import math
@@ -225,14 +269,17 @@ class SubclipWaveformWidget(QWidget):
                 painter.setPen(pen)
                 painter.drawLine(x, int(mid_y - amp), x, int(mid_y + amp))
         elif self._display_peaks:
-            # Dibujar forma de onda profesional: línea vertical por píxel
+            # Dibujar forma de onda profesional: línea vertical por píxel (solo las visibles en pantalla)
             acento = QColor(get_theme_token('acento_primario', '#B9E640'))
             dim_color = QColor(acento)
             dim_color.setAlpha(50)
             
-            for x, (mn, mx) in enumerate(self._display_peaks):
-                if x >= w:
-                    break
+            rect = event.rect()
+            start_x = max(0, rect.left() - 2)
+            end_x = min(len(self._display_peaks), rect.right() + 2)
+            
+            for x in range(start_x, end_x):
+                mn, mx = self._display_peaks[x]
                 
                 # Aplicar zoom vertical
                 mn_z = max(-1.0, mn * self.zoom_y)
@@ -252,6 +299,24 @@ class SubclipWaveformWidget(QWidget):
                 
                 painter.drawLine(x, y_top, x, y_bot)
         
+        # Barra superior y Agarrador Central de Selección (Range Drag Handle)
+        if x_out - x_in > 4:
+            painter.fillRect(x_in, 0, x_out - x_in, 3, QColor(185, 230, 64, 200))
+            center_x = (x_in + x_out) // 2
+            pill_w = min(36, max(16, (x_out - x_in) - 8))
+            pill_x = center_x - (pill_w // 2)
+            
+            if pill_w >= 14:
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(QColor('#B9E640'))
+                painter.drawRoundedRect(pill_x, 0, pill_w, 10, 3, 3)
+                
+                # Muescas de agarre (|||) en el centro
+                painter.setPen(QPen(QColor('#141414'), 1))
+                painter.drawLine(center_x - 3, 3, center_x - 3, 7)
+                painter.drawLine(center_x, 3, center_x, 7)
+                painter.drawLine(center_x + 3, 3, center_x + 3, 7)
+
         # Línea de In (Verde con agarrador)
         pen_in = QPen(QColor('#1DC038'), 2, Qt.SolidLine)
         painter.setPen(pen_in)
@@ -385,6 +450,7 @@ class SubclipEditorDialog(QDialog):
         
         self.init_ui()
         self.init_media_player()
+        self._update_waveform_range()
         self.load_waveform()
         QTimer.singleShot(100, self._sync_ruler)  # Sync inicial tras layout
 
@@ -499,7 +565,7 @@ class SubclipEditorDialog(QDialog):
         zoom_bar.addWidget(lbl_zoom_icon)
         
         self.slider_zoom_x = QSlider(Qt.Horizontal)
-        self.slider_zoom_x.setRange(100, 800)
+        self.slider_zoom_x.setRange(100, 5000)
         self.slider_zoom_x.setValue(100)
         self.slider_zoom_x.setFixedWidth(100)
         self.slider_zoom_x.setToolTip("Zoom Horizontal")
@@ -782,23 +848,25 @@ class SubclipEditorDialog(QDialog):
             if modifiers == Qt.NoModifier:
                 delta = event.angleDelta().y()
                 if delta != 0:
-                    zoom_step = 40 if delta > 0 else -40
                     old_zoom = self.slider_zoom_x.value()
+                    step_val = max(20, int(old_zoom * 0.15))
+                    zoom_step = step_val if delta > 0 else -step_val
                     new_zoom = max(self.slider_zoom_x.minimum(), min(old_zoom + zoom_step, self.slider_zoom_x.maximum()))
                     if new_zoom != old_zoom:
-                        # Calcular posición del playhead antes del zoom
-                        h_bar = self.scroll_area.horizontalScrollBar()
-                        viewport_w = self.scroll_area.viewport().width()
-                        waveform_w = self.waveform_widget.width()
-                        playhead_x = self.waveform_widget._playback_ratio * waveform_w
-                        
-                        self.slider_zoom_x.setValue(new_zoom)
-                        
-                        # Después del zoom, centrar el scroll en el playhead
-                        new_waveform_w = self.waveform_widget.width()
-                        new_playhead_x = self.waveform_widget._playback_ratio * new_waveform_w
-                        target_scroll = int(new_playhead_x - viewport_w / 2)
-                        h_bar.setValue(max(0, target_scroll))
+                        is_playing = self.media_player.playbackState() == QMediaPlayer.PlayingState
+                        if is_playing:
+                            self.slider_zoom_x.setValue(new_zoom)
+                            QTimer.singleShot(0, self._center_scroll_on_playhead)
+                        else:
+                            # Zoom enfocado en la posición del ratón cuando está pausado
+                            h_bar = self.scroll_area.horizontalScrollBar()
+                            mouse_x = event.position().x()
+                            old_w = self.waveform_widget.width()
+                            old_wave_x = h_bar.value() + mouse_x
+                            target_ratio = old_wave_x / old_w if old_w > 0 else 0.5
+                            
+                            self.slider_zoom_x.setValue(new_zoom)
+                            QTimer.singleShot(0, lambda r=target_ratio, mx=mouse_x: self._center_scroll_on_ratio(r, mx))
                     return True
             # Alt/Shift + Scroll -> Pan Horizontal
             elif modifiers in (Qt.ShiftModifier, Qt.AltModifier):
@@ -808,6 +876,25 @@ class SubclipEditorDialog(QDialog):
                     h_bar.setValue(h_bar.value() - delta)
                     return True
         return super().eventFilter(obj, event)
+
+    def _center_scroll_on_playhead(self):
+        """Centra la vista del scroll area sobre el cabezal de reproducción."""
+        h_bar = self.scroll_area.horizontalScrollBar()
+        viewport_w = self.scroll_area.viewport().width()
+        new_waveform_w = self.waveform_widget.width()
+        new_playhead_x = self.waveform_widget._playback_ratio * new_waveform_w
+        target_scroll = int(new_playhead_x - viewport_w / 2)
+        h_bar.setValue(max(0, min(target_scroll, h_bar.maximum())))
+        self._sync_ruler()
+
+    def _center_scroll_on_ratio(self, ratio: float, mouse_x: float):
+        """Mantiene exactamente bajo el puntero del ratón el punto del audio donde se hizo zoom."""
+        h_bar = self.scroll_area.horizontalScrollBar()
+        new_waveform_w = self.waveform_widget.width()
+        new_mouse_x = ratio * new_waveform_w
+        target_scroll = int(new_mouse_x - mouse_x)
+        h_bar.setValue(max(0, min(target_scroll, h_bar.maximum())))
+        self._sync_ruler()
 
     def _on_zoom_x_changed(self, value):
         zoom = value / 100.0
@@ -832,7 +919,7 @@ class SubclipEditorDialog(QDialog):
 
     def _update_volume_meter(self):
         if self.media_player.playbackState() == QMediaPlayer.PlayingState:
-            peaks = self.waveform_widget._display_peaks
+            peaks = self.waveform_widget._hires_peaks
             if peaks:
                 ratio = self.waveform_widget.get_playback_ratio()
                 idx = int(ratio * (len(peaks) - 1))
@@ -925,9 +1012,11 @@ class SubclipEditorDialog(QDialog):
 
     def _on_player_duration_changed(self, dur_ms: int):
         if dur_ms > 0:
-            self.duration_sec = dur_ms / 1000.0
-            if self.out_sec > self.duration_sec or self.out_sec <= 0:
-                self.out_sec = self.duration_sec
+            new_dur = dur_ms / 1000.0
+            # Si out_sec estaba "al final" de la duración anterior, o es inválido, actualizarlo al nuevo final
+            if abs(self.out_sec - self.duration_sec) < 0.05 or self.out_sec > new_dur or self.out_sec <= 0:
+                self.out_sec = new_dur
+            self.duration_sec = new_dur
             self._update_waveform_range()
             self._update_time_label()
 

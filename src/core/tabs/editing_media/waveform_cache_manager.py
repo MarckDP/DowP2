@@ -66,7 +66,7 @@ class WaveformWorkerSignals(QObject):
     failed = Signal(str)          # (file_path)
 
 class WaveformRunnable(QRunnable):
-    def __init__(self, file_path: str, manager: "WaveformCacheManager", num_peaks: int = 80):
+    def __init__(self, file_path: str, manager: "WaveformCacheManager", num_peaks: int = 120):
         super().__init__()
         self.file_path = file_path
         self.manager = manager
@@ -153,8 +153,14 @@ class HiResWaveformRunnable(QRunnable):
     def run(self):
         try:
             peaks = self._extract_minmax_peaks()
-            if peaks is not None:
+            if peaks:
                 self.manager._save_hires_peaks_to_cache(self.file_path, peaks)
+                
+                # Derivar picos de baja resolución (120 puntos) para miniaturas e íconos
+                lowres = self._derive_lowres_peaks(peaks, 120)
+                self.manager._save_peaks_to_cache(self.file_path, lowres)
+                self.manager._peaks_cache[self.file_path] = lowres
+                
                 self.signals.finished.emit(self.file_path, peaks)
             else:
                 self.signals.failed.emit(self.file_path)
@@ -163,6 +169,25 @@ class HiResWaveformRunnable(QRunnable):
             self.signals.failed.emit(self.file_path)
         finally:
             self.manager._hires_task_finished(self.file_path)
+
+    def _derive_lowres_peaks(self, minmax_peaks: list, target_count: int = 120) -> list:
+        if not minmax_peaks:
+            return []
+        n = len(minmax_peaks)
+        resampled = []
+        block_size = n / target_count
+        for i in range(target_count):
+            start_idx = int(i * block_size)
+            end_idx = max(start_idx + 1, int((i + 1) * block_size))
+            end_idx = min(end_idx, n)
+            peak_val = 0.0
+            for j in range(start_idx, end_idx):
+                mn, mx = minmax_peaks[j]
+                v = max(abs(mn), abs(mx))
+                if v > peak_val:
+                    peak_val = v
+            resampled.append(peak_val)
+        return resampled
 
     def _extract_minmax_peaks(self) -> list:
         """Extrae pares (min_normalizado, max_normalizado) de alta resolución."""
@@ -206,9 +231,10 @@ class HiResWaveformRunnable(QRunnable):
                 global_max = a
         
         # Dividir en bloques y extraer min/max real (con signo) por bloque
+        target_num_peaks = max(10000, min(num_samples // 10, 50000))
         minmax_peaks = []
-        block_size = max(1, num_samples / self.num_peaks)
-        for i in range(self.num_peaks):
+        block_size = max(1, num_samples / target_num_peaks)
+        for i in range(target_num_peaks):
             start_idx = int(i * block_size)
             end_idx = max(start_idx + 1, int((i + 1) * block_size))
             block = samples[start_idx:end_idx]
@@ -248,9 +274,9 @@ class WaveformCacheManager(QObject):
             return self._hash_cache[file_path]
         try:
             stat = os.stat(file_path)
-            raw = f"{os.path.abspath(file_path)}_{stat.st_mtime}_{stat.st_size}_wf_v1"
+            raw = f"{os.path.abspath(file_path)}_{stat.st_mtime}_{stat.st_size}_wf_v2"
         except Exception:
-            raw = f"{os.path.abspath(file_path)}_wf_v1"
+            raw = f"{os.path.abspath(file_path)}_wf_v2"
         hash_val = hashlib.sha256(raw.encode('utf-8')).hexdigest()
         self._hash_cache[file_path] = hash_val
         return hash_val
@@ -282,7 +308,7 @@ class WaveformCacheManager(QObject):
             return icon
         return None
 
-    def request_waveform(self, file_path: str, num_peaks: int = 80):
+    def request_waveform(self, file_path: str, num_peaks: int = 120):
         if file_path in self._qicon_cache or file_path in self._peaks_cache:
             return
         if file_path in self._pending_files or file_path in self._failed_files:
@@ -340,6 +366,7 @@ class WaveformCacheManager(QObject):
     def request_hires_waveform(self, file_path: str, num_peaks: int = 4000):
         cache_key = file_path + "_hires"
         if cache_key in self._peaks_cache:
+            self.hires_waveform_loaded.emit(file_path, self._peaks_cache[cache_key])
             return
         if cache_key in self._pending_files:
             return

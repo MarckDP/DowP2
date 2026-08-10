@@ -59,10 +59,9 @@ class AudioVolumeMeterWidget(QWidget):
             y_peak = h - peak_h
             painter.fillRect(bar_x + 1, int(y_peak), bar_w - 1, 2, QColor("#FFFFFF"))
             
-            # Decaimiento del pico para animación suave si se llama continuamente
+            # Decaimiento del pico para animación suave
             if self._peak > self._level:
-                self._peak -= self._peak_decay
-                self._peak_decay += 0.005
+                self._peak -= 0.025
                 if self._peak < self._level:
                     self._peak = self._level
 

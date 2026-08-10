@@ -316,9 +316,8 @@ class PlaybackMixin:
                 except Exception:
                     pass
                 
-            # Calcular cantidad ideal de picos basándose en el ancho actual del widget
-            w_width = self.waveform_widget.width()
-            num_peaks = max(50, min((w_width - 24) // 5, 180)) if w_width > 50 else 80
+            # Usar una cantidad constante de picos
+            num_peaks = 120
             
             # Activar el estado de carga y animación en el widget
             self.waveform_widget.set_loading(True)
@@ -398,6 +397,8 @@ class PlaybackMixin:
                             apply_player_play_button_style(self.btn_play, is_playing=True, icon_size=14)
                         else:
                             # MISS: Solicitar descarga rápida a la caché LRU (reproducción limpia tras ~100ms sin streaming)
+                            self.audio_player.stop()
+                            self.audio_player.setSource(QUrl())
                             fs_cache.request_preview(path)
                             from gui.styles import apply_player_play_button_style
                             apply_player_play_button_style(self.btn_play, is_playing=True, icon_size=14)

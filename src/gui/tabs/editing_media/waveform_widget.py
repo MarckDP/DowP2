@@ -65,9 +65,7 @@ class AudioWaveformWidget(QWidget):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         if hasattr(self, "_raw_peaks") and self._raw_peaks and not self.is_loading:
-            width = self.width()
-            target_num_bars = max(50, min((width - 24) // 5, 180)) if width > 50 else 80
-            self.peaks = self._resample_peaks(self._raw_peaks, target_num_bars)
+            self.peaks = self._raw_peaks
             self.update()
 
     def _resample_peaks(self, peaks: list, target_count: int) -> list:
@@ -108,8 +106,8 @@ class AudioWaveformWidget(QWidget):
 
         mid_y = height / 2
 
-        # Calcular la cantidad objetivo de barras basadas en el ancho para mantener el espaciado constante
-        target_num_bars = max(50, min((width - 24) // 5, 180)) if width > 50 else 80
+        # Usamos una cantidad constante de barras
+        target_num_bars = 120
 
         # 1. Determinar el set de picos a renderizar (reales o animados de carga)
         if self.is_loading:
@@ -144,6 +142,10 @@ class AudioWaveformWidget(QWidget):
         pen.setWidth(bar_width)
         pen.setCapStyle(Qt.RoundCap)
 
+        # Para que QPainter con Antialiasing no difumine las líneas, debemos alinearlas
+        # a los centros de los píxeles (offset=0.5) si el grosor es impar.
+        offset = 0.5 if bar_width % 2 != 0 else 0.0
+
         # Cabezal de reproducción
         playhead_x = start_x + self._playback_ratio * span
 
@@ -172,7 +174,9 @@ class AudioWaveformWidget(QWidget):
                 pen.setColor(col)
 
             painter.setPen(pen)
-            painter.drawLine(int(x), int(mid_y - wave_h / 2), int(x), int(mid_y + wave_h / 2))
+            x_coord = int(x) + offset
+            from PySide6.QtCore import QPointF
+            painter.drawLine(QPointF(x_coord, mid_y - wave_h / 2), QPointF(x_coord, mid_y + wave_h / 2))
 
         # 3. Dibujar cabezal de reproducción (línea vertical roja)
         if (self.audio_path or self.peaks) and not self.is_loading:

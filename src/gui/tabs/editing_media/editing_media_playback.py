@@ -125,28 +125,41 @@ class PlaybackMixin:
         if not editor_mgr:
             return
             
+        saved_cache = getattr(self, "_saved_subclips_cache", {})
         packages = []
         for idx in selected_indexes:
             item_data = self.media_model.get_item(idx)
             if item_data and "ruta" in item_data and item_data["ruta"]:
                 path = item_data["ruta"]
-                ext = os.path.splitext(path)[1].lower()
-                if ext in ('.jpg', '.jpeg', '.png', '.webp', '.bmp', '.svg'):
-                    pkg = {"video": None, "thumbnail": path, "subtitle": None}
-                elif ext in ('.srt', '.vtt', '.ass', '.sub'):
-                    pkg = {"video": None, "thumbnail": None, "subtitle": path}
+                saved_subs = saved_cache.get(path, [])
+                if saved_subs:
+                    pkg = {
+                        "filePath": path.replace('\\', '/'),
+                        "subclips": saved_subs
+                    }
                 else:
-                    pkg = {"video": path, "thumbnail": None, "subtitle": None}
+                    ext = os.path.splitext(path)[1].lower()
+                    if ext in ('.jpg', '.jpeg', '.png', '.webp', '.bmp', '.svg'):
+                        pkg = {"video": None, "thumbnail": path, "subtitle": None}
+                    elif ext in ('.srt', '.vtt', '.ass', '.sub'):
+                        pkg = {"video": None, "thumbnail": None, "subtitle": path}
+                    else:
+                        pkg = {"video": path, "thumbnail": None, "subtitle": None}
                 packages.append(pkg)
                 
         if not packages:
             return
 
         if len(packages) == 1:
-            logger.info(f"[EditingMedia] Enviando 1 medio al editor activo: {packages[0]}")
-            editor_mgr.send_file(packages[0])
+            pkg = packages[0]
+            if "subclips" in pkg:
+                logger.info(f"[EditingMedia] Enviando 1 medio con {len(pkg['subclips'])} subclips guardados a {editor_mgr.active_editor}")
+                editor_mgr.send_subclips(pkg)
+            else:
+                logger.info(f"[EditingMedia] Enviando 1 medio al editor activo: {pkg}")
+                editor_mgr.send_file(pkg)
         else:
-            logger.info(f"[EditingMedia] Enviando lote de {len(packages)} medios al editor activo.")
+            logger.info(f"[EditingMedia] Enviando lote de {len(packages)} medios/subclips al editor activo.")
             editor_mgr.send_batch(packages)
 
     def _on_send_editor_single_clicked(self):
@@ -159,6 +172,16 @@ class PlaybackMixin:
         if not editor_mgr:
             return
             
+        saved_subs = getattr(self, "_saved_subclips_cache", {}).get(path, [])
+        if saved_subs:
+            pkg = {
+                "filePath": path.replace('\\', '/'),
+                "subclips": saved_subs
+            }
+            logger.info(f"[EditingMedia] Enviando 1 medio actual ({path}) con {len(saved_subs)} subclips a {editor_mgr.active_editor}")
+            editor_mgr.send_subclips(pkg)
+            return
+
         ext = os.path.splitext(path)[1].lower()
         if ext in ('.jpg', '.jpeg', '.png', '.webp', '.bmp', '.svg'):
             pkg = {"video": None, "thumbnail": path, "subtitle": None}
@@ -169,6 +192,29 @@ class PlaybackMixin:
             
         logger.info(f"[EditingMedia] Enviando 1 medio actual ({path}) al editor activo.")
         editor_mgr.send_file(pkg)
+
+    def _on_open_subclip_dialog(self):
+        path = getattr(self, "last_selected_media_path", None)
+        if not path or not os.path.exists(path):
+            return
+            
+        self._stop_audio_playback()
+        if hasattr(self, "preview_box") and self.preview_box:
+            self.preview_box.stop_media()
+            
+        media_type = getattr(self, "current_playing_type", "video")
+        dur_str = self._metadata_cache.get(path, {}).get("duración", "0") if hasattr(self, "_metadata_cache") else "0"
+        dur_sec = self._parse_duration_to_seconds(dur_str)
+        
+        if not hasattr(self, "_saved_subclips_cache"):
+            self._saved_subclips_cache = {}
+        existing = self._saved_subclips_cache.get(path, [])
+        
+        from gui.dialogs.subclip_dialog import SubclipEditorDialog
+        dlg = SubclipEditorDialog(media_path=path, media_type=media_type, duration_sec=dur_sec, existing_subclips=existing, parent=self)
+        dlg.exec()
+        
+        self._saved_subclips_cache[path] = dlg.get_subclips()
 
     def _on_media_clicked(self, index):
         if not index or not hasattr(index, "isValid") or not index.isValid():

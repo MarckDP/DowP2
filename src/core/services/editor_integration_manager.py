@@ -161,6 +161,21 @@ class EditorIntegrationManager(QObject):
             logger.error(f"[EditorManager] Editor desconocido: {self.active_editor}")
             return False
 
+    def send_subclips(self, payload):
+        """
+        Envía información de subclips (puntos in/out) al editor activo.
+        payload: {"filePath": str, "subclips": [{"name": str, "in": float, "out": float}]}
+        """
+        if not self.active_editor:
+            logger.warning("[EditorManager] No hay un editor activo. No se enviarán los subclips.")
+            return False
+
+        if self.active_editor in ('premiere', 'aftereffects'):
+            return self.adobe_service.send_subclips_to_adobe(payload)
+        elif self.active_editor == 'davinci':
+            return self.davinci_service.send_subclips_to_davinci(payload)
+        return False
+
     def connect_to_queue(self, queue_mgr):
         """Conecta el gestor de editores con el QueueManager para auto-enviar descargas."""
         queue_mgr.job_status_changed.connect(self._on_job_status_changed)

@@ -641,6 +641,27 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         self.btn_loop_audio.clicked.connect(self._on_toggle_audio_loop)
         controls_layout.addWidget(self.btn_loop_audio)
 
+        # Botón Editar Subclip
+        self.btn_edit_subclip = QPushButton()
+        self.btn_edit_subclip.setIconSize(QSize(14, 14))
+        self.btn_edit_subclip.setFixedSize(26, 26)
+        self.btn_edit_subclip.setToolTip(self.tr("Editar / Recortar Subclips (In/Out)"))
+        edit_icon = get_svg_icon("edit.svg")
+        if not edit_icon.isNull():
+            self.btn_edit_subclip.setIcon(edit_icon)
+        self.btn_edit_subclip.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {get_theme_token('fondo_elemento', '#2d2d2d')};
+                border: 1px solid {get_theme_token('borde_normal', '#444444')};
+                border-radius: 13px;
+            }}
+            QPushButton:hover {{
+                background-color: {get_theme_token('acento_primario', '#B9E640')};
+            }}
+        """)
+        self.btn_edit_subclip.clicked.connect(self._on_open_subclip_dialog)
+        controls_layout.addWidget(self.btn_edit_subclip)
+
         self.lbl_time = QLabel("00:00:00.000 / 00:00:00.000")
         self.lbl_time.setStyleSheet("font-size: 11px; color: #a6adc8;")
         controls_layout.addWidget(self.lbl_time)
@@ -700,6 +721,8 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
 
         # Contenedor de Vista Previa Cuadrado
         self.preview_box = PreviewContainerWidget()
+        if hasattr(self.preview_box, "btn_edit_subclip"):
+            self.preview_box.btn_edit_subclip.clicked.connect(self._on_open_subclip_dialog)
         layout.addWidget(self.preview_box)
 
         # El panel de audio/forma de onda

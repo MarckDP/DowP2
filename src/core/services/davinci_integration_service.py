@@ -206,6 +206,9 @@ class DaVinciIntegrationService(QObject):
         flat_paths = []
         for pkg in file_packages:
             if isinstance(pkg, dict):
+                if "subclips" in pkg:
+                    self.send_subclips_to_davinci(pkg)
+                    continue
                 for key, val in pkg.items():
                     if val and isinstance(val, str) and os.path.exists(val):
                         if key == 'subtitle':
@@ -323,3 +326,69 @@ class DaVinciIntegrationService(QObject):
                     media_pool.AppendToTimeline([clip_item])
                     
         return success
+
+    def send_subclips_to_davinci(self, payload):
+        """
+        Importa el medio original en DaVinci Resolve y recorta/inserta los subclips con puntos In/Out.
+        payload: {"filePath": str, "subclips": [{"name": str, "in": float, "out": float}]}
+        """
+        file_path = payload.get("filePath")
+        subclips = payload.get("subclips", [])
+        if not file_path or not os.path.exists(file_path) or not subclips:
+            return False
+            
+        resolve = self._get_resolve()
+        if not resolve:
+            logger.error("[DaVinci] No hay conexión activa con Resolve para enviar subclips.")
+            return False
+
+        pm = resolve.GetProjectManager()
+        project = pm.GetCurrentProject() if pm else None
+        if not project:
+            return False
+            
+        media_pool = project.GetMediaPool()
+        if not media_pool:
+            return False
+
+        abs_path = os.path.abspath(file_path)
+        clips_pool = media_pool.ImportMedia([abs_path])
+        if not clips_pool:
+            short_path = self._get_short_path(abs_path)
+            clips_pool = media_pool.ImportMedia([short_path])
+            
+        if not clips_pool:
+            logger.error(f"[DaVinci] Error importando medio base para subclips: {file_path}")
+            return False
+
+        clip_item = clips_pool[0]
+        fps = float(project.GetSetting("timelineFrameRate") or 24.0)
+        
+        timeline = project.GetCurrentTimeline()
+        
+        for sc in subclips:
+            in_sec = sc.get("in", 0.0)
+            out_sec = sc.get("out", 0.0)
+            name = sc.get("name", "Subclip")
+            
+            start_f = int(in_sec * fps)
+            end_f = int(out_sec * fps)
+            
+            try:
+                clip_item.SetClipProperty("In", str(start_f))
+                clip_item.SetClipProperty("Out", str(end_f))
+            except Exception: pass
+            
+            if timeline:
+                clip_info = {
+                    "mediaPoolItem": clip_item,
+                    "startFrame": start_f,
+                    "endFrame": end_f
+                }
+                try:
+                    media_pool.AppendToTimeline([clip_info])
+                    logger.info(f"[DaVinci] Subclip '{name}' ({in_sec:.2f}s - {out_sec:.2f}s) insertado en timeline.")
+                except Exception as e:
+                    logger.error(f"[DaVinci] Error insertando subclip en timeline: {e}")
+                    
+        return True

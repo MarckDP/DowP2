@@ -145,6 +145,26 @@ class PreviewContainerWidget(QFrame):
         self.btn_loop.clicked.connect(self._toggle_video_loop)
         btn_layout.addWidget(self.btn_loop)
 
+        # Botón Editar Subclip
+        self.btn_edit_subclip = QPushButton()
+        self.btn_edit_subclip.setIconSize(QSize(14, 14))
+        self.btn_edit_subclip.setFixedSize(26, 26)
+        self.btn_edit_subclip.setToolTip(self.tr("Editar / Recortar Subclips (In/Out)"))
+        edit_icon = get_svg_icon("edit.svg")
+        if not edit_icon.isNull():
+            self.btn_edit_subclip.setIcon(edit_icon)
+        self.btn_edit_subclip.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {get_theme_token('fondo_elemento', '#2d2d2d')};
+                border: 1px solid {get_theme_token('borde_normal', '#444444')};
+                border-radius: 13px;
+            }}
+            QPushButton:hover {{
+                background-color: {get_theme_token('acento_primario', '#B9E640')};
+            }}
+        """)
+        btn_layout.addWidget(self.btn_edit_subclip)
+
         # Etiqueta de tiempo
         self.lbl_video_time = QLabel("00:00:00.000 / 00:00:00.000")
         self.lbl_video_time.setStyleSheet("font-size: 11px; color: #a6adc8; background: transparent; border: none;")

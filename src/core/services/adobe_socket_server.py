@@ -155,6 +155,25 @@ class AdobeSocketServer(QThread):
         )
         return True
 
+    def send_subclips_to_adobe(self, payload):
+        """
+        Sends subclips (in/out points) payload to active Adobe application.
+        """
+        if not self.active_target_sid:
+            logger.warning("[Socket.IO] Attempted to send subclips, but no active target is linked.")
+            return False
+            
+        if not self.loop or not self.loop.is_running():
+            logger.error("[Socket.IO] Event loop is not running.")
+            return False
+            
+        logger.info(f"[Socket.IO] Sending subclips to active target ({self.clients.get(self.active_target_sid)})")
+        asyncio.run_coroutine_threadsafe(
+            self.sio.emit('import_subclips', payload, to=self.active_target_sid),
+            self.loop
+        )
+        return True
+
     def run(self):
         """
         Runs the aiohttp server in this QThread.

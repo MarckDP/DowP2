@@ -24,6 +24,10 @@ class AudioWaveformWidget(QWidget):
         self.is_loading = False
         self.loading_phase = 0.0
 
+        # Selección rápida (lite subclip)
+        self._lite_start_ratio = None
+        self._lite_end_ratio = None
+
         # Timer para animación de carga
         from PySide6.QtCore import QTimer
         self.loading_timer = QTimer(self)
@@ -60,6 +64,21 @@ class AudioWaveformWidget(QWidget):
         self._raw_peaks = list(peaks) if peaks else []
         self.peaks = self._raw_peaks
         self.set_loading(False)  # Detener animación cuando se asignan picos
+        self.clear_lite_selection()
+        self.update()
+
+    def get_lite_selection(self):
+        """Devuelve una tupla (in_ratio, out_ratio) si existe una selección, o (None, None)."""
+        if self._lite_start_ratio is not None and self._lite_end_ratio is not None:
+            if self._lite_start_ratio == self._lite_end_ratio:
+                return None, None
+            return min(self._lite_start_ratio, self._lite_end_ratio), max(self._lite_start_ratio, self._lite_end_ratio)
+        return None, None
+
+    def clear_lite_selection(self):
+        """Limpia la selección rápida."""
+        self._lite_start_ratio = None
+        self._lite_end_ratio = None
         self.update()
 
     def resizeEvent(self, event):
@@ -103,6 +122,25 @@ class AudioWaveformWidget(QWidget):
 
         # Fondo del espectro
         painter.fillRect(0, 0, width, height, QColor(fondo_normal))
+
+        # Highlight de selección rápida (lite subclip)
+        in_ratio, out_ratio = self.get_lite_selection()
+        if in_ratio is not None and out_ratio is not None:
+            sel_start_x = 10
+            sel_span = max(1, (width - 10) - sel_start_x)
+            sel_x = sel_start_x + in_ratio * sel_span
+            sel_w = (out_ratio - in_ratio) * sel_span
+            
+            # Fondo de la selección
+            sel_color = QColor(acento)
+            sel_color.setAlpha(30)
+            painter.fillRect(int(sel_x), 0, int(sel_w), height, sel_color)
+            
+            # Bordes de la selección
+            pen_border = QPen(QColor(acento), 1)
+            painter.setPen(pen_border)
+            painter.drawLine(int(sel_x), 0, int(sel_x), height)
+            painter.drawLine(int(sel_x + sel_w), 0, int(sel_x + sel_w), height)
 
         mid_y = height / 2
 
@@ -185,28 +223,45 @@ class AudioWaveformWidget(QWidget):
             painter.drawLine(int(playhead_x), 4, int(playhead_x), height - 4)
 
     def mousePressEvent(self, event):
-        """Permite hacer click en la onda para buscar posiciones (seeking)."""
-        if event.button() == Qt.LeftButton:
-            x = event.position().x()
-            start_x = 10
-            end_x = self.width() - 10
-            span = end_x - start_x
-            if span > 0:
-                ratio = (x - start_x) / span
-                ratio = max(0.0, min(ratio, 1.0))
+        """Permite hacer click en la onda para buscar posiciones (seeking) o iniciar selección (clic derecho)."""
+        x = event.position().x()
+        start_x = 10
+        end_x = self.width() - 10
+        span = end_x - start_x
+        if span > 0:
+            ratio = (x - start_x) / span
+            ratio = max(0.0, min(ratio, 1.0))
+            
+            if event.button() == Qt.LeftButton:
                 self.seek_requested.emit(ratio)
                 self.set_playback_ratio(ratio)
+            elif event.button() == Qt.RightButton:
+                self._lite_start_ratio = ratio
+                self._lite_end_ratio = ratio
+                self.update()
 
     def mouseMoveEvent(self, event):
-        """Permite arrastrar el cabezal de reproducción (scrubbing) a través de la onda."""
-        if event.buttons() & Qt.LeftButton:
-            x = event.position().x()
-            start_x = 10
-            end_x = self.width() - 10
-            span = end_x - start_x
-            if span > 0:
-                ratio = (x - start_x) / span
-                ratio = max(0.0, min(ratio, 1.0))
+        """Permite arrastrar el cabezal de reproducción (scrubbing) o la selección (clic derecho) a través de la onda."""
+        x = event.position().x()
+        start_x = 10
+        end_x = self.width() - 10
+        span = end_x - start_x
+        if span > 0:
+            ratio = (x - start_x) / span
+            ratio = max(0.0, min(ratio, 1.0))
+            
+            if event.buttons() & Qt.LeftButton:
                 self.seek_requested.emit(ratio)
                 self.set_playback_ratio(ratio)
+            elif event.buttons() & Qt.RightButton:
+                self._lite_end_ratio = ratio
+                self.update()
         super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        """Finaliza la selección o la limpia si fue solo un clic."""
+        if event.button() == Qt.RightButton:
+            if self._lite_start_ratio is not None and self._lite_end_ratio is not None:
+                if abs(self._lite_start_ratio - self._lite_end_ratio) < 0.005:
+                    self.clear_lite_selection()
+        super().mouseReleaseEvent(event)

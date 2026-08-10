@@ -134,7 +134,34 @@ class PlaybackMixin:
             item_data = self.media_model.get_item(idx)
             if item_data and "ruta" in item_data and item_data["ruta"]:
                 path = item_data["ruta"]
-                saved_subs = saved_cache.get(path, [])
+                
+                # Revisar si hay selección rápida (lite subclip) para el medio activo
+                lite_subs = []
+                if hasattr(self, "waveform_widget") and getattr(self, "current_playing_path", None) == path:
+                    in_r, out_r = self.waveform_widget.get_lite_selection()
+                    if in_r is not None and out_r is not None:
+                        dur_sec = 0
+                        # Priorizar la duración exacta del reproductor activo para mayor precisión
+                        curr_type = getattr(self, "current_playing_type", "audio")
+                        if curr_type == "audio" and self.audio_player and self.audio_player.duration() > 0:
+                            dur_sec = self.audio_player.duration() / 1000.0
+                        elif curr_type == "video" and hasattr(self, "preview_box") and self.preview_box.media_player.duration() > 0:
+                            dur_sec = self.preview_box.media_player.duration() / 1000.0
+                        
+                        if dur_sec == 0:
+                            dur_str = item_data.get("duración", "0")
+                            if not path.startswith("http") and path in getattr(self, "_metadata_cache", {}):
+                                dur_str = self._metadata_cache[path].get("duración", dur_str)
+                            dur_sec = self._parse_duration_to_seconds(dur_str)
+                            
+                        if dur_sec > 0:
+                            lite_subs = [{
+                                "name": f"{os.path.splitext(os.path.basename(path))[0]}_lite",
+                                "in": round(in_r * dur_sec, 3),
+                                "out": round(out_r * dur_sec, 3)
+                            }]
+
+                saved_subs = lite_subs if lite_subs else saved_cache.get(path, [])
                 if saved_subs:
                     pkg = {
                         "filePath": path.replace('\\', '/'),
@@ -176,7 +203,38 @@ class PlaybackMixin:
         if not editor_mgr:
             return
             
-        saved_subs = getattr(self, "_saved_subclips_cache", {}).get(path, [])
+        lite_subs = []
+        if hasattr(self, "waveform_widget") and getattr(self, "current_playing_path", None) == path:
+            in_r, out_r = self.waveform_widget.get_lite_selection()
+            if in_r is not None and out_r is not None:
+                dur_sec = 0
+                # Priorizar la duración exacta del reproductor activo para mayor precisión
+                curr_type = getattr(self, "current_playing_type", "audio")
+                if curr_type == "audio" and self.audio_player and self.audio_player.duration() > 0:
+                    dur_sec = self.audio_player.duration() / 1000.0
+                elif curr_type == "video" and hasattr(self, "preview_box") and self.preview_box.media_player.duration() > 0:
+                    dur_sec = self.preview_box.media_player.duration() / 1000.0
+
+                if dur_sec == 0:
+                    dur_str = getattr(self, "_metadata_cache", {}).get(path, {}).get("duración", "0")
+                    if not dur_str or dur_str == "0":
+                        if hasattr(self, "media_model") and hasattr(self, "last_selected_media_path"):
+                            idx = self.media_model.find_item_index_by_path(path)
+                            if idx and idx.isValid():
+                                item_data = self.media_model.get_item(idx)
+                                if item_data:
+                                    dur_str = item_data.get("duración", "0")
+                    dur_sec = self._parse_duration_to_seconds(dur_str)
+                
+                # Si dur_sec es 0, no podemos hacer subclip basado en ratio. 
+                if dur_sec > 0:
+                    lite_subs = [{
+                        "name": f"{os.path.splitext(os.path.basename(path))[0]}_lite",
+                        "in": round(in_r * dur_sec, 3),
+                        "out": round(out_r * dur_sec, 3)
+                    }]
+
+        saved_subs = lite_subs if lite_subs else getattr(self, "_saved_subclips_cache", {}).get(path, [])
         if saved_subs:
             pkg = {
                 "filePath": path.replace('\\', '/'),

@@ -170,6 +170,18 @@ class SubclipWaveformWidget(QWidget):
             else:
                 self._drag_mode = "none"
                 self.seek_requested.emit(ratio)
+                
+        elif event.button() == Qt.RightButton:
+            w = self.width()
+            if w > 0:
+                x = event.position().x()
+                ratio = max(0.0, min(x / w, 1.0))
+                self._drag_mode = "right_click_select"
+                self._right_click_start = ratio
+                self.in_ratio = ratio
+                self.out_ratio = ratio
+                self.range_changed.emit(self.in_ratio, self.out_ratio)
+                self.update()
 
     def mouseMoveEvent(self, event):
         w = self.width()
@@ -199,6 +211,16 @@ class SubclipWaveformWidget(QWidget):
                 self.update()
             else:
                 self.seek_requested.emit(ratio)
+        elif event.buttons() & Qt.RightButton:
+            if getattr(self, "_drag_mode", "") == "right_click_select":
+                start_r = getattr(self, "_right_click_start", ratio)
+                self.in_ratio = min(start_r, ratio)
+                self.out_ratio = max(start_r, ratio)
+                # Para evitar que el rango sea 0 si soltamos en el mismo pixel
+                if self.in_ratio == self.out_ratio:
+                    self.out_ratio = min(self.in_ratio + 0.001, 1.0)
+                self.range_changed.emit(self.in_ratio, self.out_ratio)
+                self.update()
         else:
             # Feedback visual de cursores al pasar por encima
             if abs(x - x_in) <= 10 or abs(x - x_out) <= 10:
@@ -209,6 +231,14 @@ class SubclipWaveformWidget(QWidget):
                 self.setCursor(Qt.PointingHandCursor)
 
     def mouseReleaseEvent(self, event):
+        if event.button() == Qt.RightButton:
+            if getattr(self, "_drag_mode", "") == "right_click_select":
+                # Si el usuario solo hizo clic (sin arrastrar) reseteamos el In/Out
+                if abs(self.in_ratio - self.out_ratio) < 0.005:
+                    self.in_ratio = 0.0
+                    self.out_ratio = 1.0
+                    self.range_changed.emit(self.in_ratio, self.out_ratio)
+                    self.update()
         self._drag_mode = "none"
 
     def mouseDoubleClickEvent(self, event):

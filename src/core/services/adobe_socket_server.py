@@ -89,7 +89,18 @@ class AdobeSocketServer(QThread):
                 self.active_target_changed.emit(None)
 
     def force_active_target(self, app_identifier):
-        """Forces the active target to the given app_identifier if it is currently connected."""
+        """Forces the active target to the given app_identifier if it is currently connected. Pass None to disconnect."""
+        if app_identifier is None:
+            self.active_target_sid = None
+            logger.info("[Socket.IO] Active target forced to: None")
+            if self.loop and self.loop.is_running():
+                asyncio.run_coroutine_threadsafe(
+                    self.sio.emit('active_target_update', {'activeTarget': None}),
+                    self.loop
+                )
+            self.active_target_changed.emit(None)
+            return True
+            
         target_sid = None
         for sid, app_id in self.clients.items():
             if app_id == app_identifier:

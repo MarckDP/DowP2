@@ -97,6 +97,9 @@ class PlaybackMixin:
         if active == "premiere":
             icon = get_svg_icon("premiere pro.svg") 
             name = "Premiere Pro"
+        elif active == "aftereffects":
+            icon = get_svg_icon("after effects.svg") 
+            name = "After Effects"
         elif active == "davinci":
             icon = get_svg_icon("davinci resolve.svg")
             name = "DaVinci Resolve"

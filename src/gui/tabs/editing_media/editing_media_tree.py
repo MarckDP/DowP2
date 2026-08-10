@@ -858,6 +858,9 @@ class TreeListMixin:
                     if active == "premiere":
                         e_icon = get_svg_icon("premiere pro.svg")
                         e_name = "Premiere Pro"
+                    elif active == "aftereffects":
+                        e_icon = get_svg_icon("after effects.svg")
+                        e_name = "After Effects"
                     elif active == "davinci":
                         e_icon = get_svg_icon("davinci resolve.svg")
                         e_name = "DaVinci Resolve"
@@ -867,7 +870,7 @@ class TreeListMixin:
                         
                     count = len(file_paths)
                     if count > 1:
-                        act_send = menu.addAction(e_icon, self.tr(f"Enviar medios a {e_name}"))
+                        act_send = menu.addAction(e_icon, self.tr(f"Enviar ({count}) medios a {e_name}"))
                     else:
                         act_send = menu.addAction(e_icon, self.tr(f"Enviar medio a {e_name}"))
                         

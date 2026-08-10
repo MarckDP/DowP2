@@ -769,7 +769,12 @@ class SubclipEditorDialog(QDialog):
             self.btn_send.setEnabled(False)
             return
 
-        icon_file = "premiere pro.svg" if active == "premiere" else "davinci resolve.svg"
+        if active == "premiere":
+            icon_file = "premiere pro.svg"
+        elif active == "aftereffects":
+            icon_file = "after effects.svg"
+        else:
+            icon_file = "davinci resolve.svg"
         
         count = len(self.subclips)
         if count > 0:

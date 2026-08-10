@@ -222,6 +222,10 @@ class EditorStatusCornerWidget(QWidget):
                 if not success:
                     from gui.dialogs.dialogs import show_info
                     show_info(self.main_window, "DowP Importer", "La extensión no está respondiendo. Abre el panel de DowP en tu editor para conectar.")
+        elif state == 3:
+            # Desconectar / Desvincular
+            if hasattr(self, 'editor_manager') and self.editor_manager:
+                self.editor_manager.force_adobe_target(None)
                 
     def on_settings_clicked(self):
         # Ir a la pestaña principal de Ajustes (índice 5 en main_window.tabs)

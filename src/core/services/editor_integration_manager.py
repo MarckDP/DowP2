@@ -22,11 +22,44 @@ class ProcessMonitorThread(QThread):
         import time
         while self.is_running:
             try:
-                # Use tasklist on Windows to quickly check running processes
-                output = subprocess.check_output('tasklist', creationflags=subprocess.CREATE_NO_WINDOW).decode('utf-8', errors='ignore')
+                import ctypes
+                EnumWindows = ctypes.windll.user32.EnumWindows
+                EnumWindowsProc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int))
+                GetWindowThreadProcessId = ctypes.windll.user32.GetWindowThreadProcessId
+                IsWindowVisible = ctypes.windll.user32.IsWindowVisible
+
+                GetWindowTextLengthW = ctypes.windll.user32.GetWindowTextLengthW
+
+                visible_pids = set()
+
+                def foreach_window(hwnd, lParam):
+                    if IsWindowVisible(hwnd):
+                        length = GetWindowTextLengthW(hwnd)
+                        if length > 0:
+                            pid = ctypes.c_ulong()
+                            GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+                            if pid.value > 0:
+                                visible_pids.add(pid.value)
+                    return True
+
+                EnumWindows(EnumWindowsProc(foreach_window), 0)
+
+                import csv, io
+                output = subprocess.check_output(['tasklist', '/fo', 'csv', '/nh'], creationflags=subprocess.CREATE_NO_WINDOW).decode('utf-8', errors='ignore')
+                reader = csv.reader(io.StringIO(output))
+                
+                running_exes = set()
+                for row in reader:
+                    if len(row) > 1:
+                        exe_name = row[0]
+                        pid = int(row[1])
+                        if pid in visible_pids:
+                            running_exes.add(exe_name)
+                            
                 status = {}
                 for app_id, exe_name in self.targets.items():
-                    status[app_id] = (exe_name in output)
+                    status[app_id] = (exe_name in running_exes)
+                    
                 self.processes_updated.emit(status)
             except Exception as e:
                 pass
@@ -111,8 +144,20 @@ class EditorIntegrationManager(QObject):
             
         self.active_editor_changed.emit(self.active_editor)
 
+    def disconnect_editor(self):
+        """Desconecta el editor actual forzando a None."""
+        self._on_adobe_target_changed(None)
+
     def force_adobe_target(self, target_app):
         """Intenta forzar el objetivo activo. Soporta Adobe y DaVinci."""
+        if target_app is None:
+            self.active_editor = None
+            logger.info("[EditorManager] Editor activo desvinculado (None).")
+            self.active_editor_changed.emit(None)
+            if hasattr(self, 'adobe_service') and self.adobe_service:
+                self.adobe_service.force_active_target(None)
+            return True
+            
         if target_app == "davinci":
             self.active_editor = "davinci"
             logger.info(f"[EditorManager] Editor activo establecido a: {self.active_editor}")

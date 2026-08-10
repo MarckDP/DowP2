@@ -166,6 +166,43 @@ class DaVinciIntegrationService(QObject):
                 return False
         return True
 
+    def _organize_clip_in_folders(self, media_pool, clip_item, file_path):
+        """Organiza un clip recién importado en la estructura de carpetas de DowP Imports."""
+        config = get_config()
+        create_folders = config.get('integrations', {}).get('davinci_create_folders', True)
+        
+        ext = os.path.splitext(file_path)[1].lower()
+        ext_map = {
+            "Video": [".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"],
+            "Imágenes": [".jpg", ".jpeg", ".png", ".gif", ".tiff", ".webp", ".bmp", ".svg"],
+            "Audio": [".mp3", ".wav", ".m4a", ".flac", ".ogg", ".opus"]
+        }
+        
+        folder_type = "Otros"
+        for category, extensions in ext_map.items():
+            if ext in extensions:
+                folder_type = category
+                break
+                
+        if folder_type == "Video":
+            try:
+                props = clip_item.GetClipProperty()
+                v_codec = props.get("Video Codec", "") if isinstance(props, dict) else clip_item.GetClipProperty("Video Codec")
+                v_res = props.get("Resolution", "") if isinstance(props, dict) else clip_item.GetClipProperty("Resolution")
+                if (not v_codec or v_codec == "N/A" or v_codec == "") and (not v_res or v_res == ""):
+                    folder_type = "Audio"
+            except Exception:
+                pass
+                
+        if create_folders:
+            target_root = media_pool.GetRootFolder()
+            main_folder = self._get_or_create_folder(media_pool, target_root, "DowP Imports")
+            target_folder = self._get_or_create_folder(media_pool, main_folder, folder_type)
+            if target_folder:
+                media_pool.MoveClips([clip_item], target_folder)
+                
+        return folder_type
+
     def send_files_to_davinci(self, file_packages):
         """Envía un lote de archivos a DaVinci Resolve."""
         resolve = self._get_resolve()
@@ -218,13 +255,6 @@ class DaVinciIntegrationService(QObject):
                 flat_paths.append(pkg)
                 
         for path in flat_paths:
-            ext = os.path.splitext(path)[1].lower()
-            folder_type = "Otros"
-            for category, extensions in ext_map.items():
-                if ext in extensions:
-                    folder_type = category
-                    break
-                    
             abs_path = os.path.abspath(path)
             
             # Intento 1: Ruta normal
@@ -242,33 +272,10 @@ class DaVinciIntegrationService(QObject):
                 
             clip_item = clips_pool[0]
             
+            folder_type = self._organize_clip_in_folders(media_pool, clip_item, abs_path)
+            
             has_video = folder_type in ("Video", "Imágenes")
             has_audio = folder_type in ("Video", "Audio")
-            
-            # Verificación avanzada para videos que son puro audio
-            if folder_type == "Video":
-                try:
-                    props = clip_item.GetClipProperty()
-                    v_codec = ""
-                    v_res = ""
-                    if isinstance(props, dict):
-                        v_codec = props.get("Video Codec", "")
-                        v_res = props.get("Resolution", "")
-                    else:
-                        v_codec = clip_item.GetClipProperty("Video Codec")
-                        v_res = clip_item.GetClipProperty("Resolution")
-                        
-                    if (not v_codec or v_codec == "N/A" or v_codec == "") and (not v_res or v_res == ""):
-                        folder_type = "Audio"
-                        has_video = False
-                        has_audio = True
-                except Exception:
-                    pass
-            
-            if create_folders:
-                target_folder = self._get_or_create_folder(media_pool, main_folder, folder_type)
-                if target_folder:
-                    media_pool.MoveClips([clip_item], target_folder)
             
             if import_timeline and timeline:
                 if folder_type == "Imágenes" and not import_images:
@@ -362,9 +369,20 @@ class DaVinciIntegrationService(QObject):
             return False
 
         clip_item = clips_pool[0]
+        self._organize_clip_in_folders(media_pool, clip_item, abs_path)
+
         fps = float(project.GetSetting("timelineFrameRate") or 24.0)
         
         timeline = project.GetCurrentTimeline()
+        
+        config = get_config()
+        integrations = config.get('integrations', {})
+        import_timeline = integrations.get('davinci_import_timeline', True)
+        
+        current_record_frame = 0
+        if timeline and import_timeline:
+            tc_string = timeline.GetCurrentTimecode()
+            current_record_frame = self._timecode_to_frames(tc_string, fps)
         
         for sc in subclips:
             in_sec = sc.get("in", 0.0)
@@ -379,14 +397,18 @@ class DaVinciIntegrationService(QObject):
                 clip_item.SetClipProperty("Out", str(end_f))
             except Exception: pass
             
-            if timeline:
+            if timeline and import_timeline:
                 clip_info = {
                     "mediaPoolItem": clip_item,
                     "startFrame": start_f,
-                    "endFrame": end_f
+                    "endFrame": end_f,
+                    "recordFrame": float(current_record_frame)
                 }
                 try:
-                    media_pool.AppendToTimeline([clip_info])
+                    if media_pool.AppendToTimeline([clip_info]):
+                        current_record_frame += (end_f - start_f)
+                    else:
+                        media_pool.AppendToTimeline([clip_item])
                     logger.info(f"[DaVinci] Subclip '{name}' ({in_sec:.2f}s - {out_sec:.2f}s) insertado en timeline.")
                 except Exception as e:
                     logger.error(f"[DaVinci] Error insertando subclip en timeline: {e}")

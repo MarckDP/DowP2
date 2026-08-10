@@ -162,78 +162,72 @@ class SubclipItemWidget(QWidget):
     """Elemento individual de la lista de subclips creados."""
     def __init__(self, index: int, name: str, in_sec: float, out_sec: float, on_preview, on_delete, on_rename, parent=None):
         super().__init__(parent)
-        self.setFixedHeight(62)
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 6, 8, 6)
-        layout.setSpacing(8)
+        self.setFixedHeight(58)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 4, 6, 4)
+        layout.setSpacing(2)
 
-        # Botón reproducir tramo
+        # Fila superior: play + nombre editable + botón eliminar
+        top_row = QHBoxLayout()
+        top_row.setContentsMargins(0, 0, 0, 0)
+        top_row.setSpacing(6)
+
         self.btn_play = QPushButton()
-        self.btn_play.setFixedSize(28, 28)
+        self.btn_play.setFixedSize(22, 22)
         self.btn_play.setIcon(get_svg_icon("play_arrow.svg"))
         self.btn_play.setIconSize(QSize(14, 14))
         self.btn_play.setStyleSheet(f"""
             QPushButton {{
                 background-color: {get_theme_token('fondo_elemento', '#2d2d2d')};
                 border: 1px solid {get_theme_token('borde_sutil', '#333333')};
-                border-radius: 14px;
+                border-radius: 11px;
             }}
             QPushButton:hover {{
                 background-color: {get_theme_token('acento_primario', '#B9E640')};
             }}
         """)
         self.btn_play.clicked.connect(lambda: on_preview(index))
-        layout.addWidget(self.btn_play)
-
-        # Info del tramo y nombre editable
-        col_info = QVBoxLayout()
-        col_info.setSpacing(2)
-        col_info.setContentsMargins(0, 0, 0, 0)
+        top_row.addWidget(self.btn_play)
         
         self.txt_name = QLineEdit(name)
         self.txt_name.setStyleSheet("""
             QLineEdit {
-                background: #1e1e1e;
-                border: 1px solid #3d3d3d;
+                background: #222;
+                color: #B9E640;
+                border: 1px solid #333;
                 border-radius: 4px;
-                color: #ffffff;
-                font-weight: bold;
+                padding: 1px 4px;
                 font-size: 11px;
-                padding: 2px 6px;
+                font-weight: bold;
             }
             QLineEdit:focus {
-                border-color: #B9E640;
+                border: 1px solid #B9E640;
             }
         """)
+        self.txt_name.setFixedHeight(20)
         self.txt_name.textChanged.connect(lambda t: on_rename(index, t))
-        col_info.addWidget(self.txt_name)
+        top_row.addWidget(self.txt_name, 1)
 
+        btn_del = QPushButton()
+        btn_del.setIcon(get_svg_icon("delete.svg"))
+        btn_del.setIconSize(QSize(15, 15))
+        btn_del.setFixedSize(22, 22)
+        btn_del.setToolTip("Eliminar subclip")
+        btn_del.setStyleSheet("""
+            QPushButton { background: transparent; border: none; border-radius: 4px; }
+            QPushButton:hover { background: rgba(229,57,53,160); }
+        """)
+        btn_del.clicked.connect(lambda: on_delete(index))
+        top_row.addWidget(btn_del)
+        layout.addLayout(top_row)
+
+        # Fila inferior: tiempos
         dur = out_sec - in_sec
         in_fmt = self._format_time(in_sec)
         out_fmt = self._format_time(out_sec)
-        lbl_time = QLabel(f"{in_fmt} ➔ {out_fmt} ({dur:.2f}s)")
-        lbl_time.setStyleSheet("color: #a6adc8; font-size: 10px;")
-        col_info.addWidget(lbl_time)
-
-        layout.addLayout(col_info, 1)
-
-        # Botón eliminar tramo
-        btn_del = QPushButton()
-        btn_del.setFixedSize(26, 26)
-        btn_del.setIcon(get_svg_icon("delete.svg"))
-        btn_del.setIconSize(QSize(14, 14))
-        btn_del.setStyleSheet("""
-            QPushButton {
-                background: transparent;
-                border: none;
-            }
-            QPushButton:hover {
-                background-color: rgba(255, 0, 0, 0.2);
-                border-radius: 4px;
-            }
-        """)
-        btn_del.clicked.connect(lambda: on_delete(index))
-        layout.addWidget(btn_del)
+        lbl = QLabel(f"{in_fmt} ➔ {out_fmt} ({dur:.2f}s)")
+        lbl.setStyleSheet("color: #999; font-size: 11px;")
+        layout.addWidget(lbl)
 
     def _format_time(self, seconds: float) -> str:
         ms = int((seconds % 1) * 1000)
@@ -247,13 +241,13 @@ class SubclipItemWidget(QWidget):
 class SubclipEditorDialog(QDialog):
     """Diálogo Modal para recortar partes de un medio (In/Out points) y enviar subclips."""
     
-    def __init__(self, media_path: str, media_type: str = "video", duration_sec: float = 0.0, existing_subclips: list = None, parent=None):
+    def __init__(self, media_path: str, media_type: str = "video", duration_sec: float = 0.0, existing_subclips: list = None, initial_in_sec: float = None, initial_out_sec: float = None, parent=None):
         super().__init__(parent)
         self.media_path = media_path
         self.media_type = media_type.lower()
         self.duration_sec = duration_sec or 1.0
-        self.in_sec = 0.0
-        self.out_sec = self.duration_sec
+        self.in_sec = initial_in_sec if initial_in_sec is not None else 0.0
+        self.out_sec = initial_out_sec if initial_out_sec is not None else self.duration_sec
         self.subclips = list(existing_subclips) if existing_subclips else []
 
         self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
@@ -383,21 +377,32 @@ class SubclipEditorDialog(QDialog):
 
         # Barra de Controles e Información de Tiempos
         ctrl_bar = QHBoxLayout()
-        ctrl_bar.setSpacing(8)
+        ctrl_bar.setSpacing(6)
 
         # Botón Play/Pause
-        self.btn_play = AnimatedButton("")
-        self.btn_play.setFixedSize(36, 36)
+        self.btn_play = QPushButton()
+        self.btn_play.setFixedSize(34, 34)
         self.btn_play.setIcon(get_svg_icon("play_arrow.svg"))
-        self.btn_play.setIconSize(QSize(20, 20))
+        self.btn_play.setIconSize(QSize(18, 18))
         self.btn_play.clicked.connect(self._toggle_play_pause)
+        from gui.styles import apply_player_play_button_style
+        apply_player_play_button_style(self.btn_play, is_playing=False, icon_size=18)
         ctrl_bar.addWidget(self.btn_play)
+        
+        ctrl_bar.addSpacing(8)
 
-        # Botones In [I] y Out [O]
-        self.btn_set_in = QPushButton(self.tr("[ I ] Marcar In"))
-        self.btn_set_in.setFixedHeight(34)
+        # Volume control
+        from gui.widgets.volume_control import VolumeControlWidget
+        self.volume_control = VolumeControlWidget(initial_volume=100, slider_width=60)
+        self.volume_control.volume_changed.connect(self._on_volume_changed)
+        ctrl_bar.addWidget(self.volume_control)
+        
+        ctrl_bar.addStretch()
+
+        # Botones In [I] y Out [O] and inputs
+        self.btn_set_in = QPushButton(self.tr("[ I ] In"))
+        self.btn_set_in.setFixedHeight(28)
         self.btn_set_in.setToolTip(self.tr("Establecer punto de entrada (Tecla I)"))
-        bg_elem = get_theme_token('fondo_elemento', '#2d2d2d')
         self.btn_set_in.setStyleSheet("""
             QPushButton {
                 background-color: #1a271a;
@@ -405,18 +410,35 @@ class SubclipEditorDialog(QDialog):
                 color: #1DC038;
                 font-weight: bold;
                 border-radius: 6px;
-                padding: 0 12px;
+                padding: 0 8px;
             }
-            QPushButton:hover {
-                background-color: #1DC038;
-                color: white;
-            }
+            QPushButton:hover { background-color: #1DC038; color: white; }
         """)
         self.btn_set_in.clicked.connect(self._set_in_point)
         ctrl_bar.addWidget(self.btn_set_in)
 
-        self.btn_set_out = QPushButton(self.tr("[ O ] Marcar Out"))
-        self.btn_set_out.setFixedHeight(34)
+        _time_style = "font-size: 12px; padding: 2px 4px; border-radius: 6px; background: #1e1e1e; border: 1px solid #333;"
+        self.input_time_start = QLineEdit(self._format_seconds_ms(self.in_sec))
+        self.input_time_start.setFixedSize(90, 28)
+        self.input_time_start.setAlignment(Qt.AlignCenter)
+        self.input_time_start.setStyleSheet(_time_style)
+        self.input_time_start.editingFinished.connect(self._on_time_input_changed)
+        ctrl_bar.addWidget(self.input_time_start)
+
+        sep = QLabel("—")
+        sep.setAlignment(Qt.AlignCenter)
+        sep.setStyleSheet("color: #666; font-size: 15px;")
+        ctrl_bar.addWidget(sep)
+
+        self.input_time_end = QLineEdit(self._format_seconds_ms(self.out_sec))
+        self.input_time_end.setFixedSize(90, 28)
+        self.input_time_end.setAlignment(Qt.AlignCenter)
+        self.input_time_end.setStyleSheet(_time_style)
+        self.input_time_end.editingFinished.connect(self._on_time_input_changed)
+        ctrl_bar.addWidget(self.input_time_end)
+
+        self.btn_set_out = QPushButton(self.tr("[ O ] Out"))
+        self.btn_set_out.setFixedHeight(28)
         self.btn_set_out.setToolTip(self.tr("Establecer punto de salida (Tecla O)"))
         self.btn_set_out.setStyleSheet("""
             QPushButton {
@@ -425,38 +447,34 @@ class SubclipEditorDialog(QDialog):
                 color: #FF5555;
                 font-weight: bold;
                 border-radius: 6px;
-                padding: 0 12px;
+                padding: 0 8px;
             }
-            QPushButton:hover {
-                background-color: #FF5555;
-                color: white;
-            }
+            QPushButton:hover { background-color: #FF5555; color: white; }
         """)
         self.btn_set_out.clicked.connect(self._set_out_point)
         ctrl_bar.addWidget(self.btn_set_out)
 
-        # Reloj e info de tiempos
-        self.lbl_time_info = QLabel("00:00:00 / 00:00:00")
-        self.lbl_time_info.setStyleSheet("color: #cdd6f4; font-size: 11px; font-weight: bold;")
-        ctrl_bar.addWidget(self.lbl_time_info, 1)
+        ctrl_bar.addSpacing(8)
 
-        # Botón para Añadir Subclip a la Lista
-        accent_pri = get_theme_token('acento_primario', '#B9E640')
-        select_bg = get_theme_token('seleccion_fondo', '#3d3d3d')
-        
-        self.btn_add_subclip = AnimatedButton(self.tr("+ Guardar Subclip"))
-        self.btn_add_subclip.setFixedHeight(34)
+        # Botón para Añadir Subclip
+        self.btn_add_subclip = QPushButton()
+        self.btn_add_subclip.setIcon(get_svg_icon("add.svg"))
+        self.btn_add_subclip.setIconSize(QSize(18, 18))
+        self.btn_add_subclip.setFixedSize(34, 34)
+        self.btn_add_subclip.setToolTip(self.tr("Añadir subclip"))
         self.btn_add_subclip.setStyleSheet("""
-            QPushButton {
-                background-color: %s;
-                color: #000000;
-                font-weight: bold;
-                border-radius: 6px;
-                padding: 0 14px;
-            }
-        """ % accent_pri)
+            QPushButton { background-color: #1DC038; border: none; border-radius: 17px; }
+            QPushButton:hover { background-color: #B9E640; }
+        """)
         self.btn_add_subclip.clicked.connect(self._add_current_subclip)
         ctrl_bar.addWidget(self.btn_add_subclip)
+        
+        ctrl_bar.addStretch()
+        
+        # Reloj global
+        self.lbl_time_info = QLabel("00:00:00 / 00:00:00")
+        self.lbl_time_info.setStyleSheet("color: #cdd6f4; font-size: 11px; font-weight: bold;")
+        ctrl_bar.addWidget(self.lbl_time_info)
 
         left_layout.addLayout(ctrl_bar)
         splitter.addWidget(left_widget)
@@ -474,9 +492,21 @@ class SubclipEditorDialog(QDialog):
         self.list_subclips = QListWidget()
         self.list_subclips.setStyleSheet("""
             QListWidget {
-                background-color: #141414;
+                background-color: #121212;
                 border: 1px solid %s;
-                border-radius: 8px;
+                border-radius: 12px;
+                outline: none;
+            }
+            QListWidget::item {
+                background-color: #1a1a1a;
+                border-bottom: 1px solid #222;
+                border-radius: 0px;
+                padding: 0px;
+                margin: 0px;
+            }
+            QListWidget::item:selected {
+                background-color: #1b3b22;
+                border-bottom: 1px solid #224;
             }
         """ % borde_norm)
         right_layout.addWidget(self.list_subclips, 1)
@@ -487,6 +517,10 @@ class SubclipEditorDialog(QDialog):
         self.btn_send.setPopupMode(QToolButton.MenuButtonPopup)
         self.btn_send.setFixedHeight(38)
         self.btn_send.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        # Send button
+        bg_elem = get_theme_token('fondo_elemento', '#2d2d2d')
+        select_bg = get_theme_token('seleccion_fondo', '#3d3d3d')
+        
         self.btn_send.setStyleSheet("""
             QToolButton {
                 background-color: %s;
@@ -520,6 +554,7 @@ class SubclipEditorDialog(QDialog):
         splitter.setSizes([600, 320])
         main_layout.addWidget(content_widget, 1)
         self._update_send_button()
+        self._refresh_subclip_list()
 
     def init_media_player(self):
         self.media_player = QMediaPlayer(self)
@@ -620,16 +655,56 @@ class SubclipEditorDialog(QDialog):
         pos_sec = self.media_player.position() / 1000.0
         cur_fmt = self._format_seconds(pos_sec)
         dur_fmt = self._format_seconds(self.duration_sec)
-        in_fmt = self._format_seconds(self.in_sec)
-        out_fmt = self._format_seconds(self.out_sec)
         
-        self.lbl_time_info.setText(f"{cur_fmt} / {dur_fmt}  |  In: {in_fmt}  Out: {out_fmt}")
+        self.lbl_time_info.setText(f"{cur_fmt} / {dur_fmt}")
+        if not self.input_time_start.hasFocus():
+            self.input_time_start.setText(self._format_seconds_ms(self.in_sec))
+        if not self.input_time_end.hasFocus():
+            self.input_time_end.setText(self._format_seconds_ms(self.out_sec))
 
     def _format_seconds(self, seconds: float) -> str:
         s = int(seconds) % 60
         m = (int(seconds) // 60) % 60
         h = int(seconds) // 3600
         return f"{h:02d}:{m:02d}:{s:02d}"
+        
+    def _format_seconds_ms(self, seconds: float) -> str:
+        ms = int((seconds % 1) * 1000)
+        s = int(seconds) % 60
+        m = (int(seconds) // 60) % 60
+        h = int(seconds) // 3600
+        return f"{h:02d}:{m:02d}:{s:02d}.{ms:03d}"
+
+    def _parse_time_ms(self, time_str: str) -> float:
+        try:
+            parts = time_str.split(":")
+            if len(parts) == 3:
+                h = float(parts[0])
+                m = float(parts[1])
+                s = float(parts[2])
+                return h * 3600 + m * 60 + s
+        except Exception:
+            pass
+        return None
+
+    def _on_time_input_changed(self):
+        new_in = self._parse_time_ms(self.input_time_start.text())
+        new_out = self._parse_time_ms(self.input_time_end.text())
+        
+        if new_in is not None:
+            self.in_sec = max(0.0, min(new_in, self.duration_sec))
+        if new_out is not None:
+            self.out_sec = max(0.0, min(new_out, self.duration_sec))
+            
+        if self.in_sec >= self.out_sec:
+            self.in_sec = max(0.0, self.out_sec - 0.5)
+            
+        self._update_waveform_range()
+        self._update_time_label()
+
+    def _on_volume_changed(self, value):
+        float_val = value if isinstance(value, float) else value / 100.0
+        self.audio_output.setVolume(float_val)
 
     def _add_current_subclip(self):
         if self.out_sec <= self.in_sec:

@@ -145,12 +145,9 @@ class AdobeSocketServer(QThread):
             return False
             
         logger.info(f"[Socket.IO] Sending batch to active target ({self.clients.get(self.active_target_sid)})")
-        payload = {'files': files}
-        if target_bin:
-            payload['targetBin'] = target_bin
-            
+        
         asyncio.run_coroutine_threadsafe(
-            self.sio.emit('import_files', payload, to=self.active_target_sid),
+            self.sio.emit('import_files', {'files': files, 'targetBin': target_bin}, to=self.active_target_sid),
             self.loop
         )
         return True

@@ -138,13 +138,14 @@ class PlaybackMixin:
                         "subclips": saved_subs
                     }
                 else:
+                    path_slash = path.replace('\\', '/')
                     ext = os.path.splitext(path)[1].lower()
                     if ext in ('.jpg', '.jpeg', '.png', '.webp', '.bmp', '.svg'):
-                        pkg = {"video": None, "thumbnail": path, "subtitle": None}
+                        pkg = {"video": None, "thumbnail": path_slash, "subtitle": None}
                     elif ext in ('.srt', '.vtt', '.ass', '.sub'):
-                        pkg = {"video": None, "thumbnail": None, "subtitle": path}
+                        pkg = {"video": None, "thumbnail": None, "subtitle": path_slash}
                     else:
-                        pkg = {"video": path, "thumbnail": None, "subtitle": None}
+                        pkg = {"video": path_slash, "thumbnail": None, "subtitle": None}
                 packages.append(pkg)
                 
         if not packages:
@@ -211,10 +212,15 @@ class PlaybackMixin:
         existing = self._saved_subclips_cache.get(path, [])
         
         from gui.dialogs.subclip_dialog import SubclipEditorDialog
-        dlg = SubclipEditorDialog(media_path=path, media_type=media_type, duration_sec=dur_sec, existing_subclips=existing, parent=self)
+        
+        state = getattr(self, "_saved_subclip_range_cache", {}).get(path, (0.0, dur_sec))
+        dlg = SubclipEditorDialog(media_path=path, media_type=media_type, duration_sec=dur_sec, existing_subclips=existing, initial_in_sec=state[0], initial_out_sec=state[1], parent=self)
         dlg.exec()
         
         self._saved_subclips_cache[path] = dlg.get_subclips()
+        if not hasattr(self, "_saved_subclip_range_cache"):
+            self._saved_subclip_range_cache = {}
+        self._saved_subclip_range_cache[path] = (dlg.in_sec, dlg.out_sec)
 
     def _on_media_clicked(self, index):
         if not index or not hasattr(index, "isValid") or not index.isValid():

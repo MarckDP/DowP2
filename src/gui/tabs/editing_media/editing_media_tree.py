@@ -842,7 +842,6 @@ class TreeListMixin:
                         act_none = submenu.addAction(self.tr("(Sin colecciones)"))
                         act_none.setEnabled(False)
 
-                # Solo habilitar estas opciones si se selecciona 1 solo elemento, o implementarlo para todos
                 if len(file_paths) == 1:
                     is_remote = file_paths[0].startswith("http://") or file_paths[0].startswith("https://")
                     if is_remote:
@@ -852,6 +851,28 @@ class TreeListMixin:
                         act_reveal = menu.addAction(get_svg_icon("folder_open.svg"), self.tr("Abrir en Explorador"))
                         act_reveal.triggered.connect(self._on_reveal_clicked)
                 
+                from core.services.editor_integration_manager import EditorIntegrationManager
+                editor_mgr = EditorIntegrationManager.get_instance()
+                if editor_mgr and editor_mgr.active_editor:
+                    active = editor_mgr.active_editor
+                    if active == "premiere":
+                        e_icon = get_svg_icon("premiere pro.svg")
+                        e_name = "Premiere Pro"
+                    elif active == "davinci":
+                        e_icon = get_svg_icon("davinci resolve.svg")
+                        e_name = "DaVinci Resolve"
+                    else:
+                        e_icon = QIcon()
+                        e_name = "Editor"
+                        
+                    count = len(file_paths)
+                    if count > 1:
+                        act_send = menu.addAction(e_icon, self.tr(f"Enviar medios a {e_name}"))
+                    else:
+                        act_send = menu.addAction(e_icon, self.tr(f"Enviar medio a {e_name}"))
+                        
+                    act_send.triggered.connect(self._on_send_editor_clicked)
+
                 menu.addSeparator()
 
         # 2. Acciones Generales (Actualizar, Ordenar por, Vista)

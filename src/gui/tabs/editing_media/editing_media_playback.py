@@ -210,6 +210,13 @@ class PlaybackMixin:
         dur_str = self._metadata_cache.get(path, {}).get("duración", "0") if hasattr(self, "_metadata_cache") else "0"
         dur_sec = self._parse_duration_to_seconds(dur_str)
         
+        # Extraer FPS de metadata (formato "29.97 fps" o "30 fps")
+        fps_str = self._metadata_cache.get(path, {}).get("fps", "30") if hasattr(self, "_metadata_cache") else "30"
+        try:
+            fps_val = float(fps_str.replace("fps", "").strip())
+        except (ValueError, AttributeError):
+            fps_val = 30.0
+        
         if not hasattr(self, "_saved_subclips_cache"):
             self._saved_subclips_cache = {}
         existing = self._saved_subclips_cache.get(path, [])
@@ -217,7 +224,7 @@ class PlaybackMixin:
         from gui.dialogs.subclip_dialog import SubclipEditorDialog
         
         state = getattr(self, "_saved_subclip_range_cache", {}).get(path, (0.0, dur_sec))
-        dlg = SubclipEditorDialog(media_path=path, media_type=media_type, duration_sec=dur_sec, existing_subclips=existing, initial_in_sec=state[0], initial_out_sec=state[1], parent=self)
+        dlg = SubclipEditorDialog(media_path=path, media_type=media_type, duration_sec=dur_sec, fps=fps_val, existing_subclips=existing, initial_in_sec=state[0], initial_out_sec=state[1], parent=self)
         dlg.exec()
         
         self._saved_subclips_cache[path] = dlg.get_subclips()

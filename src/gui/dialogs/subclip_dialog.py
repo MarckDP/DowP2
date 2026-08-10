@@ -4,9 +4,9 @@ import math
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QListWidget, QListWidgetItem, QWidget,
-    QSizePolicy, QLineEdit, QFrame, QSplitter, QToolButton, QMenu, QApplication
+    QSizePolicy, QLineEdit, QFrame, QSplitter, QToolButton, QMenu, QApplication, QScrollArea
 )
-from PySide6.QtCore import Qt, QUrl, QSize, QTimer, Signal
+from PySide6.QtCore import Qt, QUrl, QSize, QTimer, Signal, QEvent
 from PySide6.QtGui import QPixmap, QIcon, QPainter, QColor, QPen
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PySide6.QtMultimediaWidgets import QVideoWidget
@@ -14,27 +14,123 @@ from PySide6.QtMultimediaWidgets import QVideoWidget
 from gui.styles import get_theme_token
 from gui.widgets.animated_button import AnimatedButton
 from gui.tabs.editing_media.editing_media_icons import get_svg_icon
-from gui.tabs.editing_media.waveform_widget import AudioWaveformWidget
 from core.tabs.editing_media.waveform_cache_manager import WaveformCacheManager
 from core.services.editor_integration_manager import EditorIntegrationManager
 from core.logger.logger_manager import logger
 
-class SubclipWaveformWidget(AudioWaveformWidget):
-    """Forma de onda extendida para edición de subclips con sombreado de In/Out y arrastre con mouse."""
+class SubclipWaveformWidget(QWidget):
+    """Forma de onda profesional con pares min/max, estilo SoundQ/Premiere."""
     
-    range_changed = Signal(float, float)  # Emite (in_ratio, out_ratio)
+    seek_requested = Signal(float)
+    range_changed = Signal(float, float)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.in_ratio = 0.0
         self.out_ratio = 1.0
-        self._drag_mode = "none"  # "none", "in", "out", "range"
+        self._drag_mode = "none"
         self._drag_offset = 0.0
+        self.zoom_y = 1.0
+        self._playback_ratio = 0.0
+        
+        # Datos de alta resolución: lista de tuplas (min, max) normalizadas -1..1
+        self._hires_peaks = []  # Datos crudos de alta res
+        self._display_peaks = []  # Re-muestreados al ancho actual
+        
+        self.is_loading = False
+        self.loading_phase = 0.0
+        self.audio_path = ""
+        
+        self.setMinimumHeight(50)
+        self.setMaximumHeight(16777215)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        
+        from PySide6.QtCore import QTimer
+        self.loading_timer = QTimer(self)
+        self.loading_timer.setInterval(30)
+        self.loading_timer.timeout.connect(self._animate_loading)
+
+    def set_loading(self, loading: bool):
+        self.is_loading = loading
+        if loading:
+            self._hires_peaks = []
+            self._display_peaks = []
+            if not self.loading_timer.isActive():
+                self.loading_timer.start()
+        else:
+            self.loading_timer.stop()
+        self.update()
+
+    def _animate_loading(self):
+        import math
+        self.loading_phase += 0.15
+        if self.loading_phase > 2 * math.pi:
+            self.loading_phase -= 2 * math.pi
+        self.update()
+
+    def set_audio_path(self, path: str):
+        self.audio_path = path or ""
+        self._hires_peaks = []
+        self._display_peaks = []
+        if not path:
+            self.set_loading(False)
+        self.update()
+
+    def set_hires_peaks(self, peaks: list):
+        """Asigna picos min/max de alta resolución y re-muestrea."""
+        self._hires_peaks = list(peaks) if peaks else []
+        self._resample_to_width()
+        self.set_loading(False)
+        self.update()
+
+    def _resample_to_width(self):
+        """Re-muestrea _hires_peaks al número de columnas de píxeles del widget."""
+        if not self._hires_peaks:
+            self._display_peaks = []
+            return
+        w = self.width()
+        if w <= 0:
+            return
+        n = len(self._hires_peaks)
+        target = w  # 1 columna por píxel
+        if n == target:
+            self._display_peaks = list(self._hires_peaks)
+            return
+        
+        self._display_peaks = []
+        for i in range(target):
+            # Rango de índices originales que cubre este píxel
+            start_f = i * n / target
+            end_f = (i + 1) * n / target
+            start_idx = int(start_f)
+            end_idx = max(start_idx + 1, int(end_f))
+            end_idx = min(end_idx, n)
+            
+            block_min = 0.0
+            block_max = 0.0
+            for j in range(start_idx, end_idx):
+                mn, mx = self._hires_peaks[j]
+                if mn < block_min:
+                    block_min = mn
+                if mx > block_max:
+                    block_max = mx
+            self._display_peaks.append((block_min, block_max))
+
+    def resizeEvent(self, event):
+        self._resample_to_width()
+        self.update()
 
     def set_range_ratios(self, in_r: float, out_r: float):
         self.in_ratio = max(0.0, min(in_r, 1.0))
         self.out_ratio = max(self.in_ratio, min(out_r, 1.0))
         self.update()
+
+    def set_playback_ratio(self, ratio: float):
+        self._playback_ratio = max(0.0, min(ratio, 1.0))
+        self.update()
+
+    def get_playback_ratio(self) -> float:
+        return self._playback_ratio
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -90,51 +186,72 @@ class SubclipWaveformWidget(AudioWaveformWidget):
         self._drag_mode = "none"
 
     def paintEvent(self, event):
+        import math
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.Antialiasing, False)  # Líneas nítidas
         
         w = self.width()
         h = self.height()
         if w <= 0 or h <= 0:
             return
             
-        # Fondo oscuro limpio
-        painter.fillRect(0, 0, w, h, QColor("#141414"))
+        # Fondo oscuro
+        painter.fillRect(0, 0, w, h, QColor("#0d0d0d"))
         
+        mid_y = h / 2.0
         x_in = int(self.in_ratio * w)
         x_out = int(self.out_ratio * w)
         
-        # Sombrear región fuera de rango
-        dark_overlay = QColor(0, 0, 0, 160)
-        painter.fillRect(0, 0, x_in, h, dark_overlay)
-        painter.fillRect(x_out, 0, max(0, w - x_out), h, dark_overlay)
-        
-        # Sombrear región seleccionada entre In y Out
-        highlight = QColor(185, 230, 64, 30)
+        # Fondo sutil de la zona seleccionada
+        highlight = QColor(185, 230, 64, 15)
         painter.fillRect(x_in, 0, max(1, x_out - x_in), h, highlight)
         
-        # Dibujar picos de la forma de onda
-        if self.peaks:
-            num_bars = len(self.peaks)
-            step = w / (num_bars - 1) if num_bars > 1 else w
-            bar_width = max(1, int(step * 0.65))
-            mid_y = h / 2
+        # Línea central (eje 0)
+        painter.setPen(QPen(QColor(60, 60, 60), 1))
+        painter.drawLine(0, int(mid_y), w, int(mid_y))
+        
+        if self.is_loading:
+            # Animación de carga: onda sinusoidal
+            pen = QPen(QColor(get_theme_token('acento_primario', '#B9E640')))
+            pen.setWidth(1)
+            for x in range(w):
+                val = math.sin(x * 0.05 + self.loading_phase) * 0.3
+                pulse = math.sin(self.loading_phase * 0.5) * 0.1 + 0.9
+                amp = val * pulse * (h / 2.0) * 0.7
+                col = QColor(get_theme_token('acento_primario', '#B9E640'))
+                alpha = int(100 + 50 * math.sin(self.loading_phase + x * 0.02))
+                col.setAlpha(max(30, min(alpha, 200)))
+                pen.setColor(col)
+                painter.setPen(pen)
+                painter.drawLine(x, int(mid_y - amp), x, int(mid_y + amp))
+        elif self._display_peaks:
+            # Dibujar forma de onda profesional: línea vertical por píxel
+            acento = QColor(get_theme_token('acento_primario', '#B9E640'))
+            dim_color = QColor(acento)
+            dim_color.setAlpha(50)
             
-            for i, peak in enumerate(self.peaks):
-                val = max(0.06, min(peak, 1.0))
-                bar_h = val * h
-                x = int(i * step)
-                y = int(mid_y - (bar_h / 2))
+            for x, (mn, mx) in enumerate(self._display_peaks):
+                if x >= w:
+                    break
+                
+                # Aplicar zoom vertical
+                mn_z = max(-1.0, mn * self.zoom_y)
+                mx_z = min(1.0, mx * self.zoom_y)
+                
+                y_top = int(mid_y - mx_z * (h / 2.0 - 2))
+                y_bot = int(mid_y - mn_z * (h / 2.0 - 2))
+                
+                # Asegurar al menos 1px de altura
+                if y_top == y_bot:
+                    y_top -= 1
                 
                 if x_in <= x <= x_out:
-                    color = QColor(get_theme_token('acento_primario', '#B9E640'))
+                    painter.setPen(QPen(acento, 1))
                 else:
-                    color = QColor('#444444')
-                    
-                painter.setPen(Qt.NoPen)
-                painter.setBrush(color)
-                painter.drawRoundedRect(x, y, bar_width, int(bar_h), 1, 1)
-
+                    painter.setPen(QPen(dim_color, 1))
+                
+                painter.drawLine(x, y_top, x, y_bot)
+        
         # Línea de In (Verde con agarrador)
         pen_in = QPen(QColor('#1DC038'), 2, Qt.SolidLine)
         painter.setPen(pen_in)
@@ -149,7 +266,7 @@ class SubclipWaveformWidget(AudioWaveformWidget):
         painter.setBrush(QColor('#FF5555'))
         painter.drawRect(x_out - 3, h - 8, 6, 8)
         
-        # Línea de Playhead (Blanca)
+        # Playhead (Blanco)
         playhead_x = int(self._playback_ratio * w)
         pen_ph = QPen(QColor('#FFFFFF'), 2, Qt.SolidLine)
         painter.setPen(pen_ph)
@@ -241,11 +358,12 @@ class SubclipItemWidget(QWidget):
 class SubclipEditorDialog(QDialog):
     """Diálogo Modal para recortar partes de un medio (In/Out points) y enviar subclips."""
     
-    def __init__(self, media_path: str, media_type: str = "video", duration_sec: float = 0.0, existing_subclips: list = None, initial_in_sec: float = None, initial_out_sec: float = None, parent=None):
+    def __init__(self, media_path: str, media_type: str = "video", duration_sec: float = 0.0, fps: float = 30.0, existing_subclips: list = None, initial_in_sec: float = None, initial_out_sec: float = None, parent=None):
         super().__init__(parent)
         self.media_path = media_path
         self.media_type = media_type.lower()
         self.duration_sec = duration_sec or 1.0
+        self.fps = fps if fps > 0 else 30.0
         self.in_sec = initial_in_sec if initial_in_sec is not None else 0.0
         self.out_sec = initial_out_sec if initial_out_sec is not None else self.duration_sec
         self.subclips = list(existing_subclips) if existing_subclips else []
@@ -268,6 +386,7 @@ class SubclipEditorDialog(QDialog):
         self.init_ui()
         self.init_media_player()
         self.load_waveform()
+        QTimer.singleShot(100, self._sync_ruler)  # Sync inicial tras layout
 
     def title_mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -335,9 +454,6 @@ class SubclipEditorDialog(QDialog):
         content_layout.setContentsMargins(14, 14, 14, 14)
         content_layout.setSpacing(12)
 
-        splitter = QSplitter(Qt.Horizontal)
-        content_layout.addWidget(splitter)
-
         # ── Columna Izquierda: Reproductor + Waveform + Controles In/Out ──────
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
@@ -369,11 +485,100 @@ class SubclipEditorDialog(QDialog):
 
         left_layout.addWidget(self.preview_container, 1)
 
-        # Form de onda interactivo (Waveform)
+        # Controles de Zoom (Arriba del Waveform)
+        from PySide6.QtWidgets import QSlider
+        zoom_bar = QHBoxLayout()
+        zoom_bar.setContentsMargins(0, 0, 0, 0)
+        
+        lbl_zoom_icon = QLabel()
+        icon_zoom = get_svg_icon("zoom_in.svg")
+        if not icon_zoom.isNull():
+            lbl_zoom_icon.setPixmap(icon_zoom.pixmap(16, 16))
+        else:
+            lbl_zoom_icon.setText("🔍")
+        zoom_bar.addWidget(lbl_zoom_icon)
+        
+        self.slider_zoom_x = QSlider(Qt.Horizontal)
+        self.slider_zoom_x.setRange(100, 800)
+        self.slider_zoom_x.setValue(100)
+        self.slider_zoom_x.setFixedWidth(100)
+        self.slider_zoom_x.setToolTip("Zoom Horizontal")
+        self.slider_zoom_x.setStyleSheet("""
+            QSlider::groove:horizontal { border: 1px solid #333; height: 4px; background: #222; border-radius: 2px; }
+            QSlider::handle:horizontal { background: #B9E640; width: 12px; margin: -4px 0; border-radius: 6px; }
+        """)
+        self.slider_zoom_x.valueChanged.connect(self._on_zoom_x_changed)
+        zoom_bar.addWidget(self.slider_zoom_x)
+        
+        zoom_bar.addSpacing(16)
+        
+        lbl_zoom_y_icon = QLabel("dB")
+        lbl_zoom_y_icon.setStyleSheet("color: #888; font-size: 11px; font-weight: bold;")
+        zoom_bar.addWidget(lbl_zoom_y_icon)
+
+        self.slider_zoom_y = QSlider(Qt.Horizontal)
+        self.slider_zoom_y.setRange(10, 500)
+        self.slider_zoom_y.setValue(100)
+        self.slider_zoom_y.setFixedWidth(80)
+        self.slider_zoom_y.setToolTip("Ganancia Visual (Zoom Y)")
+        self.slider_zoom_y.setStyleSheet("""
+            QSlider::groove:horizontal { border: 1px solid #333; height: 4px; background: #222; border-radius: 2px; }
+            QSlider::handle:horizontal { background: #1DC038; width: 12px; margin: -4px 0; border-radius: 6px; }
+        """)
+        self.slider_zoom_y.valueChanged.connect(self._on_zoom_y_changed)
+        zoom_bar.addWidget(self.slider_zoom_y)
+        
+        zoom_bar.addStretch()
+        left_layout.addLayout(zoom_bar)
+
+        # Regla de tiempo (Timeline Ruler)
+        from gui.widgets.timeline_ruler import TimelineRulerWidget
+        self.timeline_ruler = TimelineRulerWidget(
+            media_type=self.media_type,
+            duration_sec=self.duration_sec,
+            fps=self.fps
+        )
+        left_layout.addWidget(self.timeline_ruler)
+
+        # Área con scroll para el Waveform y el vúmetro
+        wave_container = QHBoxLayout()
+        wave_container.setContentsMargins(0, 0, 0, 0)
+        wave_container.setSpacing(8)
+
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.scroll_area.setFixedHeight(130)
+        self.scroll_area.setStyleSheet("""
+            QScrollArea { border: none; background: transparent; }
+            QScrollBar:horizontal {
+                border: none; background: #222; height: 10px; margin: 0px 0px 0 0px; border-radius: 5px;
+            }
+            QScrollBar::handle:horizontal {
+                background: #555; min-width: 20px; border-radius: 5px;
+            }
+            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+                border: none; background: none; width: 0px;
+            }
+        """)
+
         self.waveform_widget = SubclipWaveformWidget()
         self.waveform_widget.seek_requested.connect(self._on_waveform_seek)
         self.waveform_widget.range_changed.connect(self._on_waveform_range_changed)
-        left_layout.addWidget(self.waveform_widget)
+        self.scroll_area.setWidget(self.waveform_widget)
+        
+        wave_container.addWidget(self.scroll_area, 1)
+        self.scroll_area.viewport().installEventFilter(self)
+        # Sincronizar la regla de tiempo con el scroll
+        self.scroll_area.horizontalScrollBar().valueChanged.connect(self._sync_ruler)
+
+        from gui.widgets.audio_meter import AudioVolumeMeterWidget
+        self.audio_meter = AudioVolumeMeterWidget()
+        self.audio_meter.setFixedHeight(120)
+        wave_container.addWidget(self.audio_meter)
+
+        left_layout.addLayout(wave_container)
 
         # Barra de Controles e Información de Tiempos
         ctrl_bar = QHBoxLayout()
@@ -400,19 +605,18 @@ class SubclipEditorDialog(QDialog):
         ctrl_bar.addStretch()
 
         # Botones In [I] y Out [O] and inputs
-        self.btn_set_in = QPushButton(self.tr("[ I ] In"))
-        self.btn_set_in.setFixedHeight(28)
+        self.btn_set_in = QPushButton()
+        self.btn_set_in.setIcon(get_svg_icon("arrow_menu_open.svg"))
+        self.btn_set_in.setIconSize(QSize(20, 20))
+        self.btn_set_in.setFixedSize(32, 28)
         self.btn_set_in.setToolTip(self.tr("Establecer punto de entrada (Tecla I)"))
         self.btn_set_in.setStyleSheet("""
             QPushButton {
                 background-color: #1a271a;
                 border: 1px solid #1DC038;
-                color: #1DC038;
-                font-weight: bold;
                 border-radius: 6px;
-                padding: 0 8px;
             }
-            QPushButton:hover { background-color: #1DC038; color: white; }
+            QPushButton:hover { background-color: #1DC038; }
         """)
         self.btn_set_in.clicked.connect(self._set_in_point)
         ctrl_bar.addWidget(self.btn_set_in)
@@ -437,19 +641,18 @@ class SubclipEditorDialog(QDialog):
         self.input_time_end.editingFinished.connect(self._on_time_input_changed)
         ctrl_bar.addWidget(self.input_time_end)
 
-        self.btn_set_out = QPushButton(self.tr("[ O ] Out"))
-        self.btn_set_out.setFixedHeight(28)
+        self.btn_set_out = QPushButton()
+        self.btn_set_out.setIcon(get_svg_icon("arrow_menu_close.svg"))
+        self.btn_set_out.setIconSize(QSize(20, 20))
+        self.btn_set_out.setFixedSize(32, 28)
         self.btn_set_out.setToolTip(self.tr("Establecer punto de salida (Tecla O)"))
         self.btn_set_out.setStyleSheet("""
             QPushButton {
                 background-color: #2b1a1a;
                 border: 1px solid #FF5555;
-                color: #FF5555;
-                font-weight: bold;
                 border-radius: 6px;
-                padding: 0 8px;
             }
-            QPushButton:hover { background-color: #FF5555; color: white; }
+            QPushButton:hover { background-color: #FF5555; }
         """)
         self.btn_set_out.clicked.connect(self._set_out_point)
         ctrl_bar.addWidget(self.btn_set_out)
@@ -477,7 +680,7 @@ class SubclipEditorDialog(QDialog):
         ctrl_bar.addWidget(self.lbl_time_info)
 
         left_layout.addLayout(ctrl_bar)
-        splitter.addWidget(left_widget)
+        content_layout.addWidget(left_widget, 70)
 
         # ── Columna Derecha: Lista de Subclips Guardados + Enviar NLE ─────────
         right_widget = QWidget()
@@ -549,9 +752,8 @@ class SubclipEditorDialog(QDialog):
         self.action_send_single.triggered.connect(self._on_send_single_subclip_clicked)
         
         right_layout.addWidget(self.btn_send)
-        splitter.addWidget(right_widget)
+        content_layout.addWidget(right_widget, 30)
 
-        splitter.setSizes([600, 320])
         main_layout.addWidget(content_widget, 1)
         self._update_send_button()
         self._refresh_subclip_list()
@@ -567,21 +769,96 @@ class SubclipEditorDialog(QDialog):
         self.media_player.setSource(QUrl.fromLocalFile(self.media_path))
         self.media_player.positionChanged.connect(self._on_player_position_changed)
         self.media_player.durationChanged.connect(self._on_player_duration_changed)
+        
+        # Timer para actualizar el medidor de volumen si está reproduciendo
+        self.meter_timer = QTimer(self)
+        self.meter_timer.setInterval(16)  # ~60 FPS para fluidez
+        self.meter_timer.timeout.connect(self._update_volume_meter)
+
+    def eventFilter(self, obj, event):
+        if obj == self.scroll_area.viewport() and event.type() == QEvent.Type.Wheel:
+            modifiers = event.modifiers()
+            # Scroll normal -> Zoom X
+            if modifiers == Qt.NoModifier:
+                delta = event.angleDelta().y()
+                if delta != 0:
+                    zoom_step = 40 if delta > 0 else -40
+                    old_zoom = self.slider_zoom_x.value()
+                    new_zoom = max(self.slider_zoom_x.minimum(), min(old_zoom + zoom_step, self.slider_zoom_x.maximum()))
+                    if new_zoom != old_zoom:
+                        # Calcular posición del playhead antes del zoom
+                        h_bar = self.scroll_area.horizontalScrollBar()
+                        viewport_w = self.scroll_area.viewport().width()
+                        waveform_w = self.waveform_widget.width()
+                        playhead_x = self.waveform_widget._playback_ratio * waveform_w
+                        
+                        self.slider_zoom_x.setValue(new_zoom)
+                        
+                        # Después del zoom, centrar el scroll en el playhead
+                        new_waveform_w = self.waveform_widget.width()
+                        new_playhead_x = self.waveform_widget._playback_ratio * new_waveform_w
+                        target_scroll = int(new_playhead_x - viewport_w / 2)
+                        h_bar.setValue(max(0, target_scroll))
+                    return True
+            # Alt/Shift + Scroll -> Pan Horizontal
+            elif modifiers in (Qt.ShiftModifier, Qt.AltModifier):
+                h_bar = self.scroll_area.horizontalScrollBar()
+                delta = event.angleDelta().y()
+                if delta != 0:
+                    h_bar.setValue(h_bar.value() - delta)
+                    return True
+        return super().eventFilter(obj, event)
+
+    def _on_zoom_x_changed(self, value):
+        zoom = value / 100.0
+        base_width = self.scroll_area.viewport().width()
+        new_width = int(base_width * zoom)
+        self.waveform_widget.setMinimumWidth(new_width)
+        # Sincronizar la regla después del cambio de zoom
+        QTimer.singleShot(0, self._sync_ruler)
+
+    def _sync_ruler(self):
+        """Sincroniza la regla de tiempo con el scroll y el tamaño del waveform."""
+        self.timeline_ruler.set_sync(
+            scroll_offset=self.scroll_area.horizontalScrollBar().value(),
+            waveform_width=self.waveform_widget.width(),
+            viewport_width=self.scroll_area.viewport().width()
+        )
+
+    def _on_zoom_y_changed(self, value):
+        zoom = value / 100.0
+        self.waveform_widget.zoom_y = zoom
+        self.waveform_widget.update()
+
+    def _update_volume_meter(self):
+        if self.media_player.playbackState() == QMediaPlayer.PlayingState:
+            peaks = self.waveform_widget._display_peaks
+            if peaks:
+                ratio = self.waveform_widget.get_playback_ratio()
+                idx = int(ratio * (len(peaks) - 1))
+                if 0 <= idx < len(peaks):
+                    mn, mx = peaks[idx]
+                    val = max(abs(mn), abs(mx)) * self.waveform_widget.zoom_y
+                    self.audio_meter.set_level(min(val, 1.0))
+        else:
+            self.audio_meter.set_level(0.0)
 
     def load_waveform(self):
         self.waveform_widget.set_audio_path(self.media_path)
         mgr = WaveformCacheManager.get_instance()
-        peaks = mgr.get_cached_peaks(self.media_path)
-        if peaks is not None:
-            self.waveform_widget.set_peaks(peaks)
+        # Intentar cargar alta resolución primero
+        hires = mgr.get_cached_hires_peaks(self.media_path)
+        if hires is not None:
+            self.waveform_widget.set_hires_peaks(hires)
         else:
             self.waveform_widget.set_loading(True)
-            mgr.waveform_loaded.connect(self._on_waveform_loaded)
-            mgr.request_waveform(self.media_path)
+            mgr.hires_waveform_loaded.connect(self._on_hires_waveform_loaded)
+            mgr.request_hires_waveform(self.media_path)
 
-    def _on_waveform_loaded(self, path: str, peaks: list):
+    def _on_hires_waveform_loaded(self, path: str, peaks: list):
         if path == self.media_path:
-            self.waveform_widget.set_peaks(peaks)
+            self.waveform_widget.set_hires_peaks(peaks)
+            QTimer.singleShot(0, self._sync_ruler)
 
     def keyPressEvent(self, event):
         """Maneja las atajos de teclado I (In), O (Out) y Espacio (Play/Pause)."""
@@ -599,9 +876,12 @@ class SubclipEditorDialog(QDialog):
         if self.media_player.playbackState() == QMediaPlayer.PlayingState:
             self.media_player.pause()
             self.btn_play.setIcon(get_svg_icon("play_arrow.svg"))
+            self.meter_timer.stop()
+            self.audio_meter.set_level(0.0)
         else:
             self.media_player.play()
             self.btn_play.setIcon(get_svg_icon("pause.svg"))
+            self.meter_timer.start()
 
     def _set_in_point(self):
         pos_sec = self.media_player.position() / 1000.0
@@ -829,4 +1109,10 @@ class SubclipEditorDialog(QDialog):
 
     def closeEvent(self, event):
         self.media_player.stop()
+        self.meter_timer.stop()
         super().closeEvent(event)
+
+    def reject(self):
+        self.media_player.stop()
+        self.meter_timer.stop()
+        super().reject()

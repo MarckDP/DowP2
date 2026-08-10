@@ -94,7 +94,7 @@ class WaveformRunnable(QRunnable):
         info = get_platform_info()
         ffmpeg_exe = os.path.join(get_ffmpeg_dir(), info["binary_name"])
         
-        # Simple extraction using 1000 sample rate
+        # Extraction at 1000 Hz for icon thumbnails (low res)
         sample_rate = 1000
         cmd = [
             ffmpeg_exe, "-y", "-probesize", "32768", "-analyzeduration", "0",
@@ -136,8 +136,94 @@ class WaveformRunnable(QRunnable):
             return [float(p) / max_val for p in peaks]
         return [0.0] * self.num_peaks
 
+
+class HiResWaveformWorkerSignals(QObject):
+    finished = Signal(str, list)  # (file_path, minmax_peaks)
+    failed = Signal(str)
+
+class HiResWaveformRunnable(QRunnable):
+    """Extrae forma de onda de alta resolución con pares (min, max) para renderizado profesional."""
+    def __init__(self, file_path: str, manager: "WaveformCacheManager", num_peaks: int = 4000):
+        super().__init__()
+        self.file_path = file_path
+        self.manager = manager
+        self.num_peaks = num_peaks
+        self.signals = HiResWaveformWorkerSignals()
+
+    def run(self):
+        try:
+            peaks = self._extract_minmax_peaks()
+            if peaks is not None:
+                self.manager._save_hires_peaks_to_cache(self.file_path, peaks)
+                self.signals.finished.emit(self.file_path, peaks)
+            else:
+                self.signals.failed.emit(self.file_path)
+        except Exception as e:
+            logger.error(f"HiResWaveformRunnable: Error {self.file_path}: {e}")
+            self.signals.failed.emit(self.file_path)
+        finally:
+            self.manager._hires_task_finished(self.file_path)
+
+    def _extract_minmax_peaks(self) -> list:
+        """Extrae pares (min_normalizado, max_normalizado) de alta resolución."""
+        if not check_ffmpeg():
+            return []
+
+        info = get_platform_info()
+        ffmpeg_exe = os.path.join(get_ffmpeg_dir(), info["binary_name"])
+
+        # Alta resolución: 22050 Hz mono para capturar detalle real
+        sample_rate = 22050
+        cmd = [
+            ffmpeg_exe, "-y", "-probesize", "32768", "-analyzeduration", "0",
+            "-i", self.file_path, "-vn", "-f", "s16le", "-ac", "1", "-ar", str(sample_rate), "-"
+        ]
+
+        startupinfo = None
+        if os.name == 'nt':
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+
+        process = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, startupinfo=startupinfo
+        )
+
+        raw_data = process.stdout.read()
+        process.wait()
+
+        total_bytes = len(raw_data)
+        num_samples = total_bytes // 2
+        if num_samples == 0:
+            return []
+
+        samples = struct.unpack(f"{num_samples}h", raw_data)
+        
+        # Encontrar el pico absoluto global para normalizar
+        global_max = 1
+        for s in samples:
+            a = abs(s)
+            if a > global_max:
+                global_max = a
+        
+        # Dividir en bloques y extraer min/max real (con signo) por bloque
+        minmax_peaks = []
+        block_size = max(1, num_samples / self.num_peaks)
+        for i in range(self.num_peaks):
+            start_idx = int(i * block_size)
+            end_idx = max(start_idx + 1, int((i + 1) * block_size))
+            block = samples[start_idx:end_idx]
+            if block:
+                block_min = min(block) / global_max  # Negativo (abajo)
+                block_max = max(block) / global_max  # Positivo (arriba)
+                minmax_peaks.append((block_min, block_max))
+            else:
+                minmax_peaks.append((0.0, 0.0))
+
+        return minmax_peaks
+
 class WaveformCacheManager(QObject):
-    waveform_loaded = Signal(str, list)  # (file_path, peaks)
+    waveform_loaded = Signal(str, list)  # (file_path, peaks) - low res for icons
+    hires_waveform_loaded = Signal(str, list)  # (file_path, minmax_peaks) - high res
 
     _instance = None
 
@@ -223,6 +309,62 @@ class WaveformCacheManager(QObject):
                 json.dump(peaks, f)
         except Exception as e:
             logger.error(f"WaveformCacheManager: Error guardando json {json_path}: {e}")
+
+    def _save_hires_peaks_to_cache(self, file_path: str, peaks: list):
+        hash_key = self._get_hash_key(file_path)
+        json_path = os.path.join(CACHE_DIR, f"{hash_key}_hires.json")
+        try:
+            with open(json_path, "w", encoding="utf-8") as f:
+                json.dump(peaks, f)
+        except Exception as e:
+            logger.error(f"WaveformCacheManager: Error guardando hires json {json_path}: {e}")
+
+    def get_cached_hires_peaks(self, file_path: str) -> list | None:
+        cache_key = file_path + "_hires"
+        if cache_key in self._peaks_cache:
+            return self._peaks_cache[cache_key]
+        hash_key = self._get_hash_key(file_path)
+        json_path = os.path.join(CACHE_DIR, f"{hash_key}_hires.json")
+        if os.path.exists(json_path) and os.path.getsize(json_path) > 0:
+            try:
+                with open(json_path, "r", encoding="utf-8") as f:
+                    peaks = json.load(f)
+                # Convertir listas a tuplas
+                peaks = [(p[0], p[1]) for p in peaks]
+                self._peaks_cache[cache_key] = peaks
+                return peaks
+            except Exception:
+                pass
+        return None
+
+    def request_hires_waveform(self, file_path: str, num_peaks: int = 4000):
+        cache_key = file_path + "_hires"
+        if cache_key in self._peaks_cache:
+            return
+        if cache_key in self._pending_files:
+            return
+        cached = self.get_cached_hires_peaks(file_path)
+        if cached is not None:
+            self.hires_waveform_loaded.emit(file_path, cached)
+            return
+        self._pending_files.add(cache_key)
+        worker = HiResWaveformRunnable(file_path, self, num_peaks)
+        worker.signals.finished.connect(self._on_hires_worker_finished)
+        worker.signals.failed.connect(self._on_hires_worker_failed)
+        self.thread_pool.start(worker)
+
+    def _on_hires_worker_finished(self, file_path: str, peaks: list):
+        cache_key = file_path + "_hires"
+        self._peaks_cache[cache_key] = peaks
+        self.hires_waveform_loaded.emit(file_path, peaks)
+
+    def _on_hires_worker_failed(self, file_path: str):
+        cache_key = file_path + "_hires"
+        self._failed_files.add(cache_key)
+
+    def _hires_task_finished(self, file_path: str):
+        cache_key = file_path + "_hires"
+        self._pending_files.discard(cache_key)
 
     def _on_worker_finished(self, file_path: str, peaks: list):
         self._peaks_cache[file_path] = peaks

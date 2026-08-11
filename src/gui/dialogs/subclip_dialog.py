@@ -1231,6 +1231,12 @@ class SubclipEditorDialog(QDialog):
         self.meter_timer.stop()
         super().closeEvent(event)
 
+    def accept(self):
+        self.media_player.stop()
+        if hasattr(self, "meter_timer") and self.meter_timer:
+            self.meter_timer.stop()
+        super().accept()
+
     def reject(self):
         self.media_player.stop()
         self.meter_timer.stop()

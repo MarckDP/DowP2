@@ -360,6 +360,7 @@ class PlaybackMixin:
                         if not is_remote:
                             ThumbnailCacheManager.get_instance().request_thumbnail(path, "audio")
 
+            self.waveform_widget.set_video_only(False)
             self.waveform_widget.set_audio_path(path)
             self.waveform_widget.set_playback_ratio(0.0)
             
@@ -624,12 +625,29 @@ class PlaybackMixin:
             self.metadata_labels["bitrate_audio"].setText(rich_meta.get("bitrate_audio", "-"))
 
     def _on_video_waveform_ready(self, peaks: list):
-        """Callback para el waveform de videos: muestra los peaks si hay audio, oculta el panel si no."""
+        """Callback para el waveform de videos: muestra los peaks si hay audio, dibuja la regla si no."""
         if peaks:
+            self.waveform_widget.set_video_only(False)
             self.waveform_widget.set_peaks(peaks)
+            self.audio_panel.setVisible(True)
         else:
-            # El video no tiene pista de audio — ocultar el panel de waveform
-            self.audio_panel.setVisible(False)
+            # El video no tiene pista de audio — dibujar la regla de tiempo en su lugar
+            path = getattr(self, "current_playing_path", "")
+            dur_sec = 1.0
+            fps = 30.0
+            if path and hasattr(self, "_metadata_cache") and path in self._metadata_cache:
+                meta = self._metadata_cache[path]
+                dur_str = meta.get("duración", "0")
+                dur_sec = self._parse_duration_to_seconds(dur_str)
+                if dur_sec <= 0: dur_sec = 1.0
+                fps_str = str(meta.get("fps", "30")).replace(" fps", "")
+                try:
+                    fps = float(fps_str)
+                except:
+                    pass
+            
+            self.waveform_widget.set_video_only(True, duration=dur_sec, fps=fps)
+            self.audio_panel.setVisible(True)
 
     def _extract_rich_metadata(self, path: str, tipo: str) -> dict:
         from core.tabs.editing_media.ffprobe_metadata_manager import FFprobeMetadataManager

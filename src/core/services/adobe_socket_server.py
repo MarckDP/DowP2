@@ -88,6 +88,19 @@ class AdobeSocketServer(QThread):
                 await self.sio.emit('active_target_update', {'activeTarget': None})
                 self.active_target_changed.emit(None)
 
+        @self.sio.event
+        async def log_message(sid, data):
+            level = data.get('level', 'info').upper()
+            msg = data.get('message', '')
+            app_id = self.clients.get(sid, 'Adobe')
+            formatted_msg = f"[{app_id.upper()}] {msg}"
+            if level == 'ERROR':
+                logger.error(formatted_msg)
+            elif level == 'WARNING':
+                logger.warning(formatted_msg)
+            else:
+                logger.info(formatted_msg)
+
     def force_active_target(self, app_identifier):
         """Forces the active target to the given app_identifier if it is currently connected. Pass None to disconnect."""
         if app_identifier is None:

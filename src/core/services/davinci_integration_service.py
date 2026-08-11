@@ -369,9 +369,11 @@ class DaVinciIntegrationService(QObject):
             return False
 
         clip_item = clips_pool[0]
-        self._organize_clip_in_folders(media_pool, clip_item, abs_path)
+        folder_type = self._organize_clip_in_folders(media_pool, clip_item, abs_path)
+        has_video = folder_type in ("Video", "Imágenes")
+        has_audio = folder_type in ("Video", "Audio")
 
-        fps = float(project.GetSetting("timelineFrameRate") or 24.0)
+        timeline_fps = float(project.GetSetting("timelineFrameRate") or 24.0)
         
         timeline = project.GetCurrentTimeline()
         
@@ -382,15 +384,24 @@ class DaVinciIntegrationService(QObject):
         current_record_frame = 0
         if timeline and import_timeline:
             tc_string = timeline.GetCurrentTimecode()
-            current_record_frame = self._timecode_to_frames(tc_string, fps)
+            current_record_frame = self._timecode_to_frames(tc_string, timeline_fps)
         
         for sc in subclips:
             in_sec = sc.get("in", 0.0)
             out_sec = sc.get("out", 0.0)
             name = sc.get("name", "Subclip")
             
-            start_f = int(in_sec * fps)
-            end_f = int(out_sec * fps)
+            # Obtener FPS intrínseco del clip, hacer fallback al timeline_fps si falla
+            clip_fps = timeline_fps
+            try:
+                prop_fps = clip_item.GetClipProperty("FPS")
+                if prop_fps:
+                    clip_fps = float(prop_fps)
+            except Exception:
+                pass
+                
+            start_f = int(round(in_sec * clip_fps))
+            end_f = int(round(out_sec * clip_fps))
             
             try:
                 clip_item.SetClipProperty("In", str(start_f))
@@ -398,15 +409,46 @@ class DaVinciIntegrationService(QObject):
             except Exception: pass
             
             if timeline and import_timeline:
+                duration_sec = out_sec - in_sec
+                dur_frames = int(round(duration_sec * timeline_fps))
+                end_record_frame = current_record_frame + dur_frames
+                
+                # Buscar pista libre
+                pista_final = 1
+                num_v_tracks = timeline.GetTrackCount("video")
+                num_a_tracks = timeline.GetTrackCount("audio")
+                max_pistas = max(num_v_tracks, num_a_tracks)
+                
+                for i in range(1, max_pistas + 2):
+                    video_ok = True
+                    if has_video and i <= num_v_tracks:
+                        video_ok = self._pista_esta_libre(timeline, "video", i, current_record_frame, end_record_frame)
+                        
+                    audio_ok = True
+                    if has_audio and i <= num_a_tracks:
+                        audio_ok = self._pista_esta_libre(timeline, "audio", i, current_record_frame, end_record_frame)
+                        
+                    if video_ok and audio_ok:
+                        pista_final = i
+                        break
+                        
+                # Crear pistas si no existen
+                while timeline.GetTrackCount("video") < pista_final:
+                    timeline.AddTrack("video")
+                while timeline.GetTrackCount("audio") < (pista_final if has_audio else 0):
+                    timeline.AddTrack("audio", "stereo")
+                
                 clip_info = {
                     "mediaPoolItem": clip_item,
                     "startFrame": start_f,
                     "endFrame": end_f,
-                    "recordFrame": float(current_record_frame)
+                    "recordFrame": int(current_record_frame),
+                    "trackIndex": pista_final
                 }
                 try:
                     if media_pool.AppendToTimeline([clip_info]):
-                        current_record_frame += (end_f - start_f)
+                        # Avanzar el recordFrame según el framerate del TIMELINE, no del clip
+                        current_record_frame += dur_frames
                     else:
                         media_pool.AppendToTimeline([clip_item])
                     logger.info(f"[DaVinci] Subclip '{name}' ({in_sec:.2f}s - {out_sec:.2f}s) insertado en timeline.")

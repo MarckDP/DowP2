@@ -12,6 +12,18 @@ class AudioWaveformWidget(QWidget):
     # Señal emitida cuando el usuario hace clic para cambiar la posición del audio (seek)
     seek_requested = Signal(float)  # Retorna el porcentaje (0.0 a 1.0)
 
+    # Señal emitida cuando el usuario arrastra desde dentro de la selección rápida (lite subclip)
+    # y NO hay editor conectado: se ofrece el medio completo como arrastre nativo del SO
+    # (a una carpeta, o a un editor sin integración en vivo). Se dispara al cruzar el umbral
+    # de arrastre de Qt, como cualquier drag nativo (el archivo solo se transfiere al soltar).
+    subclip_drag_started = Signal()
+
+    # Señal emitida cuando el usuario suelta el mouse tras arrastrar desde dentro de la selección
+    # rápida y SÍ hay un editor conectado: se envía la info del subclip (in/out) por la integración
+    # en vivo ya existente, sin arrastre nativo del SO y sin cortar el archivo. Se dispara recién en
+    # mouseReleaseEvent (nunca antes ni durante el gesto).
+    subclip_send_requested = Signal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedHeight(70)
@@ -90,6 +102,12 @@ class AudioWaveformWidget(QWidget):
         self._lite_start_ratio = None
         self._lite_end_ratio = None
         self.update()
+
+    def _is_ratio_inside_lite_selection(self, ratio: float) -> bool:
+        in_ratio, out_ratio = self.get_lite_selection()
+        if in_ratio is None:
+            return False
+        return in_ratio <= ratio <= out_ratio
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -282,7 +300,9 @@ class AudioWaveformWidget(QWidget):
             painter.drawLine(int(playhead_x), 4, int(playhead_x), height - 4)
 
     def mousePressEvent(self, event):
-        """Permite hacer click en la onda para buscar posiciones (seeking) o iniciar selección (clic derecho)."""
+        """Permite hacer click en la onda para buscar posiciones (seeking) o iniciar selección (clic derecho).
+        Si el clic izquierdo cae dentro de una selección rápida (lite subclip) ya existente, además
+        se arma como un posible inicio de arrastre nativo (ver mouseMoveEvent)."""
         x = event.position().x()
         start_x = 10
         end_x = self.width() - 10
@@ -290,8 +310,11 @@ class AudioWaveformWidget(QWidget):
         if span > 0:
             ratio = (x - start_x) / span
             ratio = max(0.0, min(ratio, 1.0))
-            
+
             if event.button() == Qt.LeftButton:
+                self._drag_press_pos = event.position()
+                self._pending_subclip_drag = self._is_ratio_inside_lite_selection(ratio)
+                self._armed_for_editor_send = False
                 self.seek_requested.emit(ratio)
                 self.set_playback_ratio(ratio)
             elif event.button() == Qt.RightButton:
@@ -300,7 +323,23 @@ class AudioWaveformWidget(QWidget):
                 self.update()
 
     def mouseMoveEvent(self, event):
-        """Permite arrastrar el cabezal de reproducción (scrubbing) o la selección (clic derecho) a través de la onda."""
+        """Permite arrastrar el cabezal de reproducción (scrubbing) o la selección (clic derecho) a través de la
+        onda. Si el clic izquierdo comenzó dentro de la selección rápida y el mouse se mueve más allá del umbral
+        de arrastre de Qt, se interpreta como intención de arrastrar el subclip. Con un editor conectado no se
+        dispara nada todavía (se espera a mouseReleaseEvent); sin editor conectado se arma el arrastre nativo
+        del SO del medio completo de inmediato, ya que ese mecanismo exige iniciarse con el botón aún presionado."""
+        if event.buttons() & Qt.LeftButton and getattr(self, "_pending_subclip_drag", False):
+            from PySide6.QtWidgets import QApplication
+            if (event.position() - self._drag_press_pos).manhattanLength() >= QApplication.startDragDistance():
+                self._pending_subclip_drag = False
+                from core.services.editor_integration_manager import EditorIntegrationManager
+                editor_mgr = EditorIntegrationManager.get_instance()
+                if editor_mgr and editor_mgr.active_editor:
+                    self._armed_for_editor_send = True
+                else:
+                    self.subclip_drag_started.emit()
+            return
+
         x = event.position().x()
         start_x = 10
         end_x = self.width() - 10
@@ -308,7 +347,7 @@ class AudioWaveformWidget(QWidget):
         if span > 0:
             ratio = (x - start_x) / span
             ratio = max(0.0, min(ratio, 1.0))
-            
+
             if event.buttons() & Qt.LeftButton:
                 self.seek_requested.emit(ratio)
                 self.set_playback_ratio(ratio)
@@ -323,4 +362,9 @@ class AudioWaveformWidget(QWidget):
             if self._lite_start_ratio is not None and self._lite_end_ratio is not None:
                 if abs(self._lite_start_ratio - self._lite_end_ratio) < 0.005:
                     self.clear_lite_selection()
+        elif event.button() == Qt.LeftButton:
+            self._pending_subclip_drag = False
+            if getattr(self, "_armed_for_editor_send", False):
+                self._armed_for_editor_send = False
+                self.subclip_send_requested.emit()
         super().mouseReleaseEvent(event)

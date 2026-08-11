@@ -52,6 +52,51 @@ class MediaTableModel(QAbstractTableModel):
         self._view_mode = mode
         if grid_size_hint:
             self._grid_size_hint = grid_size_hint
+
+    def flags(self, index):
+        if not index.isValid():
+            return Qt.NoItemFlags
+        base = Qt.ItemIsEnabled | Qt.ItemIsSelectable
+        item = self._media_items[index.row()]
+        if item.get("tipo") not in ("load_more", "empty"):
+            base |= Qt.ItemIsDragEnabled
+        return base
+
+    def _resolve_drag_path(self, item):
+        """Devuelve una ruta local existente para arrastrar el ítem como archivo del SO.
+        Si es local, retorna la ruta. Si es remoto y ya se descargó en alta calidad, retorna dest_path.
+        Si es remoto y existe la previsualización en caché, la retorna como fallback."""
+        path = item.get("ruta", "")
+        if path and not path.startswith("http://") and not path.startswith("https://"):
+            return path if os.path.exists(path) else None
+        dest_path = item.get("dest_path")
+        if dest_path and os.path.exists(dest_path):
+            return dest_path
+        from core.tabs.editing_media.freesound_preview_cache import FreesoundPreviewCacheManager
+        cached = FreesoundPreviewCacheManager.get_instance().get_cached_path(path)
+        if cached and os.path.exists(cached):
+            return cached
+        return None
+
+    def mimeTypes(self):
+        return ["text/uri-list"]
+
+    def mimeData(self, indexes):
+        from PySide6.QtCore import QMimeData, QUrl
+        seen_rows = set()
+        urls = []
+        for idx in indexes:
+            if not idx.isValid() or idx.row() in seen_rows:
+                continue
+            seen_rows.add(idx.row())
+            path = self._resolve_drag_path(self._media_items[idx.row()])
+            if path:
+                urls.append(QUrl.fromLocalFile(path))
+        if not urls:
+            return None
+        mime = QMimeData()
+        mime.setUrls(urls)
+        return mime
         
     def get_cached_icon(self, icon_name: str, color: str, size: int = None) -> QIcon:
         key = f"{icon_name}_{color}_{size}"

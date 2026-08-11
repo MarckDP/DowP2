@@ -166,19 +166,7 @@ class PlaybackMixin:
         if hasattr(self, "waveform_widget") and getattr(self, "current_playing_path", None) == orig_path:
             in_r, out_r = self.waveform_widget.get_lite_selection()
             if in_r is not None and out_r is not None:
-                dur_sec = 0
-                curr_type = getattr(self, "current_playing_type", "audio")
-                if curr_type == "audio" and self.audio_player and self.audio_player.duration() > 0:
-                    dur_sec = self.audio_player.duration() / 1000.0
-                elif curr_type == "video" and hasattr(self, "preview_box") and self.preview_box.media_player.duration() > 0:
-                    dur_sec = self.preview_box.media_player.duration() / 1000.0
-
-                if dur_sec == 0:
-                    dur_str = item_data.get("duración", "0")
-                    if orig_path in getattr(self, "_metadata_cache", {}):
-                        dur_str = self._metadata_cache[orig_path].get("duración", dur_str)
-                    dur_sec = self._parse_duration_to_seconds(dur_str)
-
+                dur_sec = self._get_playing_duration_seconds(orig_path, item_data)
                 if dur_sec > 0:
                     lite_subs = [{
                         "name": f"{label_base}_lite",
@@ -189,6 +177,205 @@ class PlaybackMixin:
         if lite_subs:
             return lite_subs
         return list(getattr(self, "_saved_subclips_cache", {}).get(orig_path, []))
+
+    def _get_playing_duration_seconds(self, orig_path, item_data):
+        """Devuelve la duración en segundos del medio actualmente cargado, usando el reproductor
+        activo (audio/video) o, si no está disponible, la duración cacheada en los metadatos."""
+        dur_sec = 0
+        curr_type = getattr(self, "current_playing_type", "audio")
+        if curr_type == "audio" and self.audio_player and self.audio_player.duration() > 0:
+            dur_sec = self.audio_player.duration() / 1000.0
+        elif curr_type == "video" and hasattr(self, "preview_box") and self.preview_box.media_player.duration() > 0:
+            dur_sec = self.preview_box.media_player.duration() / 1000.0
+
+        if dur_sec == 0:
+            dur_str = item_data.get("duración", "0")
+            if orig_path in getattr(self, "_metadata_cache", {}):
+                dur_str = self._metadata_cache[orig_path].get("duración", dur_str)
+            dur_sec = self._parse_duration_to_seconds(dur_str)
+        return dur_sec
+
+    def _resolve_local_drag_path(self, orig_path, item_data):
+        """Resuelve una ruta local existente para orig_path (directo si es local, o 'dest_path' si
+        es remoto y ya se descargó), o None si todavía no hay un archivo real disponible."""
+        is_remote = orig_path.startswith("http://") or orig_path.startswith("https://")
+        if is_remote:
+            dest_path = item_data.get("dest_path")
+            return dest_path if (dest_path and os.path.exists(dest_path)) else None
+        return orig_path if os.path.exists(orig_path) else None
+
+    def _cut_subclip_ffmpeg(self, input_path: str, output_path: str, start_sec: float, end_sec: float) -> bool:
+        """Recorta con precisión un fragmento de audio usando FFmpeg y lo guarda en output_path."""
+        import subprocess
+        import shutil
+        from core.setup.ffmpeg_setup import get_ffmpeg_dir
+        
+        ffmpeg_exe = os.path.join(get_ffmpeg_dir(), "ffmpeg.exe" if os.name == 'nt' else "ffmpeg")
+        if not os.path.exists(ffmpeg_exe):
+            ffmpeg_exe = shutil.which("ffmpeg") or "ffmpeg"
+
+        cmd = [
+            ffmpeg_exe,
+            "-y",
+            "-ss", f"{start_sec:.3f}",
+            "-to", f"{end_sec:.3f}",
+            "-i", input_path,
+            "-c", "copy",
+            output_path
+        ]
+
+        startupinfo = None
+        if os.name == 'nt':
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+
+        try:
+            res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, startupinfo=startupinfo, timeout=15)
+            if res.returncode == 0 and os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+                logger.info(f"[EditingMedia] Subclip recortado con éxito (stream copy) -> {output_path}")
+                return True
+
+            cmd_fb = [
+                ffmpeg_exe,
+                "-y",
+                "-ss", f"{start_sec:.3f}",
+                "-to", f"{end_sec:.3f}",
+                "-i", input_path,
+                output_path
+            ]
+            res_fb = subprocess.run(cmd_fb, stdout=subprocess.PIPE, stderr=subprocess.PIPE, startupinfo=startupinfo, timeout=15)
+            if res_fb.returncode == 0 and os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+                logger.info(f"[EditingMedia] Subclip recortado con éxito (re-encode fallback) -> {output_path}")
+                return True
+        except Exception as e:
+            logger.error(f"[EditingMedia] Error ejecutando FFmpeg para recortar subclip: {e}")
+
+        return False
+
+    def _on_waveform_subclip_drag_requested(self):
+        """El usuario arrastró desde dentro de la selección rápida (lite subclip):
+        1. Garantiza que el medio original de alta calidad esté descargado a disco.
+        2. Si hay un rango in/out seleccionado, usa FFmpeg para cortar el fragmento y guardarlo en la carpeta designada de descargas de alta calidad.
+        3. Pasa la ruta del archivo recortado (o completo) al QDrag nativo."""
+        if getattr(self, "_in_waveform_drag", False):
+            return
+        self._in_waveform_drag = True
+        try:
+            item_data = self._get_current_media_data() if hasattr(self, "_get_current_media_data") else None
+            orig_path = getattr(self, "last_selected_media_path", None) or (item_data.get("ruta") if item_data else None)
+            if not item_data or not orig_path:
+                return
+
+            is_remote = orig_path.startswith("http://") or orig_path.startswith("https://")
+            local_path = item_data.get("dest_path")
+            if is_remote and (not local_path or not os.path.exists(local_path)):
+                if hasattr(self, "ensure_hq_download_blocking"):
+                    local_path = self.ensure_hq_download_blocking(item_data)
+            if not local_path or not os.path.exists(local_path):
+                if not is_remote and os.path.exists(orig_path):
+                    local_path = orig_path
+
+            if not local_path or not os.path.exists(local_path):
+                logger.info(f"[EditingMedia] Arrastre de subclip cancelado: '{item_data.get('nombre', orig_path)}' no está listo en disco.")
+                return
+
+            drag_path = local_path
+            in_ratio, out_ratio = (None, None)
+            if hasattr(self, "waveform_widget"):
+                in_ratio, out_ratio = self.waveform_widget.get_lite_selection()
+
+            if in_ratio is not None and out_ratio is not None and out_ratio > in_ratio:
+                dur_sec = self._get_playing_duration_seconds(orig_path, item_data)
+                if dur_sec > 0:
+                    in_sec = in_ratio * dur_sec
+                    out_sec = out_ratio * dur_sec
+                    
+                    # Resolver carpeta designada para descargas de alta calidad
+                    if is_remote and hasattr(self, "_resolve_freesound_dest_path"):
+                        dest_dir = os.path.dirname(self._resolve_freesound_dest_path(item_data))
+                    else:
+                        dest_dir = os.path.dirname(local_path)
+                    os.makedirs(dest_dir, exist_ok=True)
+
+                    base_name, ext = os.path.splitext(os.path.basename(local_path))
+                    if not ext: ext = ".wav"
+                    
+                    # Crear nombre único para el subclip en la carpeta de alta calidad
+                    count = 1
+                    sub_filename = f"{base_name}_subclip_{count:02d}{ext}"
+                    sub_path = os.path.join(dest_dir, sub_filename).replace("\\", "/")
+                    while os.path.exists(sub_path):
+                        count += 1
+                        sub_filename = f"{base_name}_subclip_{count:02d}{ext}"
+                        sub_path = os.path.join(dest_dir, sub_filename).replace("\\", "/")
+
+                    if self._cut_subclip_ffmpeg(local_path, sub_path, in_sec, out_sec):
+                        drag_path = sub_path
+                        if hasattr(self, "controller"):
+                            self.controller.add_to_downloaded_collection(sub_path)
+
+            from PySide6.QtCore import QMimeData, QUrl as QUrlDrag
+            from PySide6.QtGui import QDrag
+            mime = QMimeData()
+            mime.setUrls([QUrlDrag.fromLocalFile(drag_path)])
+            drag = QDrag(self.waveform_widget)
+            drag.setMimeData(mime)
+            drag.exec(Qt.CopyAction)
+            # Limpieza del estado ':hover' del QSS tras el drag nativo (mismo problema que en las vistas de lista).
+            from PySide6.QtCore import QEvent
+            from PySide6.QtWidgets import QApplication
+            QApplication.sendEvent(self.waveform_widget, QEvent(QEvent.Leave))
+            self.waveform_widget.update()
+        finally:
+            self._in_waveform_drag = False
+
+    def _on_waveform_subclip_send_requested(self):
+        """El usuario soltó el mouse tras arrastrar desde dentro de la selección rápida y SÍ hay un
+        editor conectado: se envía la info del subclip (in/out) por la integración en vivo ya
+        existente (mismo camino que usa el botón 'Enviar'), sin arrastre nativo del SO y sin cortar
+        el archivo con FFmpeg."""
+        from core.services.editor_integration_manager import EditorIntegrationManager
+        editor_mgr = EditorIntegrationManager.get_instance()
+        if not editor_mgr or not editor_mgr.active_editor:
+            return
+
+        item_data = self._get_current_media_data() if hasattr(self, "_get_current_media_data") else None
+        orig_path = getattr(self, "last_selected_media_path", None) or (item_data.get("ruta") if item_data else None)
+        if not item_data or not orig_path:
+            return
+
+        in_ratio, out_ratio = self.waveform_widget.get_lite_selection()
+        if in_ratio is None or out_ratio is None:
+            return
+
+        local_path = self._resolve_local_drag_path(orig_path, item_data)
+        if not local_path:
+            logger.info(f"[EditingMedia] Envío de subclip cancelado: '{item_data.get('nombre', orig_path)}' es remoto y aún no está descargado en alta calidad.")
+            return
+
+        dur_sec = self._get_playing_duration_seconds(orig_path, item_data)
+        if dur_sec <= 0:
+            return
+
+        in_sec = round(in_ratio * dur_sec, 3)
+        out_sec = round(out_ratio * dur_sec, 3)
+        if out_sec - in_sec < 0.05:
+            return
+
+        label_base = os.path.splitext(item_data.get("nombre") or os.path.basename(local_path))[0] or "clip"
+        subs = [{"name": f"{label_base}_lite", "in": in_sec, "out": out_sec}]
+        pkg = self._build_send_package(item_data, local_path, captured_subs=subs)
+
+        logger.info(f"[EditingMedia] Enviando subclip rápido ({in_sec}s-{out_sec}s) de '{local_path}' a {editor_mgr.active_editor}")
+        if hasattr(self, "_send_editor_state"):
+            self._send_editor_state.start("Enviando")
+        try:
+            ok = editor_mgr.send_subclips(pkg)
+        except Exception as e:
+            logger.error(f"[EditingMedia] Excepción enviando subclip al editor: {e}")
+            ok = False
+        if hasattr(self, "_send_editor_state"):
+            self._send_editor_state.finish(bool(ok), "Éxito" if ok else "Error")
 
     def _build_send_package(self, item_data, local_path, captured_subs=None):
         """Construye el paquete a enviar al editor usando el archivo local ya resuelto en alta calidad."""
@@ -536,7 +723,7 @@ class PlaybackMixin:
                     def _on_remote_waveform_finished(peaks, target_url=waveform_url, req_path=path):
                         if peaks:
                             fs_cache.cache_waveform_peaks(target_url, peaks)
-                        if getattr(self, "active_remote_audio_url", None) == req_path:
+                        if req_path == getattr(self, "current_playing_path", None) or req_path == getattr(self, "last_selected_media_path", None) or getattr(self, "active_remote_audio_url", None) == req_path:
                             self.waveform_widget.set_peaks(peaks)
 
                     self.remote_waveform_thread.finished.connect(_on_remote_waveform_finished)
@@ -868,6 +1055,25 @@ class PlaybackMixin:
 
 
     # ── Métodos de Control para el Reproductor de Audio Central ─────────────
+    def pause_playback(self):
+        """Pausa inmediatamente cualquier reproducción activa de audio, video o audio+video."""
+        from gui.styles import apply_player_play_button_style
+        # 1. Pausar reproductor de audio central
+        if hasattr(self, "audio_player") and self.audio_player:
+            if self.audio_player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
+                self.audio_player.pause()
+                self._user_explicitly_paused = True
+                if hasattr(self, "btn_play") and self.btn_play:
+                    apply_player_play_button_style(self.btn_play, is_playing=False, icon_size=14)
+
+        # 2. Pausar reproductor de video de vista previa
+        if hasattr(self, "preview_box") and self.preview_box and hasattr(self.preview_box, "media_player"):
+            player = self.preview_box.media_player
+            if player and player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
+                player.pause()
+                if hasattr(self.preview_box, "btn_play_pause") and self.preview_box.btn_play_pause:
+                    apply_player_play_button_style(self.preview_box.btn_play_pause, is_playing=False, icon_size=14)
+
     def _on_play_clicked(self):
         from gui.styles import apply_player_play_button_style
         if not self.audio_player:

@@ -87,6 +87,11 @@ class SubclipWaveformWidget(QWidget):
             self.loading_timer.stop()
         self.update()
 
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        if hasattr(self, "loading_timer") and self.loading_timer.isActive():
+            self.loading_timer.stop()
+
     def set_error(self, is_error: bool, message: str = ""):
         """Muestra un estado de error (p.ej. falló la descarga en alta calidad) en la zona de la waveform."""
         self.is_error = is_error
@@ -921,13 +926,32 @@ class SubclipEditorDialog(QDialog):
 
         if self.media_path and os.path.exists(self.media_path):
             self.media_player.setSource(QUrl.fromLocalFile(self.media_path))
+            if self.media_type == "video":
+                QTimer.singleShot(50, self._render_initial_frame)
+
         self.media_player.positionChanged.connect(self._on_player_position_changed)
         self.media_player.durationChanged.connect(self._on_player_duration_changed)
+        self.media_player.mediaStatusChanged.connect(self._on_media_status_changed)
         
         # Timer para actualizar el medidor de volumen si está reproduciendo
         self.meter_timer = QTimer(self)
         self.meter_timer.setInterval(16)  # ~60 FPS para fluidez
         self.meter_timer.timeout.connect(self._update_volume_meter)
+
+    def _render_initial_frame(self):
+        """Forzar al reproductor de video a decodificar y presentar el primer fotograma en QVideoWidget."""
+        if self.media_type == "video" and self.media_player:
+            state = self.media_player.playbackState()
+            if state == QMediaPlayer.PlaybackState.StoppedState:
+                pos_ms = int(self.in_sec * 1000) if self.in_sec > 0 else 0
+                self.media_player.pause()
+                self.media_player.setPosition(pos_ms)
+
+    def _on_media_status_changed(self, status):
+        if self.media_type == "video" and status in (QMediaPlayer.MediaStatus.LoadedMedia, QMediaPlayer.MediaStatus.BufferedMedia):
+            if not getattr(self, "_first_frame_rendered", False):
+                self._first_frame_rendered = True
+                self._render_initial_frame()
 
     def eventFilter(self, obj, event):
         if obj == self.scroll_area.viewport() and event.type() == QEvent.Type.Wheel:
@@ -1027,13 +1051,53 @@ class SubclipEditorDialog(QDialog):
             self.waveform_widget.set_hires_peaks(hires)
         else:
             self.waveform_widget.set_loading(True)
-            mgr.hires_waveform_loaded.connect(self._on_hires_waveform_loaded)
+            if not getattr(self, "_hires_signal_connected", False):
+                try:
+                    mgr.hires_waveform_loaded.connect(self._on_hires_waveform_loaded)
+                    self._hires_signal_connected = True
+                except Exception:
+                    pass
             mgr.request_hires_waveform(self.media_path)
 
     def _on_hires_waveform_loaded(self, path: str, peaks: list):
         if path == self.media_path:
             self.waveform_widget.set_hires_peaks(peaks)
             QTimer.singleShot(0, self._sync_ruler)
+
+    def _cleanup_waveform_signals(self):
+        """Desconecta las señales del singleton global de caché para evitar fugas y descargas fatales."""
+        if getattr(self, "_hires_signal_connected", False):
+            try:
+                mgr = WaveformCacheManager.get_instance()
+                mgr.hires_waveform_loaded.disconnect(self._on_hires_waveform_loaded)
+            except Exception:
+                pass
+            self._hires_signal_connected = False
+
+        if hasattr(self, "waveform_widget") and self.waveform_widget:
+            self.waveform_widget.set_loading(False)
+            self.waveform_widget.set_downloading(False)
+
+        if hasattr(self, "media_player") and self.media_player:
+            try:
+                self.media_player.stop()
+            except Exception:
+                pass
+
+        if hasattr(self, "meter_timer") and self.meter_timer and self.meter_timer.isActive():
+            self.meter_timer.stop()
+
+    def closeEvent(self, event):
+        self._cleanup_waveform_signals()
+        super().closeEvent(event)
+
+    def reject(self):
+        self._cleanup_waveform_signals()
+        super().reject()
+
+    def accept(self):
+        self._cleanup_waveform_signals()
+        super().accept()
 
     def _set_pending_state(self, pending: bool):
         """Activa/desactiva el modo 'pendiente de descarga': deshabilita controles de edición/envío
@@ -1071,7 +1135,10 @@ class SubclipEditorDialog(QDialog):
         except Exception as e:
             logger.error(f"[SubclipDialog] No se pudo refrescar el FPS tras la descarga: {e}")
 
+        self._first_frame_rendered = False
         self.media_player.setSource(QUrl.fromLocalFile(local_path))
+        if self.media_type == "video":
+            QTimer.singleShot(50, self._render_initial_frame)
         self._set_pending_state(False)
         self.load_waveform()
 

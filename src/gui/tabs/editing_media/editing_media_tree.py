@@ -359,6 +359,13 @@ class TreeListMixin:
                     if is_downloaded and found_path:
                         item["dest_path"] = found_path
 
+                if getattr(self, "_pending_scroll_restore", None) is None:
+                    scroll_widget = self.media_table if getattr(self, "view_mode", "grid") == "list" and hasattr(self, "media_table") else self.media_list
+                    if scroll_widget and hasattr(scroll_widget, "verticalScrollBar"):
+                        val = scroll_widget.verticalScrollBar().value()
+                        if val > 0:
+                            self._pending_scroll_restore = val
+
                 self._refreshing_media_list = True
                 self.media_model.set_data(self.online_results)
                 from PySide6.QtCore import QTimer
@@ -456,6 +463,13 @@ class TreeListMixin:
                 display_items.append({"nombre": "Cargar más", "tipo": "load_more"})
             else:
                 display_items = filtered_items
+
+            if getattr(self, "_pending_scroll_restore", None) is None:
+                scroll_widget = self.media_table if getattr(self, "view_mode", "grid") == "list" and hasattr(self, "media_table") else self.media_list
+                if scroll_widget and hasattr(scroll_widget, "verticalScrollBar"):
+                    val = scroll_widget.verticalScrollBar().value()
+                    if val > 0:
+                        self._pending_scroll_restore = val
 
             self._refreshing_media_list = True
             self.media_model.set_data(display_items)
@@ -1018,9 +1032,19 @@ class TreeListMixin:
         self._clear_metadata()
 
     def dragEnterEvent(self, event):
-        if event.mimeData().hasUrls():
+        if event.mimeData().hasUrls() and event.source() is None:
             event.acceptProposedAction()
-            self.setStyleSheet(f"border: 2px dashed {self._get_border_accent_color()};")
+            from gui.styles import get_theme_token
+            color = self._get_border_accent_color()
+            fondo_secundario = get_theme_token('fondo_secundario', '#1e1e1e')
+            if hasattr(self, "col2_container"):
+                self.col2_container.setStyleSheet(f"""
+                    QFrame#mediaListFrame {{
+                        background-color: {fondo_secundario};
+                        border: 2px dashed {color};
+                        border-radius: 12px;
+                    }}
+                """)
 
     def _get_border_accent_color(self):
         # Usar getter para evitar imports circulares de estilos si es posible
@@ -1028,9 +1052,11 @@ class TreeListMixin:
         return get_theme_token('acento_primario', '#B9E640')
 
     def dragLeaveEvent(self, event):
+        self.setStyleSheet("")
         self._apply_custom_styles()
 
     def dropEvent(self, event):
+        self.setStyleSheet("")
         self._apply_custom_styles()
         urls = event.mimeData().urls()
         

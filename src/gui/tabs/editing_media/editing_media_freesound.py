@@ -146,6 +146,72 @@ class FreesoundMixin:
         thread.error.connect(_on_error)
         thread.start()
 
+    def ensure_hq_download_blocking(self, item_data: dict, timeout_ms=10000):
+        """
+        Garantiza que el archivo original en alta calidad de Freesound esté descargado
+        en disco antes de iniciar un arrastre nativo hacia otra app (Premiere/DaVinci/Explorador).
+        Si aún no se ha descargado, bloquea limpiamente con un loop de eventos controlado.
+        """
+        if not item_data or not isinstance(item_data, dict):
+            return None
+
+        dest = item_data.get("dest_path")
+        if dest and os.path.exists(dest):
+            return dest
+
+        if getattr(self, "_in_hq_drag_download", False):
+            return None
+        self._in_hq_drag_download = True
+
+        try:
+            token = getattr(self.controller, "freesound_auth", {}).get("access_token", "")
+            if not token:
+                from core.tabs.editing_media.freesound_preview_cache import FreesoundPreviewCacheManager
+                cached = FreesoundPreviewCacheManager.get_instance().get_cached_path(item_data.get("ruta", ""))
+                if cached and os.path.exists(cached):
+                    item_data["dest_path"] = cached
+                    return cached
+                return None
+
+            from PySide6.QtCore import QEventLoop, QTimer, Qt
+            from PySide6.QtWidgets import QApplication
+
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            loop = QEventLoop()
+            timer = QTimer(self)
+            timer.setSingleShot(True)
+            timer.timeout.connect(loop.quit)
+            timer.start(timeout_ms)
+
+            def _on_done(resolved_p):
+                if timer.isActive():
+                    timer.stop()
+                if loop.isRunning():
+                    loop.quit()
+
+            self._start_high_quality_download(
+                item_data,
+                on_success=lambda p: _on_done(p),
+                on_error=lambda e: _on_done(None)
+            )
+
+            loop.exec()
+            QApplication.restoreOverrideCursor()
+
+            res_path = item_data.get("dest_path")
+            if res_path and os.path.exists(res_path):
+                return res_path
+
+            from core.tabs.editing_media.freesound_preview_cache import FreesoundPreviewCacheManager
+            cached = FreesoundPreviewCacheManager.get_instance().get_cached_path(item_data.get("ruta", ""))
+            if cached and os.path.exists(cached):
+                item_data["dest_path"] = cached
+                return cached
+
+            return None
+        finally:
+            self._in_hq_drag_download = False
+
     def _update_media_input_changed(self, text):
         if hasattr(self, "search_spinner"):
             self.search_spinner.start()

@@ -308,6 +308,9 @@ class MainWindow(QMainWindow):
 
     def on_tab_changed(self, index):
         """Se ejecuta al cambiar de pestaña."""
+        if hasattr(self, "tab_editing") and self.tab_editing and hasattr(self.tab_editing, "pause_playback"):
+            self.tab_editing.pause_playback()
+
         if self.tabs.widget(index) == self.tab_single:
             logger.info("MainWindow: Recargando etiquetas en Proceso Avanzado")
             self.tab_single.video_details.load_labels()

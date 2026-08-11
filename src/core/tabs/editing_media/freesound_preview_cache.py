@@ -2,6 +2,7 @@
 import os
 import time
 import hashlib
+import json
 import requests
 from PySide6.QtCore import QObject, Signal, QRunnable, QThreadPool
 from core.logger.logger_manager import logger
@@ -206,8 +207,13 @@ class FreesoundPreviewCacheManager(QObject):
                 logger.error(f"FreesoundPreviewCacheManager: Error eliminando archivo LRU {f}: {e}")
 
     # ---------------- CACHÉ LRU DE WAVEFORMS (Picos) ----------------
+    def _get_waveform_json_path(self, waveform_url: str) -> str:
+        """Genera una ruta de archivo JSON persistente en disco para los picos de forma de onda."""
+        hash_str = hashlib.sha256(waveform_url.encode('utf-8')).hexdigest()[:16]
+        return os.path.join(self.cache_dir, f"wf_peaks_{hash_str}.json")
+
     def get_cached_waveform_peaks(self, waveform_url: str) -> list[float] | None:
-        """Retorna los picos de forma de onda procesados si ya están en la caché LRU (máx 10)."""
+        """Retorna los picos de forma de onda procesados desde la RAM o desde el archivo en disco."""
         if not hasattr(self, "_waveform_peaks_cache"):
             self._waveform_peaks_cache: dict[str, list[float]] = {}
             self._waveform_access_order: list[str] = []
@@ -217,10 +223,24 @@ class FreesoundPreviewCacheManager(QObject):
                 self._waveform_access_order.remove(waveform_url)
             self._waveform_access_order.append(waveform_url)
             return self._waveform_peaks_cache[waveform_url]
+
+        # Si no está en la memoria RAM, buscar el archivo JSON persistente en disco
+        json_path = self._get_waveform_json_path(waveform_url)
+        if os.path.exists(json_path) and os.path.getsize(json_path) > 0:
+            try:
+                with open(json_path, 'r', encoding='utf-8') as f:
+                    peaks = json.load(f)
+                if isinstance(peaks, list) and peaks:
+                    self._waveform_peaks_cache[waveform_url] = peaks
+                    self._waveform_access_order.append(waveform_url)
+                    return peaks
+            except Exception as e:
+                logger.error(f"FreesoundPreviewCacheManager: Error leyendo json de picos {json_path}: {e}")
+
         return None
 
     def cache_waveform_peaks(self, waveform_url: str, peaks: list[float]):
-        """Almacena los picos de forma de onda calculados aplicando límite LRU de 10 elementos."""
+        """Almacena los picos de forma de onda en RAM y en disco de forma persistente."""
         if not hasattr(self, "_waveform_peaks_cache"):
             self._waveform_peaks_cache: dict[str, list[float]] = {}
             self._waveform_access_order: list[str] = []
@@ -237,6 +257,14 @@ class FreesoundPreviewCacheManager(QObject):
 
             self._waveform_peaks_cache[waveform_url] = peaks
             self._waveform_access_order.append(waveform_url)
+
+        # Guardar en disco de forma persistente
+        json_path = self._get_waveform_json_path(waveform_url)
+        try:
+            with open(json_path, 'w', encoding='utf-8') as f:
+                json.dump(peaks, f)
+        except Exception as e:
+            logger.error(f"FreesoundPreviewCacheManager: Error guardando json de picos {json_path}: {e}")
 
         # Notificar al resto de la aplicación (ej. MediaListModel) que los picos de esta URL están listos
         self.waveform_peaks_ready.emit(waveform_url, peaks)

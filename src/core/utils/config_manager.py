@@ -86,3 +86,11 @@ def save_config(config):
             json.dump(save_dict, f, indent=4, ensure_ascii=False)
     except Exception as e:
         logger.error(f"ConfigManager: Error guardando config: {e}")
+
+def get_default_web_download_dir():
+    """Retorna la carpeta de descargas web predeterminada configurada o ~/Downloads."""
+    cfg = get_config()
+    val = cfg.get("default_web_download_dir")
+    if val and os.path.exists(val):
+        return os.path.normpath(val).replace("\\", "/")
+    return os.path.normpath(os.path.expanduser("~/Downloads")).replace("\\", "/")

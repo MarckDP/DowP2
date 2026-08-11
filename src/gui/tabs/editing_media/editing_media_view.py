@@ -61,6 +61,46 @@ from gui.tabs.editing_media.media_model import MediaTableModel
 from core.tabs.editing_media.thumbnail_cache_manager import ThumbnailCacheManager
 from core.utils.config_manager import get_config, save_config
 
+class _DragCleanupMixin:
+    """Tras un QDrag nativo hacia otra aplicación (Premiere/AE/DaVinci/Explorador), Qt no
+    siempre entrega un evento Leave al viewport porque el SO tomó el control del mouse durante
+    el arrastre. Sin ese evento el estado ':hover' del stylesheet queda "pegado" indefinidamente.
+    Forzamos un Leave sintético + repintado apenas termina el exec() nativo para restaurarlo."""
+
+    def startDrag(self, supportedActions):
+        if getattr(self, "_is_starting_drag", False):
+            return
+        self._is_starting_drag = True
+        try:
+            model = self.model()
+            if model and hasattr(self, "selectedIndexes"):
+                indexes = self.selectedIndexes()
+                for idx in indexes:
+                    if hasattr(model, "get_item"):
+                        item = model.get_item(idx)
+                        if item and item.get("es_remoto"):
+                            dest = item.get("dest_path")
+                            if not dest or not os.path.exists(dest):
+                                w = self.parentWidget()
+                                while w and not hasattr(w, "ensure_hq_download_blocking"):
+                                    w = w.parentWidget()
+                                if w and hasattr(w, "ensure_hq_download_blocking"):
+                                    w.ensure_hq_download_blocking(item)
+            super().startDrag(supportedActions)
+            QApplication.sendEvent(self.viewport(), QEvent(QEvent.Leave))
+            self.viewport().update()
+        finally:
+            self._is_starting_drag = False
+
+
+class _MediaTreeView(_DragCleanupMixin, QTreeView):
+    pass
+
+
+class _MediaListView(_DragCleanupMixin, QListView):
+    pass
+
+
 class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
     """Pestaña 'Medios de Edición' con una distribución visual de tres paneles de 20/40/40."""
     
@@ -160,6 +200,11 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         self._update_tree_view()
         from PySide6.QtCore import QTimer
         QTimer.singleShot(150, self._update_media_list)
+
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        if hasattr(self, "pause_playback"):
+            self.pause_playback()
 
     def init_ui(self):
         # Layout principal
@@ -515,7 +560,7 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         self.media_model.global_sort_requested.connect(self._on_global_sort_requested)
 
         # 1. Modo Lista Tabular (QTreeView multi-columna estilo SoundQ)
-        self.media_table = QTreeView()
+        self.media_table = _MediaTreeView()
         self.media_table.setObjectName("mediaTableWidget")
         self.media_table.setModel(self.media_model)
         self.media_table.setSortingEnabled(True) # Activamos sort (manejado nativamente por MediaTableModel)
@@ -526,6 +571,8 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         self.media_table.setItemsExpandable(False)
         self.media_table.setIconSize(QSize(18, 18))
         self.media_table.setUniformRowHeights(True)
+        self.media_table.setDragEnabled(True)
+        self.media_table.setDragDropMode(QAbstractItemView.DragOnly)
 
         # Estilizar encabezado de columnas
         header = self.media_table.header()
@@ -543,7 +590,7 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         self.media_table.verticalScrollBar().valueChanged.connect(self._on_list_scroll)
         
         # 2. Modo Cuadrícula (QListView IconMode)
-        self.media_list = QListView()
+        self.media_list = _MediaListView()
         self.media_list.setObjectName("mediaListWidget")
         self.media_list.setModel(self.media_model)
         self.media_list.setSpacing(0)
@@ -553,6 +600,8 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         self.media_list.verticalScrollBar().setSingleStep(30)
         self.media_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.media_list.setSelectionModel(self.media_table.selectionModel())
+        self.media_list.setDragEnabled(True)
+        self.media_list.setDragDropMode(QAbstractItemView.DragOnly)
         self.media_list.setContextMenuPolicy(Qt.CustomContextMenu)
         self.media_list.customContextMenuRequested.connect(self._show_media_context_menu)
         self.media_list.verticalScrollBar().valueChanged.connect(self._on_list_scroll)
@@ -617,6 +666,8 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         # El widget gráfico del espectro
         self.waveform_widget = AudioWaveformWidget()
         self.waveform_widget.seek_requested.connect(self._on_waveform_seek_requested)
+        self.waveform_widget.subclip_drag_started.connect(self._on_waveform_subclip_drag_requested)
+        self.waveform_widget.subclip_send_requested.connect(self._on_waveform_subclip_send_requested)
         audio_layout.addWidget(self.waveform_widget)
 
         # Controles inferiores (Play/Pausa, Volumen, Tiempo) — agrupados para poder ocultarlos en videos

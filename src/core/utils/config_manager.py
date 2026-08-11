@@ -33,6 +33,7 @@ def get_config():
         "adobe_compat_default": True,
         "auto_paste_url": True,
         "labels": [],
+        "default_web_download_dir": "",
         "editing_media_view_mode": "grid",
         "editing_media_icon_size": 112,
         "editing_media_splitter_sizes": [240, 480, 480],

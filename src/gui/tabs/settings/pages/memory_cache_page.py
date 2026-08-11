@@ -1,7 +1,8 @@
 # src/gui/tabs/settings/pages/memory_cache_page.py
+import os
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QScrollArea, 
-    QPushButton, QMessageBox, QProgressBar, QSizePolicy
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QScrollArea,
+    QPushButton, QMessageBox, QProgressBar, QSizePolicy, QLineEdit, QFileDialog
 )
 from PySide6.QtCore import Qt
 from core.utils.i18n import logger
@@ -297,6 +298,93 @@ class MemoryCachePage(QWidget):
         # Tarjeta reservada para futuras cachés
         self.content_layout.addWidget(FutureCacheCard(parent=self.scroll_content))
 
+        # ---------------- ADMINISTRADOR DE MEDIOS (carpeta de descargas por defecto) ----------------
+        lbl_media_title = QLabel(self.tr("Administrador de Medios"))
+        lbl_media_title.setObjectName("settingsSectionTitle")
+        lbl_media_title.setStyleSheet("color: #dddddd; font-size: 13px; font-weight: bold; margin-top: 8px;")
+        self.content_layout.addWidget(lbl_media_title)
+
+        self.download_dir_card = QFrame()
+        self.download_dir_card.setObjectName("settingsCard")
+        self.download_dir_card.setStyleSheet("""
+            QFrame#settingsCard {
+                background-color: #1e1e1e;
+                border: 1px solid #2d2d2d;
+                border-radius: 8px;
+                padding: 12px;
+            }
+        """)
+        dl_layout = QVBoxLayout(self.download_dir_card)
+        dl_layout.setSpacing(8)
+
+        lbl_dl_title_row = QLabel(self.tr("Carpeta de descargas por defecto (medios web sin etiqueta)"))
+        lbl_dl_title_row.setStyleSheet("color: #ffffff; font-weight: bold; font-size: 13px;")
+        dl_layout.addWidget(lbl_dl_title_row)
+
+        lbl_dl_desc = QLabel(self.tr(
+            "Carpeta donde se guardan las descargas de medios web (p. ej. Freesound) cuando no "
+            "seleccionaste ninguna etiqueta. Por defecto se usa la carpeta Downloads del sistema."
+        ))
+        lbl_dl_desc.setWordWrap(True)
+        lbl_dl_desc.setStyleSheet("color: #888888; font-size: 11px;")
+        dl_layout.addWidget(lbl_dl_desc)
+
+        dl_path_hbox = QHBoxLayout()
+        dl_path_hbox.setSpacing(8)
+
+        self.download_dir_input = QLineEdit()
+        self.download_dir_input.setReadOnly(True)
+        self.download_dir_input.setStyleSheet("""
+            QLineEdit {
+                background-color: #121212;
+                color: #cccccc;
+                border: 1px solid #3d3d3d;
+                border-radius: 6px;
+                padding: 6px 8px;
+                font-size: 11px;
+            }
+        """)
+
+        browse_btn_style = """
+            QPushButton {
+                background-color: #2d2d2d;
+                color: #ffffff;
+                border: 1px solid #3d3d3d;
+                border-radius: 6px;
+                padding: 4px 12px;
+                font-size: 11px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #3d3d3d;
+                border-color: #4d4d4d;
+            }
+            QPushButton:pressed {
+                background-color: #1a1a1a;
+            }
+        """
+
+        self.btn_browse_download_dir = QPushButton(self.tr("Examinar..."))
+        self.btn_browse_download_dir.setFixedHeight(30)
+        self.btn_browse_download_dir.setCursor(Qt.PointingHandCursor)
+        self.btn_browse_download_dir.setStyleSheet(browse_btn_style)
+        self.btn_browse_download_dir.clicked.connect(self.on_browse_download_dir_clicked)
+
+        self.btn_reset_download_dir = QPushButton(self.tr("Restablecer"))
+        self.btn_reset_download_dir.setFixedHeight(30)
+        self.btn_reset_download_dir.setCursor(Qt.PointingHandCursor)
+        self.btn_reset_download_dir.setStyleSheet(browse_btn_style)
+        self.btn_reset_download_dir.clicked.connect(self.on_reset_download_dir_clicked)
+
+        dl_path_hbox.addWidget(self.download_dir_input, 1)
+        dl_path_hbox.addWidget(self.btn_browse_download_dir)
+        dl_path_hbox.addWidget(self.btn_reset_download_dir)
+        dl_layout.addLayout(dl_path_hbox)
+
+        self._refresh_download_dir_label()
+
+        self.content_layout.addWidget(self.download_dir_card)
+
         # Finalizar setup del scroll area
         self.scroll_area.setWidget(self.scroll_content)
         self.main_layout.addWidget(self.scroll_area)
@@ -389,3 +477,34 @@ class MemoryCachePage(QWidget):
         save_config(config)
         # Refrescar la barra para que recalcule de inmediato con el nuevo límite
         self.refresh_stats()
+
+    def _refresh_download_dir_label(self):
+        from core.utils.config_manager import get_config
+        current_dir = get_config().get("default_web_download_dir", "")
+        if current_dir:
+            self.download_dir_input.setText(current_dir)
+        else:
+            self.download_dir_input.setText(self.tr("(Downloads del sistema)"))
+
+    def on_browse_download_dir_clicked(self):
+        from core.utils.config_manager import get_config, save_config
+        config = get_config()
+        current_dir = config.get("default_web_download_dir") or os.path.expanduser("~/Downloads")
+        folder = QFileDialog.getExistingDirectory(
+            self,
+            self.tr("Seleccionar carpeta de descargas por defecto"),
+            current_dir
+        )
+        if folder:
+            config["default_web_download_dir"] = folder
+            save_config(config)
+            self._refresh_download_dir_label()
+
+    def on_reset_download_dir_clicked(self):
+        from core.utils.config_manager import get_config, save_config
+        config = get_config()
+        if not config.get("default_web_download_dir"):
+            return
+        config["default_web_download_dir"] = ""
+        save_config(config)
+        self._refresh_download_dir_label()

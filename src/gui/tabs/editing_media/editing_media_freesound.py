@@ -36,8 +36,115 @@ class FreesoundSearchThread(QThread):
         except Exception as e:
             self.error_search.emit(str(e))
 
+class FreesoundOriginalDownloadThread(QThread):
+    """Hilo secundario para descargar el archivo ORIGINAL (no la preview comprimida) de un sonido de Freesound. Requiere OAuth2."""
+    progress = Signal(int)
+    finished = Signal(bool, str)  # (success, ruta_final_resuelta)
+    error = Signal(str)
+
+    def __init__(self, client, sound_id, dest_dir, fallback_name, token, parent=None):
+        super().__init__(parent)
+        self.client = client
+        self.sound_id = sound_id
+        self.dest_dir = dest_dir
+        self.fallback_name = fallback_name
+        self.token = token
+
+    def run(self):
+        try:
+            resolved_path = self.client.download_original(
+                self.sound_id, self.dest_dir, self.fallback_name, self.token,
+                progress_callback=self.progress.emit
+            )
+            self.finished.emit(True, resolved_path)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
 class FreesoundMixin:
     """Mixin que maneja la búsqueda y descarga remota de Freesound, así como la autenticación OAuth2."""
+
+    def _resolve_freesound_dest_path(self, item_data: dict) -> str:
+        """Calcula la ruta local destino (carpeta de etiqueta seleccionada, o la carpeta de
+        descargas por defecto configurada en Ajustes, o ~/Downloads) para un sonido de Freesound."""
+        name = item_data["nombre"]
+        selected_label_name = item_data.get("selected_label")
+        from core.utils.config_manager import get_config
+        config = get_config()
+        labels = config.get("labels", [])
+        matched_label = next((l for l in labels if l.get("name") == selected_label_name), None) if selected_label_name else None
+
+        if matched_label and matched_label.get("path"):
+            downloads_dir = matched_label["path"]
+        else:
+            custom_dir = config.get("default_web_download_dir")
+            downloads_dir = custom_dir if custom_dir and os.path.isdir(custom_dir) else os.path.expanduser("~/Downloads")
+
+        os.makedirs(downloads_dir, exist_ok=True)
+        clean_name = "".join(c for c in name if c.isalnum() or c in (".", "_", " ", "-")).strip()
+        return os.path.join(downloads_dir, clean_name).replace("\\", "/")
+
+    def _start_high_quality_download(self, item_data: dict, on_success, on_error):
+        """
+        Descarga silenciosamente (sin diálogo modal) el archivo ORIGINAL en alta calidad de un
+        sonido remoto de Freesound (vía OAuth2, no la preview comprimida). Llama
+        on_success(dest_path) o on_error(mensaje).
+        """
+        token = getattr(self.controller, "freesound_auth", {}).get("access_token", "")
+        if not token:
+            msg = "Debes iniciar sesión con Freesound para descargar el archivo original en alta calidad."
+            logger.error(f"[EditingMedia] {msg} ('{item_data.get('nombre')}')")
+            on_error(msg)
+            return
+
+        sound_id = item_data.get("id")
+        if not sound_id:
+            msg = "No se pudo determinar el ID del sonido de Freesound."
+            logger.error(f"[EditingMedia] {msg} ('{item_data.get('nombre')}')")
+            on_error(msg)
+            return
+
+        fallback_path = self._resolve_freesound_dest_path(item_data)
+        dest_dir = os.path.dirname(fallback_path)
+        fallback_name = os.path.basename(fallback_path)
+
+        logger.info(f"[EditingMedia] Descargando archivo original en alta calidad de Freesound (id={sound_id}) '{item_data.get('nombre')}' -> {dest_dir}")
+
+        thread = FreesoundOriginalDownloadThread(self.freesound_client, sound_id, dest_dir, fallback_name, token, parent=self)
+        if not hasattr(self, "_hq_download_threads"):
+            self._hq_download_threads = []
+        self._hq_download_threads.append(thread)
+
+        def _cleanup():
+            if thread in self._hq_download_threads:
+                self._hq_download_threads.remove(thread)
+
+        def _on_finished(success, resolved_path):
+            _cleanup()
+            if not success or not resolved_path:
+                logger.error(f"[EditingMedia] La descarga en alta calidad de '{item_data.get('nombre')}' no tuvo éxito.")
+                on_error("La descarga no tuvo éxito.")
+                return
+
+            item_data["dest_path"] = resolved_path
+            if hasattr(self, "media_model"):
+                idx = self.media_model.find_item_index_by_path(item_data.get("ruta"))
+                if idx.isValid():
+                    self.media_model.dataChanged.emit(idx, idx, [])
+            if hasattr(self, "controller"):
+                self.controller.add_to_downloaded_collection(resolved_path)
+
+            logger.info(f"[EditingMedia] Descarga en alta calidad completada: {resolved_path}")
+            on_success(resolved_path)
+
+        def _on_error(err):
+            _cleanup()
+            logger.error(f"[EditingMedia] Error descargando '{item_data.get('nombre')}' en alta calidad: {err}")
+            on_error(err)
+
+        thread.finished.connect(_on_finished)
+        thread.error.connect(_on_error)
+        thread.start()
 
     def _update_media_input_changed(self, text):
         if hasattr(self, "search_spinner"):
@@ -295,6 +402,9 @@ class FreesoundMixin:
                     if not self.loading_next_page:
                         if hasattr(self, "online_search_thread") and self.online_search_thread and self.online_search_thread.isRunning():
                             return
+                        # Recordar la posición de scroll actual para restaurarla tras cargar la
+                        # siguiente página, en vez de dejar que el reset del modelo salte al tope.
+                        self._pending_scroll_restore = value
                         self.loading_next_page = True
                         self.current_page += 1
                         self._exec_online_search()
@@ -306,78 +416,45 @@ class FreesoundMixin:
         item_data = self._get_current_media_data() if hasattr(self, "_get_current_media_data") else None
         if not item_data or not item_data.get("es_remoto"):
             return
-            
-        url = item_data.get("download_url", item_data["ruta"])
-        name = item_data["nombre"]
 
-        
-        # Determinar carpeta de destino: Etiqueta seleccionada o carpeta Downloads del sistema
-        selected_label_name = item_data.get("selected_label")
-        from core.utils.config_manager import get_config
-        labels = get_config().get("labels", [])
-        matched_label = next((l for l in labels if l.get("name") == selected_label_name), None) if selected_label_name else None
-
-        if matched_label and matched_label.get("path"):
-            downloads_dir = matched_label["path"]
-        else:
-            downloads_dir = os.path.expanduser("~/Downloads")
-
-        
-        os.makedirs(downloads_dir, exist_ok=True)
-        clean_name = "".join(c for c in name if c.isalnum() or c in (".", "_", " ", "-")).strip()
-        dest_path = os.path.join(downloads_dir, clean_name).replace("\\", "/")
-        
         token = getattr(self.controller, "freesound_auth", {}).get("access_token", "")
-        fallback_url = item_data.get("ruta")
+        if not token:
+            QMessageBox.warning(
+                self,
+                self.tr("Inicia sesión requerida"),
+                self.tr("Debes iniciar sesión con Freesound para descargar el archivo original en alta calidad.")
+            )
+            return
+
+        sound_id = item_data.get("id")
+        if not sound_id:
+            QMessageBox.warning(self, self.tr("Error"), self.tr("No se pudo determinar el ID del sonido de Freesound."))
+            return
+
+        fallback_path = self._resolve_freesound_dest_path(item_data)
+        dest_dir = os.path.dirname(fallback_path)
+        fallback_name = os.path.basename(fallback_path)
 
         from PySide6.QtWidgets import QProgressDialog
-        progress_dialog = QProgressDialog(self.tr("Descargando sonido de Freesound..."), self.tr("Cancelar"), 0, 100, self)
+        progress_dialog = QProgressDialog(self.tr("Descargando sonido original de Freesound..."), self.tr("Cancelar"), 0, 100, self)
         progress_dialog.setWindowModality(Qt.WindowModal)
         progress_dialog.setValue(0)
         progress_dialog.show()
-        
-        class DownloadThread(QThread):
-            progress = Signal(int)
-            finished = Signal(bool)
-            error = Signal(str)
-            
-            def __init__(self, client, url, path, token=None, fallback_url=None):
-                super().__init__()
-                self.client = client
-                self.url = url
-                self.path = path
-                self.token = token
-                self.fallback_url = fallback_url
-                
-            def run(self):
-                try:
-                    success = self.client.download_file(self.url, self.path, token=self.token, progress_callback=self.progress.emit)
-                    self.finished.emit(success)
-                except Exception as e:
-                    if self.fallback_url and self.fallback_url != self.url:
-                        try:
-                            success = self.client.download_file(self.fallback_url, self.path, token=self.token, progress_callback=self.progress.emit)
-                            self.finished.emit(success)
-                            return
-                        except Exception:
-                            pass
-                    self.error.emit(str(e))
-                    
-        self.dl_thread = DownloadThread(self.freesound_client, url, dest_path, token=token, fallback_url=fallback_url)
 
+        self.dl_thread = FreesoundOriginalDownloadThread(self.freesound_client, sound_id, dest_dir, fallback_name, token, parent=self)
         self.dl_thread.progress.connect(progress_dialog.setValue)
-        
-        def on_finished(success):
+
+        def on_finished(success, resolved_path):
             progress_dialog.close()
-            if success:
-                item_data["dest_path"] = dest_path
+            if success and resolved_path:
+                item_data["dest_path"] = resolved_path
                 idx = self.media_model.find_item_index_by_path(item_data["ruta"])
                 if idx.isValid():
                     self.media_model.dataChanged.emit(idx, idx, [])
 
                 # Registrar en la colección 'Descargados'
-                self.controller.add_to_downloaded_collection(dest_path)
-                
+                self.controller.add_to_downloaded_collection(resolved_path)
+
                 # Actualizar botones
                 self.btn_reveal.setVisible(True)
                 self.btn_reveal.setEnabled(True)
@@ -387,17 +464,21 @@ class FreesoundMixin:
                 self.btn_download.setVisible(True)
                 self.btn_download.setEnabled(False)
                 self.btn_download.setText(self.tr("En Disco"))
-                self.metadata_labels["ruta"].setText(dest_path)
-                
-                QMessageBox.information(self, self.tr("Descarga Completada"), self.tr(f"El sonido ha sido guardado exitosamente en:\n{dest_path}"))
-                
+                self.metadata_labels["ruta"].setText(resolved_path)
+
+                logger.info(f"[EditingMedia] Descarga manual del original en alta calidad completada: {resolved_path}")
+                QMessageBox.information(self, self.tr("Descarga Completada"), self.tr(f"El sonido original ha sido guardado exitosamente en:\n{resolved_path}"))
+            else:
+                logger.error(f"[EditingMedia] La descarga manual del original de '{item_data.get('nombre')}' no tuvo éxito.")
+
         def on_error(err):
             progress_dialog.close()
-            QMessageBox.warning(self, self.tr("Error de Descarga"), self.tr(f"No se pudo descargar el archivo:\n{err}"))
-            
+            logger.error(f"[EditingMedia] Error en descarga manual del original de '{item_data.get('nombre')}': {err}")
+            QMessageBox.warning(self, self.tr("Error de Descarga"), self.tr(f"No se pudo descargar el archivo original:\n{err}"))
+
         self.dl_thread.finished.connect(on_finished)
         self.dl_thread.error.connect(on_error)
-        
+
         progress_dialog.canceled.connect(self.dl_thread.terminate)
         self.dl_thread.start()
 

@@ -58,8 +58,13 @@ class PlaybackMixin:
             self._update_send_button_state()
         else:
             self.carousel_nav_widget.setVisible(False)
-            self._clear_metadata()
-            self._stop_audio_playback()
+            # Un reset de modelo (p.ej. "Cargar más", scroll infinito de Freesound, o un
+            # refresco tras completar una descarga) vacía la selección de forma transitoria
+            # antes de que restore_selection() la recupere; no tratar eso como una deselección
+            # real del usuario, o se detendría/reiniciaría la reproducción sin motivo.
+            if not getattr(self, "_refreshing_media_list", False):
+                self._clear_metadata()
+                self._stop_audio_playback()
             self._update_send_button_state()
 
     def _on_carousel_prev(self):
@@ -82,7 +87,11 @@ class PlaybackMixin:
     def _update_send_button_state(self, editor_name=None):
         if not hasattr(self, 'btn_send_editor'):
             return
-            
+
+        if hasattr(self, "_send_editor_state") and self._send_editor_state.is_busy():
+            # No pisar el texto animado "Enviando..." mientras hay un envío en curso.
+            return
+
         from core.services.editor_integration_manager import EditorIntegrationManager
         from PySide6.QtGui import QIcon
         from PySide6.QtCore import QSize
@@ -118,97 +127,46 @@ class PlaybackMixin:
             self.btn_send_editor.setIconSize(QSize(20, 20))
         self.btn_send_editor.setEnabled(True)
 
-    def _on_send_editor_clicked(self):
-        selected_indexes = getattr(self, "_selected_indexes", [])
-        if not selected_indexes:
-            return
-        
-        from core.services.editor_integration_manager import EditorIntegrationManager
-        editor_mgr = EditorIntegrationManager.get_instance()
-        if not editor_mgr:
-            return
-            
-        saved_cache = getattr(self, "_saved_subclips_cache", {})
-        packages = []
-        for idx in selected_indexes:
-            item_data = self.media_model.get_item(idx)
-            if item_data and "ruta" in item_data and item_data["ruta"]:
-                path = item_data["ruta"]
-                
-                # Revisar si hay selección rápida (lite subclip) para el medio activo
-                lite_subs = []
-                if hasattr(self, "waveform_widget") and getattr(self, "current_playing_path", None) == path:
-                    in_r, out_r = self.waveform_widget.get_lite_selection()
-                    if in_r is not None and out_r is not None:
-                        dur_sec = 0
-                        # Priorizar la duración exacta del reproductor activo para mayor precisión
-                        curr_type = getattr(self, "current_playing_type", "audio")
-                        if curr_type == "audio" and self.audio_player and self.audio_player.duration() > 0:
-                            dur_sec = self.audio_player.duration() / 1000.0
-                        elif curr_type == "video" and hasattr(self, "preview_box") and self.preview_box.media_player.duration() > 0:
-                            dur_sec = self.preview_box.media_player.duration() / 1000.0
-                        
-                        if dur_sec == 0:
-                            dur_str = item_data.get("duración", "0")
-                            if not path.startswith("http") and path in getattr(self, "_metadata_cache", {}):
-                                dur_str = self._metadata_cache[path].get("duración", dur_str)
-                            dur_sec = self._parse_duration_to_seconds(dur_str)
-                            
-                        if dur_sec > 0:
-                            lite_subs = [{
-                                "name": f"{os.path.splitext(os.path.basename(path))[0]}_lite",
-                                "in": round(in_r * dur_sec, 3),
-                                "out": round(out_r * dur_sec, 3)
-                            }]
+    # ── Resolución de alta calidad y construcción de paquetes de envío ──────
 
-                saved_subs = lite_subs if lite_subs else saved_cache.get(path, [])
-                if saved_subs:
-                    pkg = {
-                        "filePath": path.replace('\\', '/'),
-                        "subclips": saved_subs
-                    }
-                else:
-                    path_slash = path.replace('\\', '/')
-                    ext = os.path.splitext(path)[1].lower()
-                    if ext in ('.jpg', '.jpeg', '.png', '.webp', '.bmp', '.svg'):
-                        pkg = {"video": None, "thumbnail": path_slash, "subtitle": None}
-                    elif ext in ('.srt', '.vtt', '.ass', '.sub'):
-                        pkg = {"video": None, "thumbnail": None, "subtitle": path_slash}
-                    else:
-                        pkg = {"video": path_slash, "thumbnail": None, "subtitle": None}
-                packages.append(pkg)
-                
-        if not packages:
+    def _resolve_high_quality_path(self, item_data, on_ready, on_error):
+        """
+        Garantiza que el medio a enviar sea el archivo de alta calidad.
+        Si es local (o ya descargado en 'dest_path'), llama on_ready(path) de inmediato.
+        Si es remoto y no se ha descargado, fuerza la descarga en alta calidad antes de continuar.
+        """
+        path = item_data.get("ruta")
+        is_remote = bool(path) and (path.startswith("http://") or path.startswith("https://"))
+
+        if not is_remote:
+            on_ready(path)
             return
 
-        if len(packages) == 1:
-            pkg = packages[0]
-            if "subclips" in pkg:
-                logger.info(f"[EditingMedia] Enviando 1 medio con {len(pkg['subclips'])} subclips guardados a {editor_mgr.active_editor}")
-                editor_mgr.send_subclips(pkg)
-            else:
-                logger.info(f"[EditingMedia] Enviando 1 medio al editor activo: {pkg}")
-                editor_mgr.send_file(pkg)
-        else:
-            logger.info(f"[EditingMedia] Enviando lote de {len(packages)} medios/subclips al editor activo.")
-            editor_mgr.send_batch(packages)
+        dest_path = item_data.get("dest_path")
+        if dest_path and os.path.exists(dest_path):
+            logger.info(f"[EditingMedia] '{item_data.get('nombre', path)}' ya está descargado en alta calidad: {dest_path}")
+            on_ready(dest_path)
+            return
 
-    def _on_send_editor_single_clicked(self):
-        path = getattr(self, "last_selected_media_path", None)
-        if not path:
-            return
-            
-        from core.services.editor_integration_manager import EditorIntegrationManager
-        editor_mgr = EditorIntegrationManager.get_instance()
-        if not editor_mgr:
-            return
-            
+        logger.info(f"[EditingMedia] '{item_data.get('nombre', path)}' es remoto y no está descargado; forzando descarga en alta calidad antes de enviar.")
+        self._start_high_quality_download(item_data, on_success=on_ready, on_error=on_error)
+
+    def _capture_subclip_intent(self, item_data):
+        """
+        Captura AHORA, de forma síncrona, la selección de subclip para este medio (la selección
+        rápida activa en la waveform, o subclips guardados) — ANTES de iniciar cualquier descarga
+        en segundo plano. La descarga puede disparar un refresco de la lista que reinicia la
+        waveform (y su selección), así que la selección debe quedar fijada antes de esperar nada.
+        Devuelve una lista de subclips (posiblemente vacía).
+        """
+        orig_path = item_data.get("ruta")
+        label_base = os.path.splitext(item_data.get("nombre") or os.path.basename(orig_path or "clip"))[0] or "clip"
+
         lite_subs = []
-        if hasattr(self, "waveform_widget") and getattr(self, "current_playing_path", None) == path:
+        if hasattr(self, "waveform_widget") and getattr(self, "current_playing_path", None) == orig_path:
             in_r, out_r = self.waveform_widget.get_lite_selection()
             if in_r is not None and out_r is not None:
                 dur_sec = 0
-                # Priorizar la duración exacta del reproductor activo para mayor precisión
                 curr_type = getattr(self, "current_playing_type", "audio")
                 if curr_type == "audio" and self.audio_player and self.audio_player.duration() > 0:
                     dur_sec = self.audio_player.duration() / 1000.0
@@ -216,79 +174,240 @@ class PlaybackMixin:
                     dur_sec = self.preview_box.media_player.duration() / 1000.0
 
                 if dur_sec == 0:
-                    dur_str = getattr(self, "_metadata_cache", {}).get(path, {}).get("duración", "0")
-                    if not dur_str or dur_str == "0":
-                        if hasattr(self, "media_model") and hasattr(self, "last_selected_media_path"):
-                            idx = self.media_model.find_item_index_by_path(path)
-                            if idx and idx.isValid():
-                                item_data = self.media_model.get_item(idx)
-                                if item_data:
-                                    dur_str = item_data.get("duración", "0")
+                    dur_str = item_data.get("duración", "0")
+                    if orig_path in getattr(self, "_metadata_cache", {}):
+                        dur_str = self._metadata_cache[orig_path].get("duración", dur_str)
                     dur_sec = self._parse_duration_to_seconds(dur_str)
-                
-                # Si dur_sec es 0, no podemos hacer subclip basado en ratio. 
+
                 if dur_sec > 0:
                     lite_subs = [{
-                        "name": f"{os.path.splitext(os.path.basename(path))[0]}_lite",
+                        "name": f"{label_base}_lite",
                         "in": round(in_r * dur_sec, 3),
                         "out": round(out_r * dur_sec, 3)
                     }]
 
-        saved_subs = lite_subs if lite_subs else getattr(self, "_saved_subclips_cache", {}).get(path, [])
+        if lite_subs:
+            return lite_subs
+        return list(getattr(self, "_saved_subclips_cache", {}).get(orig_path, []))
+
+    def _build_send_package(self, item_data, local_path, captured_subs=None):
+        """Construye el paquete a enviar al editor usando el archivo local ya resuelto en alta calidad."""
+        saved_subs = captured_subs if captured_subs is not None else self._capture_subclip_intent(item_data)
+        local_path_slash = local_path.replace('\\', '/')
+
         if saved_subs:
-            pkg = {
-                "filePath": path.replace('\\', '/'),
-                "subclips": saved_subs
-            }
-            logger.info(f"[EditingMedia] Enviando 1 medio actual ({path}) con {len(saved_subs)} subclips a {editor_mgr.active_editor}")
-            editor_mgr.send_subclips(pkg)
+            return {"filePath": local_path_slash, "subclips": saved_subs}
+
+        ext = os.path.splitext(local_path)[1].lower()
+        if ext in ('.jpg', '.jpeg', '.png', '.webp', '.bmp', '.svg'):
+            return {"video": None, "thumbnail": local_path_slash, "subtitle": None}
+        elif ext in ('.srt', '.vtt', '.ass', '.sub'):
+            return {"video": None, "thumbnail": None, "subtitle": local_path_slash}
+        else:
+            return {"video": local_path_slash, "thumbnail": None, "subtitle": None}
+
+    def _resolve_items_then_send(self, items, on_done, index=0, resolved=None):
+        """Resuelve secuencialmente la ruta en alta calidad de cada medio; al terminar llama on_done(resolved)."""
+        if resolved is None:
+            resolved = {}
+        if index >= len(items):
+            on_done(resolved)
             return
 
-        ext = os.path.splitext(path)[1].lower()
-        if ext in ('.jpg', '.jpeg', '.png', '.webp', '.bmp', '.svg'):
-            pkg = {"video": None, "thumbnail": path, "subtitle": None}
-        elif ext in ('.srt', '.vtt', '.ass', '.sub'):
-            pkg = {"video": None, "thumbnail": None, "subtitle": path}
-        else:
-            pkg = {"video": path, "thumbnail": None, "subtitle": None}
-            
-        logger.info(f"[EditingMedia] Enviando 1 medio actual ({path}) al editor activo.")
-        editor_mgr.send_file(pkg)
+        item_data = items[index]
+        orig_path = item_data.get("ruta")
+
+        def _continue(local_path):
+            resolved[orig_path] = local_path
+            self._resolve_items_then_send(items, on_done, index + 1, resolved)
+
+        def _continue_error(err):
+            resolved[orig_path] = None
+            self._resolve_items_then_send(items, on_done, index + 1, resolved)
+
+        self._resolve_high_quality_path(item_data, on_ready=_continue, on_error=_continue_error)
+
+    def _finalize_batch_send(self, items, resolved, editor_mgr, state, captured_subs=None):
+        packages = []
+        any_failed = False
+        for item_data in items:
+            orig_path = item_data.get("ruta")
+            local_path = resolved.get(orig_path)
+            if not local_path:
+                any_failed = True
+                continue
+            subs = captured_subs.get(orig_path) if captured_subs is not None else None
+            packages.append(self._build_send_package(item_data, local_path, captured_subs=subs))
+
+        if not packages:
+            logger.error("[EditingMedia] Envío cancelado: no se pudo resolver ningún medio en alta calidad.")
+            state.finish(False, "Error")
+            return
+
+        ok = False
+        try:
+            if len(packages) == 1:
+                pkg = packages[0]
+                if "subclips" in pkg:
+                    logger.info(f"[EditingMedia] Enviando 1 medio en alta calidad con {len(pkg['subclips'])} subclips a {editor_mgr.active_editor}")
+                    ok = editor_mgr.send_subclips(pkg)
+                else:
+                    logger.info(f"[EditingMedia] Enviando 1 medio en alta calidad al editor activo: {pkg}")
+                    ok = editor_mgr.send_file(pkg)
+            else:
+                logger.info(f"[EditingMedia] Enviando lote de {len(packages)} medios en alta calidad al editor activo.")
+                ok = editor_mgr.send_batch(packages)
+        except Exception as e:
+            logger.error(f"[EditingMedia] Excepción enviando al editor: {e}")
+            ok = False
+
+        if any_failed:
+            logger.error("[EditingMedia] Uno o más medios no pudieron descargarse en alta calidad y fueron omitidos del envío.")
+
+        success = bool(ok) and not any_failed
+        state.finish(success, "Éxito" if success else "Error")
+
+    def _on_send_editor_clicked(self):
+        selected_indexes = getattr(self, "_selected_indexes", [])
+        if not selected_indexes:
+            return
+
+        from core.services.editor_integration_manager import EditorIntegrationManager
+        editor_mgr = EditorIntegrationManager.get_instance()
+        if not editor_mgr:
+            return
+
+        items = []
+        for idx in selected_indexes:
+            item_data = self.media_model.get_item(idx)
+            if item_data and item_data.get("ruta"):
+                items.append(item_data)
+
+        if not items:
+            return
+
+        # Capturar la selección de subclip de cada medio ANTES de iniciar ninguna descarga.
+        captured_subs = {item_data.get("ruta"): self._capture_subclip_intent(item_data) for item_data in items}
+
+        logger.info(f"[EditingMedia] Solicitud de envío iniciada para {len(items)} medio(s) seleccionado(s).")
+        self._send_editor_state.start("Enviando")
+
+        self._resolve_items_then_send(
+            items,
+            on_done=lambda resolved: self._finalize_batch_send(items, resolved, editor_mgr, self._send_editor_state, captured_subs)
+        )
+
+    def _on_send_editor_single_clicked(self):
+        path = getattr(self, "last_selected_media_path", None)
+        if not path:
+            return
+
+        from core.services.editor_integration_manager import EditorIntegrationManager
+        editor_mgr = EditorIntegrationManager.get_instance()
+        if not editor_mgr:
+            return
+
+        item_data = self._get_current_media_data() if hasattr(self, "_get_current_media_data") else None
+        if (not item_data or item_data.get("ruta") != path) and hasattr(self, "media_model"):
+            idx = self.media_model.find_item_index_by_path(path)
+            if idx and idx.isValid():
+                item_data = self.media_model.get_item(idx)
+        if not item_data:
+            item_data = {"ruta": path, "nombre": os.path.basename(path)}
+
+        # Capturar la selección de subclip ANTES de iniciar ninguna descarga.
+        captured_subs = {item_data.get("ruta"): self._capture_subclip_intent(item_data)}
+
+        logger.info(f"[EditingMedia] Solicitud de envío individual iniciada para: {path}")
+        self._send_editor_state.start("Enviando")
+
+        self._resolve_items_then_send(
+            [item_data],
+            on_done=lambda resolved: self._finalize_batch_send([item_data], resolved, editor_mgr, self._send_editor_state, captured_subs)
+        )
 
     def _on_open_subclip_dialog(self):
         path = getattr(self, "last_selected_media_path", None)
-        if not path or not os.path.exists(path):
+        if not path:
             return
-            
+
+        item_data = self._get_current_media_data() if hasattr(self, "_get_current_media_data") else None
+        if not item_data:
+            return
+
         self._stop_audio_playback()
         if hasattr(self, "preview_box") and self.preview_box:
             self.preview_box.stop_media()
-            
+
         media_type = getattr(self, "current_playing_type", "video")
-        dur_str = self._metadata_cache.get(path, {}).get("duración", "0") if hasattr(self, "_metadata_cache") else "0"
-        dur_sec = self._parse_duration_to_seconds(dur_str)
-        
-        # Extraer FPS de metadata (formato "29.97 fps" o "30 fps")
-        fps_str = self._metadata_cache.get(path, {}).get("fps", "30") if hasattr(self, "_metadata_cache") else "30"
+        is_remote = path.startswith("http://") or path.startswith("https://")
+        dest_path = item_data.get("dest_path")
+        already_high_quality = (not is_remote) or bool(dest_path and os.path.exists(dest_path))
+
+        if already_high_quality:
+            local_path = dest_path if (is_remote and dest_path) else path
+            if is_remote:
+                # Medio ya descargado en alta calidad: extraer metadatos reales del archivo local.
+                meta = self._extract_rich_metadata(local_path, media_type)
+                dur_sec = self._parse_duration_to_seconds(meta.get("duración", "0"))
+                fps_str = meta.get("fps", "30")
+            else:
+                dur_str = self._metadata_cache.get(local_path, {}).get("duración", "0") if hasattr(self, "_metadata_cache") else "0"
+                dur_sec = self._parse_duration_to_seconds(dur_str)
+                fps_str = self._metadata_cache.get(local_path, {}).get("fps", "30") if hasattr(self, "_metadata_cache") else "30"
+        else:
+            # Medio remoto sin descargar: la ventana se abre igual, con estimados,
+            # y se actualizará con datos reales cuando termine la descarga en segundo plano.
+            local_path = ""
+            dur_sec = self._parse_duration_to_seconds(item_data.get("duración", "0"))
+            fps_str = "30"
+
         try:
-            fps_val = float(fps_str.replace("fps", "").strip())
+            fps_val = float(str(fps_str).replace("fps", "").strip())
         except (ValueError, AttributeError):
             fps_val = 30.0
-        
+        if dur_sec <= 0:
+            dur_sec = 1.0
+
         if not hasattr(self, "_saved_subclips_cache"):
             self._saved_subclips_cache = {}
-        existing = self._saved_subclips_cache.get(path, [])
-        
-        from gui.dialogs.subclip_dialog import SubclipEditorDialog
-        
-        state = getattr(self, "_saved_subclip_range_cache", {}).get(path, (0.0, dur_sec))
-        dlg = SubclipEditorDialog(media_path=path, media_type=media_type, duration_sec=dur_sec, fps=fps_val, existing_subclips=existing, initial_in_sec=state[0], initial_out_sec=state[1], parent=self)
-        dlg.exec()
-        
-        self._saved_subclips_cache[path] = dlg.get_subclips()
         if not hasattr(self, "_saved_subclip_range_cache"):
             self._saved_subclip_range_cache = {}
+
+        existing = self._saved_subclips_cache.get(path, [])
+        state_range = self._saved_subclip_range_cache.get(path, (0.0, dur_sec))
+
+        from gui.dialogs.subclip_dialog import SubclipEditorDialog
+
+        logger.info(f"[EditingMedia] Abriendo editor de subclips para '{item_data.get('nombre', path)}' (pendiente de descarga en alta calidad: {not already_high_quality}).")
+        dlg = SubclipEditorDialog(
+            media_path=local_path,
+            media_type=media_type,
+            duration_sec=dur_sec,
+            fps=fps_val,
+            existing_subclips=existing,
+            initial_in_sec=state_range[0],
+            initial_out_sec=state_range[1],
+            pending_download=not already_high_quality,
+            display_name=item_data.get("nombre") or os.path.basename(local_path or path),
+            parent=self
+        )
+
+        if not already_high_quality:
+            self._start_high_quality_download(
+                item_data,
+                on_success=lambda local_p: self._on_subclip_dialog_download_success(dlg, item_data, local_p),
+                on_error=lambda err: dlg.set_resolve_error(err)
+            )
+
+        dlg.exec()
+
+        self._saved_subclips_cache[path] = dlg.get_subclips()
         self._saved_subclip_range_cache[path] = (dlg.in_sec, dlg.out_sec)
+
+    def _on_subclip_dialog_download_success(self, dlg, item_data, local_path):
+        logger.info(f"[EditingMedia] Descarga en alta calidad lista para el editor de subclips: {local_path}")
+        dlg.set_resolved_media_path(local_path)
 
     def _on_media_clicked(self, index):
         if not index or not hasattr(index, "isValid") or not index.isValid():
@@ -300,6 +419,11 @@ class PlaybackMixin:
             return
 
         if item_data.get("tipo") == "load_more":
+            # Recordar dónde estaba el scroll para no saltar a un lugar random cuando
+            # _update_media_list() reconstruya la lista con más elementos.
+            scroll_widget = self.media_table if getattr(self, "view_mode", "grid") == "list" and hasattr(self, "media_table") else self.media_list
+            if scroll_widget:
+                self._pending_scroll_restore = scroll_widget.verticalScrollBar().value()
             self._max_display_count = getattr(self, "_max_display_count", 500) + 500
             self._update_media_list()
             return
@@ -308,14 +432,24 @@ class PlaybackMixin:
         name = item_data.get("nombre", "Desconocido")
         tipo = item_data.get("tipo", "desconocido")
         path = item_data.get("ruta")
-        
+
         if not path:
             self._clear_metadata()
             return
-            
-        self.last_selected_media_path = path
-            
+
         is_remote = path.startswith("http://") or path.startswith("https://")
+
+        # Si este ítem ya está activo/reproduciéndose y esta llamada viene de una re-selección
+        # forzada por un refresco de la lista (p.ej. al completarse una descarga en segundo
+        # plano), no reiniciar la reproducción ni la waveform: solo refrescar metadatos/botones.
+        if getattr(self, "_suppress_next_media_click_reset", False) and path == getattr(self, "current_playing_path", None):
+            self._suppress_next_media_click_reset = False
+            self.last_selected_media_path = path
+            self._refresh_metadata_panel(item_data, name, tipo, path, is_remote)
+            return
+        self._suppress_next_media_click_reset = False
+
+        self.last_selected_media_path = path
 
         # Asegurar metadatos para archivos locales (necesitamos la duración exacta)
         if not is_remote and path not in self._metadata_cache:
@@ -326,6 +460,8 @@ class PlaybackMixin:
 
         self.current_playing_path = path
         self.current_playing_type = tipo
+        # Selección nueva y genuina del usuario: cualquier pausa explícita anterior ya no aplica.
+        self._user_explicitly_paused = False
 
         # 1. Controlar la visualización del espectro de audio y header de carátula
         if tipo in ("audio", "video"):
@@ -495,12 +631,15 @@ class PlaybackMixin:
             self.preview_box.stop_media()
             self.preview_box.setVisible(False)
 
+        self._refresh_metadata_panel(item_data, name, tipo, path, is_remote)
+
+    def _refresh_metadata_panel(self, item_data, name, tipo, path, is_remote):
         # 3. Actualizar Detalles e Info Técnica (Columna Derecha - Inferior)
         self.metadata_labels["nombre"].setText(name)
         self.metadata_labels["ruta"].setText(path)
         self.metadata_labels["tipo"].setText(tipo.upper())
         self.metadata_labels["tamaño"].setText(item_data.get("tamaño", "-"))
-        
+
         # Ocultar/mostrar botones según tipo local/online y existencia en disco
         dest_path = item_data.get("dest_path")
         dest_exists = bool(dest_path and os.path.exists(dest_path))
@@ -737,9 +876,14 @@ class PlaybackMixin:
         state = self.audio_player.playbackState()
         if state == QMediaPlayer.PlaybackState.PlayingState:
             self.audio_player.pause()
+            # Recordar que el usuario pausó explícitamente, para que una descarga en curso
+            # (p.ej. la previa de Freesound aún cargando en la caché LRU) no la reanude sola
+            # al terminar.
+            self._user_explicitly_paused = True
             apply_player_play_button_style(self.btn_play, is_playing=False, icon_size=14)
         else:
             self.audio_player.play()
+            self._user_explicitly_paused = False
             apply_player_play_button_style(self.btn_play, is_playing=True, icon_size=14)
 
     def _on_volume_changed(self, value):
@@ -801,9 +945,14 @@ class PlaybackMixin:
                 self.audio_player.setSource(QUrl.fromLocalFile(local_path))
                 loops = QMediaPlayer.Infinite if getattr(self, "_audio_loop_active", False) else 1
                 self.audio_player.setLoops(loops)
-                self.audio_player.play()
                 from gui.styles import apply_player_play_button_style
-                apply_player_play_button_style(self.btn_play, is_playing=True, icon_size=14)
+                # Si el usuario pausó explícitamente mientras esta previa terminaba de
+                # descargarse en segundo plano, respetar esa pausa en vez de arrancar solo.
+                if getattr(self, "_user_explicitly_paused", False):
+                    apply_player_play_button_style(self.btn_play, is_playing=False, icon_size=14)
+                else:
+                    self.audio_player.play()
+                    apply_player_play_button_style(self.btn_play, is_playing=True, icon_size=14)
             else:
                 logger.error(f"PlaybackMixin: Error al descargar previa de Freesound para {url}")
                 

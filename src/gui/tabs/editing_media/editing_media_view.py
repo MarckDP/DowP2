@@ -38,6 +38,7 @@ except ImportError:
 from core.logger.logger_manager import logger
 from gui.styles import get_theme_token, apply_player_play_button_style, apply_player_loop_button_style
 from gui.widgets.animated_button import AnimatedButton
+from gui.widgets.send_state_button import SendButtonState
 from core.tabs.editing_media.editing_media_logic import EditingMediaController
 
 # Importar los widgets que fueron extraídos a sus propios archivos
@@ -925,7 +926,8 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         
         self.btn_send_editor.clicked.connect(self._on_send_editor_clicked)
         self.action_send_single.triggered.connect(self._on_send_editor_single_clicked)
-        
+        self._send_editor_state = SendButtonState(self.btn_send_editor, restore_callback=self._update_send_button_state)
+
         buttons_layout.addWidget(self.btn_send_editor, 2)
 
         # QComboBox de selección de etiquetas (estilo nativo de la app para medios web)
@@ -956,6 +958,14 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         layout.addWidget(self.info_box, 1)
 
         return col
+
+    def _accent_rgba(self, alpha: int) -> str:
+        """Convierte el color de acento del tema a 'rgba(r,g,b,a)' para fondos de selección
+        con buen contraste (el token 'seleccion_fondo' es casi idéntico a 'borde_normal' y
+        resulta casi invisible sobre el fondo oscuro)."""
+        from PySide6.QtGui import QColor
+        color = QColor(get_theme_token('acento_primario', '#B9E640'))
+        return f"rgba({color.red()}, {color.green()}, {color.blue()}, {alpha})"
 
     def _apply_custom_styles(self):
         """Aplica colores y bordes usando el sistema de tokens de temas."""
@@ -1016,10 +1026,12 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
                 color: {get_theme_token('texto_principal', '#cdd6f4')};
             }}
             QTreeView#mediaTableWidget::item:hover {{
-                background-color: {get_theme_token('seleccion_fondo', '#2d2d2d')};
+                background-color: {self._accent_rgba(22)};
             }}
             QTreeView#mediaTableWidget::item:selected {{
-                background-color: {get_theme_token('seleccion_fondo', '#2d2d2d')};
+                background-color: {self._accent_rgba(60)};
+                border-top: 1px solid {get_theme_token('acento_primario', '#B9E640')};
+                border-bottom: 1px solid {get_theme_token('acento_primario', '#B9E640')};
                 color: {get_theme_token('acento_primario', '#B9E640')};
                 font-weight: bold;
             }}
@@ -1059,12 +1071,12 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
                 border: 1px solid transparent;
             }}
             QListView::item:hover {{
-                background-color: {get_theme_token('seleccion_fondo', '#2d2d2d')};
+                background-color: {self._accent_rgba(22)};
                 border-color: {get_theme_token('borde_normal', '#3d3d3d')};
             }}
             QListView::item:selected {{
-                background-color: {get_theme_token('seleccion_fondo', '#2d2d2d')};
-                border: 1.5px solid {get_theme_token('acento_primario', '#B9E640')};
+                background-color: {self._accent_rgba(65)};
+                border: 2px solid {get_theme_token('acento_primario', '#B9E640')};
                 color: {get_theme_token('acento_primario', '#B9E640')};
                 font-weight: bold;
             }}

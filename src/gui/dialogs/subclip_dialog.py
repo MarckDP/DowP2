@@ -13,6 +13,7 @@ from PySide6.QtMultimediaWidgets import QVideoWidget
 
 from gui.styles import get_theme_token
 from gui.widgets.animated_button import AnimatedButton
+from gui.widgets.send_state_button import SendButtonState
 from gui.tabs.editing_media.editing_media_icons import get_svg_icon
 from core.tabs.editing_media.waveform_cache_manager import WaveformCacheManager
 from core.services.editor_integration_manager import EditorIntegrationManager
@@ -40,6 +41,11 @@ class SubclipWaveformWidget(QWidget):
         self.is_loading = False
         self.loading_phase = 0.0
         self.audio_path = ""
+
+        # Estados de descarga en alta calidad (medios remotos pendientes) y error
+        self.is_downloading = False
+        self.is_error = False
+        self.error_message = ""
         
         self.setMinimumHeight(50)
         self.setMaximumHeight(16777215)
@@ -66,6 +72,29 @@ class SubclipWaveformWidget(QWidget):
         self.loading_phase += 0.15
         if self.loading_phase > 2 * math.pi:
             self.loading_phase -= 2 * math.pi
+        self.update()
+
+    def set_downloading(self, downloading: bool):
+        """Activa/desactiva la animación de 'descargando medio en alta calidad', distinta a la de carga de waveform local."""
+        self.is_downloading = downloading
+        if downloading:
+            self.is_error = False
+            self._hires_peaks = []
+            self._display_peaks = []
+            if not self.loading_timer.isActive():
+                self.loading_timer.start()
+        elif not self.is_loading:
+            self.loading_timer.stop()
+        self.update()
+
+    def set_error(self, is_error: bool, message: str = ""):
+        """Muestra un estado de error (p.ej. falló la descarga en alta calidad) en la zona de la waveform."""
+        self.is_error = is_error
+        self.error_message = message
+        if is_error:
+            self.is_downloading = False
+            self.is_loading = False
+            self.loading_timer.stop()
         self.update()
 
     def set_audio_path(self, path: str):
@@ -284,7 +313,26 @@ class SubclipWaveformWidget(QWidget):
         painter.setPen(QPen(QColor(60, 60, 60), 1))
         painter.drawLine(0, int(mid_y), w, int(mid_y))
         
-        if self.is_loading:
+        if self.is_downloading:
+            # Animación de "descargando medio en alta calidad" (distinta a la carga de waveform local):
+            # barra de progreso indeterminada que recorre el ancho del widget.
+            bar_h = 4
+            bar_y = int(mid_y - bar_h / 2)
+            painter.fillRect(0, bar_y, w, bar_h, QColor(40, 40, 40))
+            sweep_w = max(40, int(w * 0.18))
+            phase_ratio = (math.sin(self.loading_phase) + 1) / 2.0  # 0..1
+            sweep_x = int(phase_ratio * max(1, w - sweep_w))
+            painter.fillRect(sweep_x, bar_y, sweep_w, bar_h, QColor(get_theme_token('acento_primario', '#B9E640')))
+
+            painter.setPen(QPen(QColor('#cdd6f4')))
+            painter.drawText(self.rect(), Qt.AlignCenter, "Descargando medio en alta calidad...")
+        elif self.is_error:
+            painter.setPen(QPen(QColor('#FF5555'), 1))
+            painter.drawLine(0, int(mid_y), w, int(mid_y))
+            painter.setPen(QPen(QColor('#FF8888')))
+            msg = self.error_message or "Error al descargar el medio en alta calidad."
+            painter.drawText(self.rect(), Qt.AlignCenter, f"Error al descargar el medio en alta calidad.\n{msg}" if self.error_message else msg)
+        elif self.is_loading:
             # Animación de carga: onda sinusoidal
             pen = QPen(QColor(get_theme_token('acento_primario', '#B9E640')))
             pen.setWidth(1)
@@ -453,7 +501,7 @@ class SubclipItemWidget(QWidget):
 class SubclipEditorDialog(QDialog):
     """Diálogo Modal para recortar partes de un medio (In/Out points) y enviar subclips."""
     
-    def __init__(self, media_path: str, media_type: str = "video", duration_sec: float = 0.0, fps: float = 30.0, existing_subclips: list = None, initial_in_sec: float = None, initial_out_sec: float = None, parent=None):
+    def __init__(self, media_path: str, media_type: str = "video", duration_sec: float = 0.0, fps: float = 30.0, existing_subclips: list = None, initial_in_sec: float = None, initial_out_sec: float = None, pending_download: bool = False, display_name: str = None, parent=None):
         super().__init__(parent)
         self.media_path = media_path
         self.media_type = media_type.lower()
@@ -462,9 +510,12 @@ class SubclipEditorDialog(QDialog):
         self.in_sec = initial_in_sec if initial_in_sec is not None else 0.0
         self.out_sec = initial_out_sec if initial_out_sec is not None else self.duration_sec
         self.subclips = list(existing_subclips) if existing_subclips else []
+        # Modo "pendiente": el medio es remoto y aún se está descargando en alta calidad en segundo plano.
+        self.pending_download = pending_download
+        self._display_name = display_name or os.path.basename(media_path) or "Medio remoto"
 
         self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
-        self.setWindowTitle(f"Edición de Subclips - {os.path.basename(media_path)}")
+        self.setWindowTitle(f"Edición de Subclips - {self._display_name}")
         self.resize(960, 600)
         self.setMinimumSize(800, 480)
         self.old_pos = None
@@ -477,11 +528,16 @@ class SubclipEditorDialog(QDialog):
                 border-radius: 12px;
             }
         """ % borde_color)
-        
+
         self.init_ui()
         self.init_media_player()
         self._update_waveform_range()
-        self.load_waveform()
+
+        if self.pending_download:
+            logger.info(f"[SubclipDialog] Ventana abierta en modo pendiente de descarga para '{self._display_name}'.")
+            self._set_pending_state(True)
+        else:
+            self.load_waveform()
         QTimer.singleShot(100, self._sync_ruler)  # Sync inicial tras layout
 
     def title_mousePressEvent(self, event):
@@ -518,9 +574,9 @@ class SubclipEditorDialog(QDialog):
         tb_layout = QHBoxLayout(title_bar)
         tb_layout.setContentsMargins(14, 0, 14, 0)
 
-        title_lbl = QLabel(f"Edición de Subclips (In/Out) — {os.path.basename(self.media_path)}")
-        title_lbl.setStyleSheet("font-weight: bold; font-size: 13px; color: #ffffff;")
-        tb_layout.addWidget(title_lbl)
+        self.title_lbl = QLabel(f"Edición de Subclips (In/Out) — {self._display_name}")
+        self.title_lbl.setStyleSheet("font-weight: bold; font-size: 13px; color: #ffffff;")
+        tb_layout.addWidget(self.title_lbl)
         tb_layout.addStretch()
 
         btn_close = QPushButton("✕")
@@ -846,7 +902,8 @@ class SubclipEditorDialog(QDialog):
         
         self.btn_send.clicked.connect(self._on_send_subclips_clicked)
         self.action_send_single.triggered.connect(self._on_send_single_subclip_clicked)
-        
+        self._send_state = SendButtonState(self.btn_send, restore_callback=self._update_send_button)
+
         right_layout.addWidget(self.btn_send)
         content_layout.addWidget(right_widget, 30)
 
@@ -861,8 +918,9 @@ class SubclipEditorDialog(QDialog):
         
         if self.media_type == "video":
             self.media_player.setVideoOutput(self.video_widget)
-            
-        self.media_player.setSource(QUrl.fromLocalFile(self.media_path))
+
+        if self.media_path and os.path.exists(self.media_path):
+            self.media_player.setSource(QUrl.fromLocalFile(self.media_path))
         self.media_player.positionChanged.connect(self._on_player_position_changed)
         self.media_player.durationChanged.connect(self._on_player_duration_changed)
         
@@ -976,6 +1034,51 @@ class SubclipEditorDialog(QDialog):
         if path == self.media_path:
             self.waveform_widget.set_hires_peaks(peaks)
             QTimer.singleShot(0, self._sync_ruler)
+
+    def _set_pending_state(self, pending: bool):
+        """Activa/desactiva el modo 'pendiente de descarga': deshabilita controles de edición/envío
+        y muestra el estado especial de descarga en la waveform (el botón de cerrar sigue disponible)."""
+        self.pending_download = pending
+        for w in (self.btn_play, self.btn_set_in, self.btn_set_out, self.btn_add_subclip):
+            w.setEnabled(not pending)
+        if pending:
+            self.btn_send.setEnabled(False)
+        else:
+            self._update_send_button()
+        self.waveform_widget.set_downloading(pending)
+
+    def set_resolved_media_path(self, local_path: str):
+        """
+        Reemplaza el medio pendiente por el archivo real ya descargado en alta calidad:
+        recarga el reproductor (lo que recalcula duración real vía durationChanged),
+        refresca el FPS y vuelve a extraer la waveform de alta resolución del archivo correcto.
+        """
+        logger.info(f"[SubclipDialog] Medio resuelto en alta calidad: {local_path}")
+        self.media_path = local_path
+        self._display_name = os.path.basename(local_path) or self._display_name
+        self.setWindowTitle(f"Edición de Subclips - {self._display_name}")
+        if hasattr(self, "title_lbl"):
+            self.title_lbl.setText(f"Edición de Subclips (In/Out) — {self._display_name}")
+
+        try:
+            from core.tabs.editing_media.ffprobe_metadata_manager import FFprobeMetadataManager
+            meta = FFprobeMetadataManager.get_instance().get_metadata_instant(local_path, self.media_type)
+            fps_str = str(meta.get("fps", "")).replace("fps", "").strip()
+            if fps_str:
+                self.fps = float(fps_str)
+                self.timeline_ruler.fps = self.fps
+                self.timeline_ruler.update()
+        except Exception as e:
+            logger.error(f"[SubclipDialog] No se pudo refrescar el FPS tras la descarga: {e}")
+
+        self.media_player.setSource(QUrl.fromLocalFile(local_path))
+        self._set_pending_state(False)
+        self.load_waveform()
+
+    def set_resolve_error(self, message: str):
+        """Muestra el error de descarga en la waveform; los controles quedan deshabilitados."""
+        logger.error(f"[SubclipDialog] Error resolviendo el medio en alta calidad: {message}")
+        self.waveform_widget.set_error(True, message)
 
     def keyPressEvent(self, event):
         """Maneja las atajos de teclado I (In), O (Out) y Espacio (Play/Pause)."""
@@ -1188,31 +1291,47 @@ class SubclipEditorDialog(QDialog):
             
         self.btn_send.setEnabled(True)
 
-    def _on_send_subclips_clicked(self):
+    def _send_subclip_payload(self, payload: dict, log_desc: str):
+        """Envía el payload de subclips mostrando el estado animado en btn_send y cerrando el diálogo en éxito."""
         editor_mgr = EditorIntegrationManager.get_instance()
         if not editor_mgr or not editor_mgr.active_editor:
             return
+        if self.pending_download:
+            logger.warning("[SubclipDialog] Envío bloqueado: el medio aún se está descargando en alta calidad.")
+            return
 
+        logger.info(f"[SubclipDialog] {log_desc} a {editor_mgr.active_editor}")
+        self._send_state.start("Enviando")
+
+        ok = False
+        try:
+            ok = editor_mgr.send_subclips(payload)
+        except Exception as e:
+            logger.error(f"[SubclipDialog] Excepción enviando subclips: {e}")
+            ok = False
+
+        if ok:
+            logger.info("[SubclipDialog] Subclips enviados correctamente.")
+        else:
+            logger.error("[SubclipDialog] Error al enviar los subclips al editor.")
+
+        self._send_state.finish(ok, "Éxito" if ok else "Error")
+        if ok:
+            QTimer.singleShot(1200, self.accept)
+
+    def _on_send_subclips_clicked(self):
         items_to_send = self.subclips if self.subclips else [{
             "name": f"{os.path.splitext(os.path.basename(self.media_path))[0]}_range",
             "in": self.in_sec,
             "out": self.out_sec
         }]
-        
         payload = {
             "filePath": self.media_path.replace('\\', '/'),
             "subclips": items_to_send
         }
-        
-        logger.info(f"[SubclipDialog] Enviando {len(items_to_send)} subclips a {editor_mgr.active_editor}")
-        editor_mgr.send_subclips(payload)
-        self.accept()
+        self._send_subclip_payload(payload, f"Enviando {len(items_to_send)} subclips")
 
     def _on_send_single_subclip_clicked(self):
-        editor_mgr = EditorIntegrationManager.get_instance()
-        if not editor_mgr or not editor_mgr.active_editor:
-            return
-            
         payload = {
             "filePath": self.media_path.replace('\\', '/'),
             "subclips": [{
@@ -1221,10 +1340,7 @@ class SubclipEditorDialog(QDialog):
                 "out": self.out_sec
             }]
         }
-        
-        logger.info(f"[SubclipDialog] Enviando rango actual como subclip a {editor_mgr.active_editor}")
-        editor_mgr.send_subclips(payload)
-        self.accept()
+        self._send_subclip_payload(payload, "Enviando rango actual como subclip")
 
     def closeEvent(self, event):
         self.media_player.stop()

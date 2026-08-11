@@ -240,16 +240,49 @@ class TreeListMixin:
             target_path = getattr(self, "last_selected_media_path", None)
 
         def restore_selection():
+            restored = False
             if target_path:
                 idx = self.media_model.find_item_index_by_path(target_path)
                 if idx.isValid():
                     from PySide6.QtCore import QItemSelectionModel
-                    if hasattr(self, "media_table") and self.media_table.selectionModel():
-                        self.media_table.selectionModel().select(idx, QItemSelectionModel.ClearAndSelect | QItemSelectionModel.Rows)
-                        self.media_table.setCurrentIndex(idx)
-                    if hasattr(self, "media_list") and self.media_list.selectionModel():
-                        self.media_list.selectionModel().select(idx, QItemSelectionModel.ClearAndSelect)
-                        self.media_list.setCurrentIndex(idx)
+                    # Esta reselección es solo un efecto del refresco de la lista (p.ej. tras
+                    # completar una descarga en segundo plano), no una nueva elección del usuario:
+                    # evitar que reinicie la reproducción/waveform del ítem ya activo.
+                    self._suppress_next_media_click_reset = True
+                    # media_table y media_list COMPARTEN el mismo selectionModel (ver
+                    # editing_media_view.py: media_list.setSelectionModel(media_table.selectionModel())).
+                    # Llamar a .select()/.setCurrentIndex() en ambas vistas por separado dispara
+                    # selectionChanged DOS veces sobre el mismo modelo: la primera consumía la
+                    # bandera de supresión de arriba, y la segunda emisión (redundante) caía en el
+                    # camino de "selección nueva" y reiniciaba la reproducción. Basta con
+                    # seleccionar una sola vez; ambas vistas reflejan el resaltado igualmente
+                    # porque están conectadas al mismo modelo compartido.
+                    selection_model = self.media_table.selectionModel() if hasattr(self, "media_table") else None
+                    if selection_model:
+                        selection_model.select(idx, QItemSelectionModel.ClearAndSelect | QItemSelectionModel.Rows)
+                        # NoUpdate: solo mover el índice "actual" (para que ambas vistas hagan
+                        # scroll-to-visible vía su propio slot currentChanged), sin volver a
+                        # tocar la selección, que .select() ya dejó correcta arriba.
+                        selection_model.setCurrentIndex(idx, QItemSelectionModel.NoUpdate)
+                    restored = True
+
+            # Terminó el refresco (reset del modelo). Si no había nada que restaurar (p.ej.
+            # cambiamos de carpeta/colección y el ítem activo ya no existe aquí), aplicar ahora
+            # el detener/limpiar que se suprimió mientras el modelo estaba en reset transitorio.
+            self._refreshing_media_list = False
+            if not restored:
+                self._clear_metadata()
+                self._stop_audio_playback()
+
+            # Restaurar la posición de scroll previa al refresco (p.ej. "Cargar más" o el scroll
+            # infinito de Freesound), en vez de dejar que Qt salte a donde quedó reubicado el
+            # ítem reseleccionado.
+            pending_scroll = getattr(self, "_pending_scroll_restore", None)
+            if pending_scroll is not None:
+                self._pending_scroll_restore = None
+                scroll_widget = self.media_table if getattr(self, "view_mode", "grid") == "list" and hasattr(self, "media_table") else self.media_list
+                if scroll_widget:
+                    scroll_widget.verticalScrollBar().setValue(pending_scroll)
 
         # Detener temporizador de búsqueda anterior si lo hubiera
         if hasattr(self, "_batch_timer") and self._batch_timer and self._batch_timer.isActive():
@@ -290,9 +323,11 @@ class TreeListMixin:
                     return
 
                 downloaded_list = self.controller.collections.get("Descargados", [])
-                user_dl_dir = os.path.expanduser("~/Downloads")
                 from core.utils.config_manager import get_config
-                labels = get_config().get("labels", [])
+                config = get_config()
+                custom_dl_dir = config.get("default_web_download_dir")
+                user_dl_dir = custom_dl_dir if custom_dl_dir and os.path.isdir(custom_dl_dir) else os.path.expanduser("~/Downloads")
+                labels = config.get("labels", [])
 
                 for item in self.online_results:
                     file_name = item.get("nombre", "").strip()
@@ -324,6 +359,7 @@ class TreeListMixin:
                     if is_downloaded and found_path:
                         item["dest_path"] = found_path
 
+                self._refreshing_media_list = True
                 self.media_model.set_data(self.online_results)
                 from PySide6.QtCore import QTimer
                 QTimer.singleShot(0, restore_selection)
@@ -421,6 +457,7 @@ class TreeListMixin:
             else:
                 display_items = filtered_items
 
+            self._refreshing_media_list = True
             self.media_model.set_data(display_items)
 
             # Re-seleccionar si es necesario
@@ -541,9 +578,14 @@ class TreeListMixin:
         
         try:
             data = item.data(0, Qt.UserRole) if item else None
-            
-            # Evitar re-ejecución duplicada si ya es el nodo seleccionado y renderizado
-            if getattr(self, "_active_tree_item", None) == item and getattr(self, "_active_tree_data", None) == data:
+
+            # Evitar re-ejecución duplicada si ya es el nodo seleccionado y renderizado.
+            # Se compara solo por datos lógicos (tipo/ruta/nombre): el árbol se reconstruye
+            # por completo en cada refresco (_update_tree_view crea QTreeWidgetItem nuevos),
+            # así que comparar por identidad de objeto siempre fallaría aunque el nodo
+            # seleccionado no haya cambiado realmente.
+            if data is not None and getattr(self, "_active_tree_data", None) == data:
+                self._active_tree_item = item
                 return
         except RuntimeError:
             self._active_tree_item = None

@@ -62,6 +62,8 @@ class DownloaderMaster:
             if plugin_dir in sys.path:
                 sys.path.remove(plugin_dir)
 
+        from core.ytdlp_logic.resilient_downloader import is_youtube_access_error, make_fallback_ydl_opts
+
         try:
             import yt_dlp
             env = get_dependency_env()
@@ -90,8 +92,20 @@ class DownloaderMaster:
                     # Log de validación de itags en el outtmpl si es posible
                     logger.debug(f"DownloaderMaster: ydl_opts['outtmpl'] = {ydl_opts.get('outtmpl')}")
                     
-                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                        ydl.download([url])
+                    try:
+                        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                            ydl.download([url])
+                    except Exception as frag_err:
+                        if is_youtube_access_error(url, frag_err):
+                            logger.warning(
+                                f"DownloaderMaster: YouTube/FFmpeg bloqueó el fragmento ({frag_err}). "
+                                f"Reintentando fragmento con cliente alternativo (web_embedded)..."
+                            )
+                            fallback_opts = make_fallback_ydl_opts(ydl_opts)
+                            with yt_dlp.YoutubeDL(fallback_opts) as ydl_fallback:
+                                ydl_fallback.download([url])
+                        else:
+                            raise frag_err
                         
                     # Recortar subtítulos si es necesario
                     if request_data.get("cut_subtitles") and frag_data.get("subtitle_lang"):
@@ -114,8 +128,6 @@ class DownloaderMaster:
                 needs_local_cut = fragments and fragment_mode in (
                     FragmentState.DOWNLOAD_THEN_CUT, FragmentState.KEEP_FULL
                 )
-
-                from core.ytdlp_logic.resilient_downloader import is_youtube_access_error, make_fallback_ydl_opts
 
                 try:
                     with yt_dlp.YoutubeDL(ydl_opts) as ydl:

@@ -9,6 +9,10 @@ from core.logger.logger_manager import logger
 YOUTUBE_ACCESS_MARKERS = (
     "http error 403",
     "403: forbidden",
+    "403 forbidden",
+    "server returned 403",
+    "access denied",
+    "ffmpeg exited with code",
     "http error 429",
     "too many requests",
     "sign in to confirm you’re not a bot",

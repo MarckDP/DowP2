@@ -21,6 +21,7 @@ class ActivityPanel(QFrame):
     row_close_requested = Signal(object)      # Emitido cuando una fila de descarga solicita cerrarse
     row_reveal_requested = Signal(object)     # Emitido cuando una fila solicita abrir carpeta
     clear_all_requested = Signal()            # Emitido cuando se hace clic en limpiar todo
+    cancel_all_requested = Signal()           # Emitido cuando se hace clic en cancelar todo
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -48,7 +49,7 @@ class ActivityPanel(QFrame):
         layout.setContentsMargins(12, 10, 12, 10)
         layout.setSpacing(8)
 
-        # Barra de encabezado con título y botón "Limpiar todo"
+        # Barra de encabezado con título y botones de acción ("Cancelar todo" y "Limpiar")
         header_layout = QHBoxLayout()
         header_layout.setContentsMargins(0, 0, 0, 0)
         header_layout.setSpacing(6)
@@ -62,9 +63,37 @@ class ActivityPanel(QFrame):
         icon_dir = os.path.normpath(os.path.join(
             os.path.dirname(__file__), "..", "..", "..", "assets", "icons", "svg"
         ))
+
+        # Botón "Cancelar todo"
+        self.btn_cancel_all = QPushButton(self.tr("Cancelar todo") if hasattr(self, "tr") else "Cancelar todo")
+        self.btn_cancel_all.setFixedHeight(22)
+        self.btn_cancel_all.setToolTip(self.tr("Cancelar todas las descargas en curso") if hasattr(self, "tr") else "Cancelar todas las descargas en curso")
+        _close_icon = os.path.join(icon_dir, "close.svg")
+        if os.path.exists(_close_icon):
+            self.btn_cancel_all.setIcon(QIcon(_close_icon))
+            self.btn_cancel_all.setIconSize(QSize(12, 12))
+        self.btn_cancel_all.setStyleSheet(f"""
+            QPushButton {{
+                background-color: transparent;
+                color: {get_theme_token('texto_secundario', '#888888')};
+                border: 1px solid {get_theme_token('borde', '#2d2d2d')};
+                border-radius: 6px;
+                padding: 2px 10px;
+                font-size: 10px;
+            }}
+            QPushButton:hover {{
+                background-color: {get_theme_token('fondo_hover', '#2a2a2a')};
+                color: #ff6b6b;
+                border-color: #ff6b6b;
+            }}
+        """)
+        self.btn_cancel_all.clicked.connect(self.cancel_all_requested.emit)
+        header_layout.addWidget(self.btn_cancel_all)
+
+        # Botón "Limpiar"
         self.btn_clear_all = QPushButton(self.tr("Limpiar") if hasattr(self, "tr") else "Limpiar")
         self.btn_clear_all.setFixedHeight(22)
-        self.btn_clear_all.setToolTip(self.tr("Cancelar descargas activas y limpiar la lista") if hasattr(self, "tr") else "Cancelar descargas y limpiar")
+        self.btn_clear_all.setToolTip(self.tr("Limpiar la lista de descargas") if hasattr(self, "tr") else "Limpiar la lista de descargas")
         _delete_icon = os.path.join(icon_dir, "delete.svg")
         if os.path.exists(_delete_icon):
             self.btn_clear_all.setIcon(QIcon(_delete_icon))
@@ -80,13 +109,13 @@ class ActivityPanel(QFrame):
             }}
             QPushButton:hover {{
                 background-color: {get_theme_token('fondo_hover', '#2a2a2a')};
-                color: #ff6b6b;
-                border-color: #ff6b6b;
+                color: {get_theme_token('texto_principal', '#ffffff')};
+                border-color: {get_theme_token('borde_focus', '#007acc')};
             }}
         """)
         self.btn_clear_all.clicked.connect(self.clear_all_requested.emit)
-        # El botón siempre estará visible a petición del usuario
         header_layout.addWidget(self.btn_clear_all)
+
         layout.addLayout(header_layout)
         
         # Línea separadora sutil
@@ -120,6 +149,7 @@ class ActivityPanel(QFrame):
 
     def add_activity_rows(self, entries, selected_indices):
         self.empty_lbl.hide()
+        self.btn_cancel_all.show()
         self.btn_clear_all.show()
         
         new_rows = []
@@ -155,6 +185,7 @@ class ActivityPanel(QFrame):
         self.current_item_pos = 0
         self.completed_items = 0
         self.empty_lbl.show()
+        self.btn_cancel_all.hide()
         self.btn_clear_all.hide()
 
     def remove_row(self, row):
@@ -168,3 +199,5 @@ class ActivityPanel(QFrame):
         
         if not self.item_rows:
             self.empty_lbl.show()
+            self.btn_cancel_all.hide()
+            self.btn_clear_all.hide()

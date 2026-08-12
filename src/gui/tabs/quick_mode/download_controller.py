@@ -43,10 +43,6 @@ class QuickDownloadController(QObject):
                             chk_thumb_file_checked, chk_thumb_only_checked,
                             btn_cut_checked, chk_playlist_selector_checked):
         """Inicia el flujo de descargas dependiendo de la configuración actual."""
-        if self.is_downloading:
-            self.cancel_download()
-            return
-
         if not url:
             self.progress_updated.emit(0, self.tr("Pega una URL primero") if hasattr(self, "tr") else "Pega una URL primero", "error")
             return
@@ -258,7 +254,7 @@ class QuickDownloadController(QObject):
             
             self.is_downloading = True
             self.busy_state_changed.emit(False, "")
-            self.download_text_changed.emit(self.tr("Cancelar") if hasattr(self, "tr") else "Cancelar")
+            self.download_text_changed.emit(self.tr("Descargar") if hasattr(self, "tr") else "Descargar")
             
             self.start_worker(req, selected_entries=[data], selected_indices=[0])
         else:
@@ -284,7 +280,7 @@ class QuickDownloadController(QObject):
         
         self.is_downloading = True
         self.controls_state_changed.emit(False)
-        self.download_text_changed.emit(self.tr("Cancelar") if hasattr(self, "tr") else "Cancelar")
+        self.download_text_changed.emit(self.tr("Descargar") if hasattr(self, "tr") else "Descargar")
         self.progress_updated.emit(0, self.tr("Iniciando descarga...") if hasattr(self, "tr") else "Iniciando descarga...", "running")
         
         self.download_worker.start()

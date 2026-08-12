@@ -53,6 +53,7 @@ class QuickModeTab(QWidget):
         self.activity_panel = ActivityPanel(self)
         self.activity_panel.row_close_requested.connect(self._on_row_close_requested)
         self.activity_panel.row_reveal_requested.connect(self._on_row_reveal_requested)
+        self.activity_panel.cancel_all_requested.connect(self._on_cancel_all_clicked)
         self.activity_panel.clear_all_requested.connect(self._on_clear_all_clicked)
 
         self.output_options = OutputOptionsWidget()
@@ -195,9 +196,13 @@ class QuickModeTab(QWidget):
             self.btn_cut.setEnabled(True)
 
     def _on_download_clicked(self):
+        url = self.url_input.text().strip()
+        if not url:
+            return
+
         # Delegar la descarga al controlador
         self.controller.start_download_flow(
-            url=self.url_input.text().strip(),
+            url=url,
             mode=self.mode_combo.currentData() or "video+audio",
             quality=self.quality_combo.currentData() or "best_compatible",
             output_path=self.output_options.output_path_input.text(),
@@ -207,6 +212,7 @@ class QuickModeTab(QWidget):
             btn_cut_checked=self.btn_cut.isChecked(),
             chk_playlist_selector_checked=self.chk_playlist_selector.isChecked()
         )
+        self.url_input.clear()
 
     def _on_open_output_path_clicked(self):
         path = self.output_options.output_path_input.text().strip()
@@ -245,6 +251,11 @@ class QuickModeTab(QWidget):
         if row.downloaded_filepath and os.path.exists(row.downloaded_filepath):
             reveal_in_file_manager(row.downloaded_filepath)
 
+    def _on_cancel_all_clicked(self):
+        """Cancelar descargas activas en curso."""
+        if self.controller.is_downloading:
+            self.controller.cancel_download()
+
     def _on_clear_all_clicked(self):
         """Cancelar descargas activas y limpiar toda la lista."""
         if self.controller.is_downloading:
@@ -258,7 +269,8 @@ class QuickModeTab(QWidget):
             self.output_options.set_progress(0, message, "running" if busy else "wait")
 
     def _set_controls_enabled(self, enabled):
-        self.url_input.setEnabled(enabled)
+        # El campo de URL y el botón de descarga siempre se mantienen habilitados para permitir encolar/añadir
+        self.url_input.setEnabled(True)
         self.btn_download.setEnabled(enabled or self.controller.is_downloading)
         self.options_panel.setEnabled(enabled)
         self.output_options.output_path_input.setEnabled(enabled)

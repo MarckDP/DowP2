@@ -56,6 +56,11 @@ class DependencyCheckWorker(QThread):
                 check_deno, download_deno,
                 get_local_version as get_deno_version
             )
+            from core.setup.potprovider_setup import (
+                check_all as check_potprovider,
+                download_potprovider,
+                get_local_version as get_potprovider_version,
+            )
 
             self.status_update.emit("Verificando dependencias...")
 
@@ -69,9 +74,10 @@ class DependencyCheckWorker(QThread):
 
             # Hay dependencias faltantes — descargar
             deps = [
-                ("ytdlp", "yt-dlp", check_ytdlp, download_ytdlp, get_ytdlp_version),
-                ("ffmpeg", "FFmpeg", check_ffmpeg, download_ffmpeg, get_ffmpeg_version),
-                ("deno", "Deno", check_deno, download_deno, get_deno_version),
+                ("ytdlp",        "yt-dlp",      check_ytdlp,       download_ytdlp,       get_ytdlp_version),
+                ("ffmpeg",       "FFmpeg",       check_ffmpeg,      download_ffmpeg,      get_ffmpeg_version),
+                ("deno",         "Deno",         check_deno,        download_deno,        get_deno_version),
+                ("potprovider",  "PO Provider",  check_potprovider, download_potprovider, get_potprovider_version),
             ]
 
             for dep_id, name, check_fn, download_fn, version_fn in deps:
@@ -396,7 +402,12 @@ class SplashScreen(QWidget):
     def _on_dep_finished(self, dep_id, success, version_or_msg):
         # Si no existe la fila, crearla (dependencia ya estaba instalada)
         if dep_id not in self.dep_rows:
-            names = {"ytdlp": "yt-dlp", "ffmpeg": "FFmpeg", "deno": "Deno"}
+            names = {
+                "ytdlp": "yt-dlp",
+                "ffmpeg": "FFmpeg",
+                "deno": "Deno",
+                "potprovider": "PO Provider",
+            }
             self._ensure_dep_row(dep_id, names.get(dep_id, dep_id))
 
         row = self.dep_rows[dep_id]

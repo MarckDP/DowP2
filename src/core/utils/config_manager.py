@@ -44,7 +44,9 @@ def get_config():
             "aftereffects_path": "",
             "davinci_enabled": False,
             "davinci_path": ""
-        }
+        },
+        "pot_provider": "bgutil",       # "bgutil" | "wpc" | "none"
+        "pot_wpc_browser_path": "",     # ruta al ejecutable Chromium; vacío = auto-detect
     }
     for k, v in defaults.items():
         if k not in _cached_config:

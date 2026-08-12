@@ -130,6 +130,61 @@ def get_base_ydl_opts(extra_opts=None):
             }
         }
         
+    # --- PO TOKEN PROVIDER (multi-provider) ---
+    # Lee el provider activo de config.json y aplica los extractor_args correctos.
+    # Ambos providers comparten la misma lista de player_client.
+    _pot_provider = config.get("pot_provider", "bgutil")
+
+    _pot_active = False
+
+    if _pot_provider == "bgutil":
+        from core.setup.potprovider_setup import check_all as pot_ready, get_binary_path
+        if pot_ready():
+            binary_path = get_binary_path()
+            if 'extractor_args' not in ydl_opts:
+                ydl_opts['extractor_args'] = {'youtube': {}}
+            ydl_opts['extractor_args'].setdefault('youtube', {})
+            # Arg oficial del provider CLI (v0.8.1+, reemplaza el deprecado getpot_bgutil_script)
+            # Pasar script_path e inyectar cli_path para que bgutil:http sepa que el modo CLI está activo y no espere timeout en puerto 4416
+            ydl_opts['extractor_args']['youtubepot-bgutilcli'] = {'cli_path': [binary_path]}
+            ydl_opts['extractor_args']['youtubepot-bgutilscript'] = {'script_path': [binary_path]}
+            _pot_active = True
+            logger.info(f"Analyzer: POT provider=bgutil activo -> {binary_path}")
+        else:
+            logger.warning("Analyzer: bgutil no disponible - puede haber 429/bot-check")
+
+    elif _pot_provider == "wpc":
+        from core.setup.wpc_setup import check_wpc, get_browser_path, get_browser_display_name
+        if check_wpc():
+            if 'extractor_args' not in ydl_opts:
+                ydl_opts['extractor_args'] = {'youtube': {}}
+            ydl_opts['extractor_args'].setdefault('youtube', {})
+            browser = get_browser_path()
+            if browser:
+                ydl_opts['extractor_args']['youtubepot-wpc'] = {'browser_path': [browser]}
+                logger.info(f"Analyzer: POT provider=wpc activo -> {get_browser_display_name()} ({browser})")
+            else:
+                # Sin ruta explícita nodriver elige el navegador por su cuenta
+                logger.info("Analyzer: POT provider=wpc activo -> nodriver auto-detecta navegador")
+            _pot_active = True
+        else:
+            logger.warning("Analyzer: WPC no instalado - puede haber 429/bot-check")
+
+    else:  # "none" o desconocido
+        logger.info("Analyzer: POT provider=none - sin PO Token")
+
+    if _pot_active:
+        # Clientes óptimos con PO Token activo (cualquier provider):
+        # - mweb: extrae sin visitor_data pre-fetched
+        # - web:  GVS tokens más confiables para el stream real
+        # Exclusiones: clientes que fallan con GVS o requieren visitor_data externo
+        existing_clients = ydl_opts['extractor_args']['youtube'].get('player_client', [])
+        clients = ['mweb', 'web'] + [c for c in existing_clients if c not in ('mweb', 'web')]
+        exclusions = ['-web_safari', '-tv_simply', '-android_sdkless', '-android_vr']
+        clients += [x for x in exclusions if x not in clients]
+        ydl_opts['extractor_args']['youtube']['player_client'] = clients
+        logger.debug(f"Analyzer: player_client -> {clients}")
+
     return ydl_opts
 
 def get_video_info(url, extra_opts=None, progress_callback=None):
@@ -151,6 +206,18 @@ def get_video_info(url, extra_opts=None, progress_callback=None):
                 if mod.startswith('yt_dlp'):
                     del sys.modules[mod]
         sys.path.insert(0, ytdlp_path)
+
+    # Inyectar el plugin del PO Token Provider solo si bgutil es el provider activo.
+    from core.setup.potprovider_setup import get_plugin_dir, check_plugin
+    plugin_dir = get_plugin_dir()
+    pot_provider = get_config().get("pot_provider", "bgutil")
+    if pot_provider == "bgutil" and check_plugin():
+        if plugin_dir not in sys.path:
+            sys.path.insert(0, plugin_dir)
+            logger.debug(f"Analyzer: plugin dir inyectado en sys.path -> {plugin_dir}")
+    else:
+        if plugin_dir in sys.path:
+            sys.path.remove(plugin_dir)
 
     try:
         import yt_dlp
@@ -175,10 +242,22 @@ def get_video_info(url, extra_opts=None, progress_callback=None):
         # Guardar referencia al logger para extraer errores
         yt_logger = ydl_opts.get('logger')
         
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            logger.info("Analyzer: Instancia de YoutubeDL creada exitosamente. Iniciando extracción...")
-            info_dict = ydl.extract_info(url, download=False)
-            logger.info("Analyzer: Extracción completada.")
+        from core.ytdlp_logic.resilient_downloader import is_youtube_access_error, make_fallback_ydl_opts
+
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                logger.info("Analyzer: Instancia de YoutubeDL creada exitosamente. Iniciando extracción...")
+                info_dict = ydl.extract_info(url, download=False)
+                logger.info("Analyzer: Extracción completada.")
+        except Exception as extract_err:
+            if is_youtube_access_error(url, extract_err):
+                logger.warning(f"Analyzer: YouTube bloqueó el primer cliente ({extract_err}). Reintentando análisis con cliente alternativo (web_embedded)...")
+                fallback_opts = make_fallback_ydl_opts(ydl_opts)
+                with yt_dlp.YoutubeDL(fallback_opts) as ydl_fb:
+                    info_dict = ydl_fb.extract_info(url, download=False)
+                    logger.info("Analyzer: Extracción completada con cliente alternativo.")
+            else:
+                raise extract_err
             
         if info_dict is None:
             err_msg = ""

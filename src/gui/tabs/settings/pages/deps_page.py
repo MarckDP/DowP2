@@ -1,15 +1,28 @@
 import os
 import platform
-from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
-                                 QPushButton, QFrame, QScrollArea, QProgressBar, QMessageBox)
+from PySide6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel,
+    QPushButton, QFrame, QScrollArea, QProgressBar, QMessageBox,
+    QRadioButton, QButtonGroup, QFileDialog, QLineEdit, QToolButton,
+    QSizePolicy, QGroupBox
+)
 from PySide6.QtCore import Qt, Signal, QThread, QUrl
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QDesktopServices, QIcon
 from core.utils.i18n import logger
 from gui.styles import get_theme_token
 
 from core.setup.ffmpeg_setup import check_ffmpeg, download_ffmpeg, get_local_version as ffmpeg_local, get_latest_remote_version as ffmpeg_remote, get_ffmpeg_dir
 from core.setup.deno_setup import check_deno, download_deno, get_local_version as deno_local, get_latest_remote_version as deno_remote
 from core.setup.ytdlp_setup import check_ytdlp, download_ytdlp, get_local_version as ytdlp_local, get_latest_remote_version as ytdlp_remote
+from core.setup.potprovider_setup import (
+    check_all as check_potprovider, download_potprovider,
+    get_local_version as potprovider_local, get_latest_remote_version as potprovider_remote
+)
+from core.setup.wpc_setup import (
+    check_wpc, install_wpc,
+    get_local_version as wpc_local, get_latest_remote_version as wpc_remote,
+    get_browser_display_name, detect_system_browser
+)
 
 class UpdateCheckWorker(QThread):
     finished_signal = Signal(dict) # {dep_id: {"local": str, "remote": str}}
@@ -269,6 +282,331 @@ class DependencyRowWidget(QFrame):
             self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(value)
 
+class WPCInstallWorker(QThread):
+    """Hilo para instalar/actualizar yt-dlp-getpot-wpc via pip sin bloquear la UI."""
+    finished_signal = Signal(bool, str)
+    numeric_progress_signal = Signal(int)
+
+    def run(self):
+        def cb(pct):
+            self.numeric_progress_signal.emit(pct)
+        success, msg = install_wpc(progress_callback=cb)
+        self.finished_signal.emit(success, msg)
+
+
+class POTProviderPanel(QFrame):
+    """
+    Panel de selección del PO Token Provider activo.
+    Muestra bgutil-pot y WPC como opciones, con estado, versión y acciones para cada uno.
+    """
+    provider_changed = Signal(str)  # emite el nuevo provider id
+
+    _TOOLTIP_WPC_BROWSER = (
+        "WPC (WebPoClient) usa un navegador real basado en Chromium para generar\n"
+        "los PO Tokens que YouTube requiere. Cualquier navegador Chromium funciona:\n\n"
+        "  \u2022  Google Chrome\n"
+        "  \u2022  Brave Browser\n"
+        "  \u2022  Microsoft Edge\n"
+        "  \u2022  Chromium\n\n"
+        "Si dejas el campo vacío, WPC intentará detectar tu navegador automáticamente.\n"
+        "Haz clic en '...' para seleccionar el ejecutable manualmente."
+    )
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("potProviderPanel")
+        self._wpc_worker = None
+        self.setStyleSheet("""
+            QFrame#potProviderPanel {
+                background-color: rgba(255,255,255,0.03);
+                border: 1px solid #333;
+                border-radius: 8px;
+                padding: 4px;
+            }
+        """)
+        self._build_ui()
+        self._load_state()
+
+    def _build_ui(self):
+        root = QVBoxLayout(self)
+        root.setContentsMargins(14, 12, 14, 12)
+        root.setSpacing(10)
+
+        # ── Título ──────────────────────────────────────────────────────────
+        title_row = QHBoxLayout()
+        title_lbl = QLabel("PO Token Provider")
+        title_lbl.setStyleSheet("font-size: 14px; font-weight: bold; color: #EEEEEE;")
+        title_row.addWidget(title_lbl)
+
+        info_btn = QToolButton()
+        info_btn.setText("?")
+        info_btn.setFixedSize(20, 20)
+        info_btn.setStyleSheet(
+            "QToolButton { border: 1px solid #555; border-radius: 10px;"
+            " color: #AAA; font-size: 11px; background: #2a2a2a; }"
+            " QToolButton:hover { background: #3a3a3a; color: #FFF; }"
+        )
+        info_btn.setToolTip(
+            "El PO Token es requerido por YouTube para autenticar descargas sin cookies.\n"
+            "DowP puede usar dos engines distintos — elige el que mejor funcione para ti.\n\n"
+            "  bgutil-pot: Binario Rust, sin dependencias extra. Automático.\n"
+            "  WPC:        Usa tu navegador Chrome/Brave/Edge para generar tokens más fiables.\n"
+            "  Ninguno:    Sin token — puede fallar con error 429 o bot-check."
+        )
+        info_btn.clicked.connect(lambda: info_btn.setToolTip(info_btn.toolTip()))
+        title_row.addWidget(info_btn)
+        title_row.addStretch()
+        root.addLayout(title_row)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet("color: #333;")
+        root.addWidget(sep)
+
+        # ── Grupo de radio buttons ───────────────────────────────────────────
+        self._btn_group = QButtonGroup(self)
+
+        self._radio_bgutil = self._make_radio("bgutil-pot  (recomendado)", "bgutil")
+        self._radio_wpc    = self._make_radio("WPC – WebPoClient", "wpc")
+        self._radio_none   = self._make_radio("Ninguno", "none")
+
+        self._btn_group.addButton(self._radio_bgutil, 0)
+        self._btn_group.addButton(self._radio_wpc,    1)
+        self._btn_group.addButton(self._radio_none,   2)
+        self._btn_group.idClicked.connect(self._on_radio_changed)
+
+        # ── Fila bgutil ──────────────────────────────────────────────────────
+        row_bgutil = QHBoxLayout()
+        row_bgutil.addWidget(self._radio_bgutil)
+        self._bgutil_status = QLabel("Chequeando...")
+        self._bgutil_status.setStyleSheet("color: #888; font-size: 11px;")
+        row_bgutil.addWidget(self._bgutil_status)
+        row_bgutil.addStretch()
+        self._bgutil_btn = QPushButton("Actualizar")
+        self._bgutil_btn.setFixedWidth(100)
+        self._bgutil_btn.setCursor(Qt.PointingHandCursor)
+        self._bgutil_btn.setVisible(False)
+        self._bgutil_btn.clicked.connect(self._on_bgutil_action)
+        row_bgutil.addWidget(self._bgutil_btn)
+        root.addLayout(row_bgutil)
+
+        # ── Fila WPC ─────────────────────────────────────────────────────────
+        row_wpc = QHBoxLayout()
+        row_wpc.addWidget(self._radio_wpc)
+        self._wpc_status = QLabel("Chequeando...")
+        self._wpc_status.setStyleSheet("color: #888; font-size: 11px;")
+        row_wpc.addWidget(self._wpc_status)
+        row_wpc.addStretch()
+        self._wpc_btn = QPushButton("Instalar")
+        self._wpc_btn.setFixedWidth(100)
+        self._wpc_btn.setCursor(Qt.PointingHandCursor)
+        self._wpc_btn.clicked.connect(self._on_wpc_action)
+        row_wpc.addWidget(self._wpc_btn)
+        root.addLayout(row_wpc)
+
+        # WPC progress bar (oculta por defecto)
+        self._wpc_progress = QProgressBar()
+        self._wpc_progress.setTextVisible(False)
+        self._wpc_progress.setFixedHeight(4)
+        self._wpc_progress.setRange(0, 100)
+        self._wpc_progress.hide()
+        root.addWidget(self._wpc_progress)
+
+        # ── Fila Ninguno ─────────────────────────────────────────────────────
+        root.addWidget(self._radio_none)
+
+        sep2 = QFrame()
+        sep2.setFrameShape(QFrame.HLine)
+        sep2.setStyleSheet("color: #333;")
+        root.addWidget(sep2)
+
+        # ── Campo de ruta de navegador (WPC) ─────────────────────────────────
+        browser_label_row = QHBoxLayout()
+        browser_lbl = QLabel("Navegador para WPC:")
+        browser_lbl.setStyleSheet("color: #CCC; font-size: 12px;")
+        browser_label_row.addWidget(browser_lbl)
+
+        # Botón de ayuda con tooltip detallado
+        browser_help = QToolButton()
+        browser_help.setText("?")
+        browser_help.setFixedSize(18, 18)
+        browser_help.setToolTip(self._TOOLTIP_WPC_BROWSER)
+        browser_help.setStyleSheet(
+            "QToolButton { border: 1px solid #555; border-radius: 9px;"
+            " color: #AAA; font-size: 10px; background: #2a2a2a; }"
+            " QToolButton:hover { background: #3a3a3a; color: #FFF; }"
+        )
+        browser_label_row.addWidget(browser_help)
+        browser_label_row.addStretch()
+        root.addLayout(browser_label_row)
+
+        browser_path_row = QHBoxLayout()
+        self._browser_field = QLineEdit()
+        self._browser_field.setPlaceholderText("Auto-detectado: deja vacío o elige un ejecutable")
+        self._browser_field.setStyleSheet(
+            "background: #1e1e1e; color: #DDD; border: 1px solid #444;"
+            " border-radius: 4px; padding: 4px 8px; font-size: 12px;"
+        )
+        self._browser_field.textChanged.connect(self._on_browser_path_changed)
+
+        self._browser_detected_lbl = QLabel()
+        self._browser_detected_lbl.setStyleSheet("color: #4CAF50; font-size: 11px;")
+
+        browse_btn = QToolButton()
+        browse_btn.setText("...")
+        browse_btn.setFixedSize(28, 28)
+        browse_btn.setCursor(Qt.PointingHandCursor)
+        browse_btn.setToolTip("Seleccionar ejecutable del navegador (chrome.exe, brave.exe, msedge.exe...)")
+        browse_btn.setStyleSheet(
+            "QToolButton { background: #2e2e2e; border: 1px solid #555;"
+            " border-radius: 4px; color: #DDD; }"
+            " QToolButton:hover { background: #3e3e3e; }"
+        )
+        browse_btn.clicked.connect(self._pick_browser)
+
+        browser_path_row.addWidget(self._browser_field)
+        browser_path_row.addWidget(browse_btn)
+        root.addLayout(browser_path_row)
+        root.addWidget(self._browser_detected_lbl)
+
+    def _make_radio(self, text, provider_id):
+        rb = QRadioButton(text)
+        rb.setProperty("provider_id", provider_id)
+        rb.setStyleSheet("color: #DDD; font-size: 13px;")
+        return rb
+
+    # ── Estado ──────────────────────────────────────────────────────────────
+
+    def _load_state(self):
+        from core.utils.config_manager import get_config
+        cfg = get_config()
+        provider = cfg.get("pot_provider", "bgutil")
+        browser_path = cfg.get("pot_wpc_browser_path", "")
+
+        if provider == "bgutil":
+            self._radio_bgutil.setChecked(True)
+        elif provider == "wpc":
+            self._radio_wpc.setChecked(True)
+        else:
+            self._radio_none.setChecked(True)
+
+        self._browser_field.blockSignals(True)
+        self._browser_field.setText(browser_path)
+        self._browser_field.blockSignals(False)
+        self._update_detected_label()
+        self._refresh_status()
+
+    def _refresh_status(self):
+        # bgutil
+        if check_potprovider():
+            ver = potprovider_local() or "?"
+            self._bgutil_status.setText(f"✓ Instalado  v{ver}")
+            self._bgutil_status.setStyleSheet("color: #4CAF50; font-size: 11px;")
+            self._bgutil_btn.setVisible(False)
+        else:
+            self._bgutil_status.setText("✗ No instalado")
+            self._bgutil_status.setStyleSheet("color: #F44336; font-size: 11px;")
+            self._bgutil_btn.setVisible(True)
+            self._bgutil_btn.setText("Descargar")
+
+        # WPC
+        wpc_local(force_check=True)
+        if check_wpc():
+            ver = wpc_local() or "?"
+            self._wpc_status.setText(f"✓ Instalado  v{ver}")
+            self._wpc_status.setStyleSheet("color: #4CAF50; font-size: 11px;")
+            self._wpc_btn.setText("Actualizar")
+        else:
+            self._wpc_status.setText("✗ No instalado")
+            self._wpc_status.setStyleSheet("color: #F44336; font-size: 11px;")
+            self._wpc_btn.setText("Instalar")
+
+    def _update_detected_label(self):
+        configured = self._browser_field.text().strip()
+        if configured and os.path.isfile(configured):
+            self._browser_detected_lbl.setText(f"✓ Ruta configurada: {os.path.basename(configured)}")
+        else:
+            name = get_browser_display_name()
+            if name and name != "No detectado":
+                self._browser_detected_lbl.setText(f"Auto-detectado: {name}")
+                self._browser_detected_lbl.setStyleSheet("color: #4CAF50; font-size: 11px;")
+            else:
+                self._browser_detected_lbl.setText(
+                    "⚠ No se detectó ningún navegador Chromium (Chrome, Brave, Edge...)"
+                )
+                self._browser_detected_lbl.setStyleSheet("color: #FFC107; font-size: 11px;")
+
+    # ── Handlers ─────────────────────────────────────────────────────────────
+
+    def _on_radio_changed(self, btn_id):
+        mapping = {0: "bgutil", 1: "wpc", 2: "none"}
+        provider = mapping.get(btn_id, "bgutil")
+        from core.utils.config_manager import get_config, save_config
+        cfg = get_config()
+        cfg["pot_provider"] = provider
+        save_config(cfg)
+        logger.info(f"POT Provider cambiado a: {provider}")
+        self.provider_changed.emit(provider)
+
+    def _on_browser_path_changed(self, text):
+        from core.utils.config_manager import get_config, save_config
+        cfg = get_config()
+        cfg["pot_wpc_browser_path"] = text.strip()
+        save_config(cfg)
+        self._update_detected_label()
+
+    def _pick_browser(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Seleccionar ejecutable del navegador",
+            "",
+            "Ejecutables (*.exe);;Todos los archivos (*)" if platform.system() == "Windows"
+            else "Todos los archivos (*)"
+        )
+        if path:
+            self._browser_field.setText(path)
+
+    def _on_bgutil_action(self):
+        from core.setup.potprovider_setup import download_potprovider
+        self._bgutil_btn.setDisabled(True)
+        self._bgutil_btn.setText("Descargando...")
+
+        class _BGWorker(QThread):
+            done = Signal(bool, str)
+            def run(self):
+                ok, msg = download_potprovider()
+                self.done.emit(ok, msg)
+
+        self._bgutil_worker = _BGWorker()
+        self._bgutil_worker.done.connect(self._on_bgutil_done)
+        self._bgutil_worker.start()
+
+    def _on_bgutil_done(self, ok, msg):
+        self._refresh_status()
+        if not ok:
+            QMessageBox.warning(self, "Error", f"No se pudo descargar bgutil-pot:\n{msg}")
+
+    def _on_wpc_action(self):
+        self._wpc_btn.setDisabled(True)
+        self._wpc_btn.setText("Instalando...")
+        self._wpc_progress.setValue(0)
+        self._wpc_progress.show()
+
+        self._wpc_worker = WPCInstallWorker()
+        self._wpc_worker.numeric_progress_signal.connect(self._wpc_progress.setValue)
+        self._wpc_worker.finished_signal.connect(self._on_wpc_done)
+        self._wpc_worker.start()
+
+    def _on_wpc_done(self, ok, msg):
+        self._wpc_progress.hide()
+        self._wpc_btn.setDisabled(False)
+        self._refresh_status()
+        if not ok:
+            QMessageBox.warning(self, "Error instalando WPC", msg)
+        else:
+            QMessageBox.information(self, "WPC instalado", msg)
+
+
 class DependenciesPage(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -302,7 +640,7 @@ class DependenciesPage(QWidget):
                 "download_func": download_deno,
                 "local_func": deno_local,
                 "remote_func": deno_remote
-            }
+            },
         ]
 
         self.rows = {} 
@@ -329,6 +667,10 @@ class DependenciesPage(QWidget):
         self.desc_label = QLabel(self.tr("Estas herramientas son necesarias para que DowP 2.0 funcione correctamente."))
         self.desc_label.setObjectName("settingsLabel")
         layout.addWidget(self.desc_label)
+
+        # ── Panel selector de PO Token Provider ──
+        self.pot_panel = POTProviderPanel()
+        layout.addWidget(self.pot_panel)
 
         # Scroll area for the list
         scroll_area = QScrollArea()

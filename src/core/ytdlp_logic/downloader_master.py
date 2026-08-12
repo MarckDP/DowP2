@@ -5,6 +5,7 @@ import traceback
 from core.logger.logger_manager import logger
 from core.setup.setup_manager import get_dependency_env
 from core.setup.ytdlp_setup import get_ytdlp_path
+from core.utils.config_manager import get_config
 
 from core.ytdlp_logic.analyzer import get_base_ydl_opts
 from core.utils.cleanup_manager import DownloadCancelledError
@@ -48,6 +49,18 @@ class DownloaderMaster:
         ytdlp_path = get_ytdlp_path()
         if ytdlp_path not in sys.path:
             sys.path.insert(0, ytdlp_path)
+
+        # Inyectar plugin del PO Token Provider solo si bgutil es el provider activo.
+        from core.setup.potprovider_setup import get_plugin_dir, check_plugin
+        plugin_dir = get_plugin_dir()
+        pot_provider = get_config().get("pot_provider", "bgutil")
+        if pot_provider == "bgutil" and check_plugin():
+            if plugin_dir not in sys.path:
+                sys.path.insert(0, plugin_dir)
+                logger.debug(f"DownloaderMaster: plugin dir inyectado en sys.path -> {plugin_dir}")
+        else:
+            if plugin_dir in sys.path:
+                sys.path.remove(plugin_dir)
 
         try:
             import yt_dlp
@@ -102,8 +115,22 @@ class DownloaderMaster:
                     FragmentState.DOWNLOAD_THEN_CUT, FragmentState.KEEP_FULL
                 )
 
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    info = ydl.extract_info(url, download=True)
+                from core.ytdlp_logic.resilient_downloader import is_youtube_access_error, make_fallback_ydl_opts
+
+                try:
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                        info = ydl.extract_info(url, download=True)
+                except Exception as dl_err:
+                    if is_youtube_access_error(url, dl_err):
+                        logger.warning(
+                            f"DownloaderMaster: YouTube bloqueó el intento inicial ({dl_err}). "
+                            f"Reintentando descarga con cliente alternativo (web_embedded)..."
+                        )
+                        fallback_opts = make_fallback_ydl_opts(ydl_opts)
+                        with yt_dlp.YoutubeDL(fallback_opts) as ydl_fallback:
+                            info = ydl_fallback.extract_info(url, download=True)
+                    else:
+                        raise dl_err
                     
                     if ydl_opts.get('skip_download') and progress_callback:
                         if 'entries' in info:
@@ -180,8 +207,6 @@ class DownloaderMaster:
             'retries': 2,
             'restrictfilenames': True,
             'downloader': 'native',
-            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'referer': url,
         })
         
         # Bloquear rígidamente la extracción de más de 1 item si no es una playlist autorizada

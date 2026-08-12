@@ -3,6 +3,11 @@ import os
 from .ytdlp_setup import check_ytdlp, download_ytdlp, get_ytdlp_path
 from .ffmpeg_setup import check_ffmpeg, download_ffmpeg, get_ffmpeg_dir
 from .deno_setup import check_deno, download_deno, get_deno_dir
+from .potprovider_setup import (
+    check_all as check_potprovider,
+    download_potprovider,
+    get_potprovider_dir,
+)
 from core.logger.logger_manager import logger
 
 def get_ytdlp_base_args():
@@ -24,8 +29,8 @@ def get_dependency_env():
     """
     env = os.environ.copy()
     
-    # Add Deno and FFmpeg to PATH so yt-dlp can find them automatically
-    paths = [get_deno_dir(), get_ffmpeg_dir()]
+    # Add Deno, FFmpeg y PotProvider al PATH para que yt-dlp los encuentre como subprocesos
+    paths = [get_deno_dir(), get_ffmpeg_dir(), get_potprovider_dir()]
     
     # Filter only existing paths
     existing_paths = [p for p in paths if os.path.exists(p)]
@@ -45,7 +50,8 @@ def verify_all_dependencies():
     status = {
         "yt-dlp": check_ytdlp(),
         "ffmpeg": check_ffmpeg(),
-        "deno": check_deno()
+        "deno": check_deno(),
+        "potprovider": check_potprovider(),
     }
     for dep, exists in status.items():
         logger.info(f"Dependency {dep}: {'Found' if exists else 'Missing'}")
@@ -69,7 +75,11 @@ def download_missing_dependencies():
     if not check_deno():
         logger.info("deno is missing. Downloading...")
         results.append(("deno", download_deno()))
-        
+
+    if not check_potprovider():
+        logger.info("PO Token Provider is missing. Downloading...")
+        results.append(("potprovider", download_potprovider()))
+
     return results
 
 if __name__ == "__main__":

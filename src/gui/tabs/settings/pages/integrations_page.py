@@ -1,6 +1,6 @@
-from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
+from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                                  QFrame, QScrollArea, QPushButton, QSizePolicy, QCheckBox, QLineEdit, QFileDialog)
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import Qt, QSize, Signal
 from PySide6.QtGui import QIcon, QPixmap
 from core.services.editor_integration_manager import EditorIntegrationManager
 from core.utils.config_manager import get_config, save_config
@@ -8,6 +8,8 @@ import os
 
 class IntegrationsPage(QWidget):
     """Página de ajustes de Integraciones para NLEs."""
+
+    integration_toggled = Signal(str, bool)  # (app_id, enabled)
 
     def __init__(self):
         super().__init__()
@@ -305,9 +307,11 @@ class IntegrationsPage(QWidget):
         # Auto-fill if enabling and empty
         if checked and not path_input.text() and os.path.exists(default_path):
             path_input.setText(default_path)
-            
-        # Emitir señal o refrescar UI superior (pendiente)
-        
+
+        # Notificar a la ventana principal para que el ícono en la esquina superior
+        # derecha aparezca/desaparezca de inmediato, sin requerir reiniciar la app.
+        self.integration_toggled.emit(app_id, checked)
+
     def _save_integration_setting(self, app_id, key, value):
         config = get_config()
         if 'integrations' not in config:

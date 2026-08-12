@@ -36,7 +36,7 @@ except ImportError:
     MULTIMEDIA_AVAILABLE = False
 
 from core.logger.logger_manager import logger
-from gui.styles import get_theme_token, apply_player_play_button_style, apply_player_loop_button_style
+from gui.styles import get_theme_token, apply_player_play_button_style, apply_player_loop_button_style, apply_edit_subclip_button_style
 from gui.widgets.animated_button import AnimatedButton
 from gui.widgets.send_state_button import SendButtonState
 from core.tabs.editing_media.editing_media_logic import EditingMediaController
@@ -65,7 +65,36 @@ class _DragCleanupMixin:
     """Tras un QDrag nativo hacia otra aplicación (Premiere/AE/DaVinci/Explorador), Qt no
     siempre entrega un evento Leave al viewport porque el SO tomó el control del mouse durante
     el arrastre. Sin ese evento el estado ':hover' del stylesheet queda "pegado" indefinidamente.
-    Forzamos un Leave sintético + repintado apenas termina el exec() nativo para restaurarlo."""
+    Forzamos un Leave sintético + repintado apenas termina el exec() nativo para restaurarlo.
+
+    También evita que Qt extienda la selección al arrastrar el mouse sobre varios ítems: la
+    multi-selección solo debe producirse con Ctrl/Shift + clic (comportamiento por defecto de
+    mousePressEvent/mouseReleaseEvent, que dejamos intacto). Arrastrar desde un ítem únicamente
+    debe iniciar un drag-and-drop, nunca ir seleccionando lo que el cursor va sobrevolando."""
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._press_pos = event.pos()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if event.buttons() & Qt.LeftButton:
+            if hasattr(self, "_press_pos") and not getattr(self, "_is_starting_drag", False):
+                delta = event.pos() - self._press_pos
+                if delta.manhattanLength() >= QApplication.startDragDistance():
+                    index = self.indexAt(self._press_pos)
+                    if index.isValid():
+                        self.startDrag(self.model().supportedDragActions())
+            # IMPORTANTE: Nunca llamar a super().mouseMoveEvent() con el botón izquierdo presionado.
+            # En QAbstractItemView con ExtendedSelection, super().mouseMoveEvent() causa que Qt
+            # seleccione todos los ítems sobre los que se arrastra el puntero del mouse.
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if hasattr(self, "_press_pos"):
+            del self._press_pos
+        super().mouseReleaseEvent(event)
 
     def startDrag(self, supportedActions):
         if getattr(self, "_is_starting_drag", False):
@@ -607,9 +636,40 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         self.media_list.verticalScrollBar().valueChanged.connect(self._on_list_scroll)
         self.media_list.viewport().installEventFilter(self)
 
+        # 3. Página de "inicia sesión" para Freesound (cuando no hay sesión iniciada)
+        self.freesound_login_page = QWidget()
+        login_page_layout = QVBoxLayout(self.freesound_login_page)
+        login_page_layout.setAlignment(Qt.AlignCenter)
+        login_page_layout.setSpacing(16)
+        self.freesound_login_msg_label = QLabel(self.tr("Inicia sesión con Freesound para buscar sonidos 🔑"))
+        self.freesound_login_msg_label.setAlignment(Qt.AlignCenter)
+        self.freesound_login_msg_label.setStyleSheet(f"color: {get_theme_token('texto_secundario', '#aaaaaa')}; font-size: 14px;")
+        self.btn_freesound_login_big = QPushButton(self.tr("Iniciar Sesión con Freesound"))
+        self.btn_freesound_login_big.setFixedHeight(44)
+        self.btn_freesound_login_big.setMinimumWidth(260)
+        self.btn_freesound_login_big.setCursor(Qt.PointingHandCursor)
+        self.btn_freesound_login_big.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {get_theme_token('acento_primario', '#B9E640')};
+                color: {get_theme_token('fondo_principal', '#0a0a0a')};
+                border: none;
+                border-radius: 8px;
+                font-weight: bold;
+                font-size: 13px;
+                padding: 10px 24px;
+            }}
+            QPushButton:hover {{
+                background-color: {get_theme_token('acento_primario', '#B9E640')};
+            }}
+        """)
+        self.btn_freesound_login_big.clicked.connect(self._on_freesound_login_clicked)
+        login_page_layout.addWidget(self.freesound_login_msg_label)
+        login_page_layout.addWidget(self.btn_freesound_login_big, 0, Qt.AlignCenter)
+
         self.media_stack.addWidget(self.media_table) # Index 0: Lista Tabular SoundQ
         self.media_stack.addWidget(self.media_list)  # Index 1: Cuadrícula Cards
-        
+        self.media_stack.addWidget(self.freesound_login_page)  # Index 2: Inicia sesión Freesound
+
         layout.addWidget(self.media_stack, 1)
 
         # Aplicar modo de vista guardado
@@ -697,20 +757,8 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         self.btn_edit_subclip = QPushButton()
         self.btn_edit_subclip.setIconSize(QSize(14, 14))
         self.btn_edit_subclip.setFixedSize(26, 26)
-        self.btn_edit_subclip.setToolTip(self.tr("Editar / Recortar Subclips (In/Out)"))
-        edit_icon = get_svg_icon("edit.svg")
-        if not edit_icon.isNull():
-            self.btn_edit_subclip.setIcon(edit_icon)
-        self.btn_edit_subclip.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {get_theme_token('fondo_elemento', '#2d2d2d')};
-                border: 1px solid {get_theme_token('borde_normal', '#444444')};
-                border-radius: 13px;
-            }}
-            QPushButton:hover {{
-                background-color: {get_theme_token('acento_primario', '#B9E640')};
-            }}
-        """)
+        self._audio_has_subclips = False
+        apply_edit_subclip_button_style(self.btn_edit_subclip, has_subclips=False, icon_size=14)
         self.btn_edit_subclip.clicked.connect(self._on_open_subclip_dialog)
         controls_layout.addWidget(self.btn_edit_subclip)
 
@@ -989,11 +1037,12 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         self.combo_tags.currentIndexChanged.connect(self._on_label_combo_changed)
         buttons_layout.addWidget(self.combo_tags, 1)
 
-        # Botón para descargar archivo de Freesound (medios web)
-        self.btn_download = AnimatedButton(self.tr("Descargar Medio"))
+        # Botón para descargar archivo de Freesound (medios web) — solo ícono, como btn_reveal
+        self.btn_download = AnimatedButton("")
+        self.btn_download.setToolTip(self.tr("Descargar Medio"))
 
         self.btn_download.setObjectName("pathToolButton")
-        self.btn_download.setFixedHeight(34)
+        self.btn_download.setFixedSize(34, 34)
         dl_icon = get_svg_icon("download.svg")
         if not dl_icon.isNull():
             self.btn_download.setIcon(dl_icon)
@@ -1001,7 +1050,7 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         self.btn_download.setEnabled(False)
         self.btn_download.setVisible(False)
         self.btn_download.clicked.connect(self._on_download_clicked)
-        buttons_layout.addWidget(self.btn_download, 1)
+        buttons_layout.addWidget(self.btn_download)
 
         info_layout.addLayout(buttons_layout)
 
@@ -1174,6 +1223,28 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
             }}
         """
         self.tree_folders.setStyleSheet(tree_style)
+
+    def _update_edit_subclip_button_state(self, has_subclips: bool):
+        """Actualiza la apariencia 'encendida/apagada' de los botones de editar subclips
+        (tanto el del panel de audio como el del panel de video) según si el medio
+        actualmente mostrado ya tiene subclips guardados."""
+        if hasattr(self, "btn_edit_subclip"):
+            self._audio_has_subclips = has_subclips
+            apply_edit_subclip_button_style(self.btn_edit_subclip, has_subclips=has_subclips, icon_size=14)
+        if hasattr(self, "preview_box") and hasattr(self.preview_box, "set_edit_subclip_active"):
+            self.preview_box.set_edit_subclip_active(has_subclips)
+
+    def _restore_media_stack_widget(self):
+        """Restaura el media_stack al widget de tabla/cuadrícula que corresponde según el
+        modo de vista actual (se usa para salir de la página de 'inicia sesión' de Freesound).
+        Se protege con hasattr porque _update_media_list() puede dispararse de forma síncrona
+        durante la propia construcción de _build_center_column() (p.ej. al inicializar el
+        slider de tamaño de ícono), antes de que media_list/media_table ya existan."""
+        if not (hasattr(self, "media_stack") and hasattr(self, "media_list") and hasattr(self, "media_table")):
+            return
+        target = self.media_list if getattr(self, "view_mode", "grid") == "grid" else self.media_table
+        if self.media_stack.currentWidget() is not target:
+            self.media_stack.setCurrentWidget(target)
 
     def set_view_mode(self, mode: str):
         """Alterna entre vista de lista tabular (SoundQ style) y vista de cuadrícula/miniaturas."""

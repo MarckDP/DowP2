@@ -297,30 +297,33 @@ class WaveformCacheManager(QObject):
                 pass
         return None
 
-    def get_cached_qicon(self, file_path: str) -> QIcon | None:
-        if file_path in self._qicon_cache:
-            return self._qicon_cache[file_path]
-            
+    def get_cached_qicon(self, file_path: str, size: QSize = QSize(80, 80)) -> QIcon | None:
+        cache_key = (file_path, size.width(), size.height())
+        if cache_key in self._qicon_cache:
+            return self._qicon_cache[cache_key]
+
         peaks = self.get_cached_peaks(file_path)
         if peaks is not None:
-            icon = render_waveform_icon(peaks)
-            self._qicon_cache[file_path] = icon
+            icon = render_waveform_icon(peaks, size)
+            self._qicon_cache[cache_key] = icon
             return icon
         return None
 
-    def request_waveform(self, file_path: str, num_peaks: int = 120):
-        if file_path in self._qicon_cache or file_path in self._peaks_cache:
+    def request_waveform(self, file_path: str, num_peaks: int = 120, size: QSize = QSize(80, 80)):
+        cache_key = (file_path, size.width(), size.height())
+        if cache_key in self._qicon_cache:
             return
-        if file_path in self._pending_files or file_path in self._failed_files:
-            return
-            
+
         cached_peaks = self.get_cached_peaks(file_path)
         if cached_peaks is not None:
-            icon = render_waveform_icon(cached_peaks)
-            self._qicon_cache[file_path] = icon
+            icon = render_waveform_icon(cached_peaks, size)
+            self._qicon_cache[cache_key] = icon
             self.waveform_loaded.emit(file_path, cached_peaks)
             return
-            
+
+        if file_path in self._pending_files or file_path in self._failed_files:
+            return
+
         self._pending_files.add(file_path)
         worker = WaveformRunnable(file_path, self, num_peaks)
         worker.signals.finished.connect(self._on_worker_finished)
@@ -395,8 +398,6 @@ class WaveformCacheManager(QObject):
 
     def _on_worker_finished(self, file_path: str, peaks: list):
         self._peaks_cache[file_path] = peaks
-        icon = render_waveform_icon(peaks)
-        self._qicon_cache[file_path] = icon
         self.waveform_loaded.emit(file_path, peaks)
 
     def _on_worker_failed(self, file_path: str):

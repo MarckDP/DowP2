@@ -330,8 +330,9 @@ class SubtitleController(QObject):
         if idx < 0:
             fmt_combo.blockSignals(False)
             self.on_subtitle_selection_changed()
+            self.tab.subtitle_options.update_standardize_visibility()
             return
-            
+
         user_data = lang_combo.itemData(idx)
         if not user_data:
             # "Seleccionar idioma..."
@@ -339,6 +340,7 @@ class SubtitleController(QObject):
             fmt_combo.setEnabled(False)
             fmt_combo.blockSignals(False)
             self.on_subtitle_selection_changed()
+            self.tab.subtitle_options.update_standardize_visibility()
             return
             
         lang = user_data.get("lang")
@@ -354,6 +356,7 @@ class SubtitleController(QObject):
             fmt_combo.setEnabled(False)
             fmt_combo.blockSignals(False)
             self.on_subtitle_selection_changed()
+            self.tab.subtitle_options.update_standardize_visibility()
             return
             
         fmt_combo.setEnabled(True)
@@ -443,11 +446,13 @@ class SubtitleController(QObject):
         # Restaurar señales y disparar actualización final de estado real
         fmt_combo.blockSignals(False)
         self.on_subtitle_selection_changed()
+        self.tab.subtitle_options.update_standardize_visibility()
 
     def clear_subtitles(self):
         self.tab.subtitle_options.combo_subtitle_language.clear()
         self.tab.subtitle_options.combo_subtitle_format.clear()
         self.tab.subtitle_options.btn_download_subtitles.setEnabled(False)
+        self.tab.subtitle_options.update_standardize_visibility()
 
     def collect_subtitle_data(self):
         """Returns dict of current subtitle options for request_data."""

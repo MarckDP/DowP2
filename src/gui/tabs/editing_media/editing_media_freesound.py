@@ -305,6 +305,36 @@ class FreesoundMixin:
             self.tr(f"No se pudo completar la autenticación con Freesound:\n{error_msg}")
         )
 
+    def _prompt_freesound_login_if_needed(self, item_data: dict) -> bool:
+        """
+        Si item_data representa un medio web no descargado aún y el usuario NO ha iniciado sesión,
+        muestra un diálogo interactivo ofreciendo iniciar sesión en Freesound.
+        Retorna True si el usuario NO está autenticado (y la acción debe detenerse).
+        """
+        if not item_data or not isinstance(item_data, dict):
+            return False
+        path = item_data.get("ruta", "")
+        is_remote = item_data.get("es_remoto", False) or (isinstance(path, str) and (path.startswith("http://") or path.startswith("https://")))
+        dest = item_data.get("dest_path")
+        already_downloaded = bool(dest and os.path.exists(dest))
+
+        if is_remote and not already_downloaded:
+            token = getattr(self.controller, "freesound_auth", {}).get("access_token", "")
+            if not token:
+                msg_box = QMessageBox(self)
+                msg_box.setIcon(QMessageBox.Information)
+                msg_box.setWindowTitle(self.tr("Sesión de Freesound requerida"))
+                msg_box.setText(self.tr("Para acceder o descargar este medio web de Freesound debes iniciar sesión."))
+                msg_box.setInformativeText(self.tr("¿Deseas iniciar sesión en Freesound ahora?"))
+                btn_login = msg_box.addButton(self.tr("Iniciar Sesión"), QMessageBox.AcceptRole)
+                msg_box.addButton(self.tr("Cancelar"), QMessageBox.RejectRole)
+                msg_box.exec()
+                if msg_box.clickedButton() == btn_login:
+                    if hasattr(self, "_start_freesound_oauth"):
+                        self._start_freesound_oauth()
+                return True
+        return False
+
     def _exec_online_search(self):
         token = self.controller.freesound_token
         query = self.search_input.text().strip()
@@ -483,13 +513,7 @@ class FreesoundMixin:
         if not item_data or not item_data.get("es_remoto"):
             return
 
-        token = getattr(self.controller, "freesound_auth", {}).get("access_token", "")
-        if not token:
-            QMessageBox.warning(
-                self,
-                self.tr("Inicia sesión requerida"),
-                self.tr("Debes iniciar sesión con Freesound para descargar el archivo original en alta calidad.")
-            )
+        if self._prompt_freesound_login_if_needed(item_data):
             return
 
         sound_id = item_data.get("id")
@@ -529,7 +553,7 @@ class FreesoundMixin:
 
                 self.btn_download.setVisible(True)
                 self.btn_download.setEnabled(False)
-                self.btn_download.setText(self.tr("En Disco"))
+                self.btn_download.setToolTip(self.tr("En Disco"))
                 self.metadata_labels["ruta"].setText(resolved_path)
 
                 logger.info(f"[EditingMedia] Descarga manual del original en alta calidad completada: {resolved_path}")

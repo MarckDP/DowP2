@@ -124,7 +124,12 @@ class SubtitleOptionsWidget(QFrame):
         return {"container": container, "switch": switch, "label": label}
 
     def update_standardize_visibility(self):
-        """Deshabilita o habilita la opción de estandarizar según el formato seleccionado."""
-        # Se permite estandarizar para todos los formatos (incluyendo .srt y default '-')
-        # para que el usuario pueda limpiar líneas duplicadas y traslapes en el archivo final.
-        self.chk_standardize_srt["container"].setEnabled(True)
+        """Habilita 'Convertir y estandarizar a SRT' solo cuando hay un subtítulo seleccionado
+        cuyo formato de origen no sea ya SRT (no tiene sentido convertirlo a sí mismo, ni
+        activar la opción cuando no hay ningún subtítulo seleccionado)."""
+        fmt_data = self.combo_subtitle_format.currentData()
+        ext = (fmt_data.get("ext") or "").lower() if fmt_data else ""
+        should_enable = bool(fmt_data) and ext != "" and ext != "srt"
+        self.chk_standardize_srt["container"].setEnabled(should_enable)
+        if not should_enable:
+            self.chk_standardize_srt["switch"].setChecked(False)

@@ -35,6 +35,12 @@ class FreesoundClient:
             query = ""
             if not sort_order:
                 sort_order = "Mejor calificados"
+        else:
+            # Buscar explícitamente tanto en el nombre como en la descripción del sonido:
+            # muchos sonidos tienen nombres poco descriptivos (p.ej. "pb_157") pero una
+            # descripción con el texto que el usuario realmente busca.
+            escaped = query.strip().replace('"', '\\"')
+            query = f'name:({escaped}) OR description:({escaped})'
 
         url = f"{BASE_URL}/search/"
         

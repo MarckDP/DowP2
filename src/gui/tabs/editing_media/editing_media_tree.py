@@ -218,9 +218,17 @@ class TreeListMixin:
                 else:
                     btn.setChecked(False)
                     btn.setEnabled(False)
+            self._filter_forced_by_online = True
         else:
             for btn in self.filter_buttons:
                 btn.setEnabled(True)
+            # Si el filtro "Audios" quedó forzado por haber estado en Freesound, al volver
+            # a medios locales se restablece a "Todos" (dejarlo en Audios sería confuso).
+            if getattr(self, "_filter_forced_by_online", False):
+                self._filter_forced_by_online = False
+                for btn in self.filter_buttons:
+                    btn.setChecked(btn.text() == self.tr("Todos"))
+                self.active_filter = "Todos"
 
     def _get_cached_media_icon(self, icon_name: str, color: str) -> QIcon:
         """Obtiene un icono coloreado desde la cache o lo crea si no existe."""
@@ -297,6 +305,11 @@ class TreeListMixin:
                 if data:
                     tipo = data.get("tipo")
 
+            # Por defecto mostramos la tabla/cuadrícula normal; la rama "root_online" sin
+            # sesión iniciada la reemplaza más abajo por la página de inicio de sesión.
+            if hasattr(self, "_restore_media_stack_widget"):
+                self._restore_media_stack_widget()
+
             media_items = []
 
             if tipo in ["folder", "subfolder"]:
@@ -312,8 +325,9 @@ class TreeListMixin:
             elif tipo == "root_online":
                 # Renderizar resultados de Freesound
                 if not self.controller.is_freesound_authenticated:
-                    msg = self.tr("Inicia sesión con Freesound para buscar sonidos 🔑")
-                    self.media_model.set_data([{"nombre": msg, "tipo": "empty"}])
+                    if hasattr(self, "media_stack") and hasattr(self, "freesound_login_page"):
+                        self.media_stack.setCurrentWidget(self.freesound_login_page)
+                    self.media_model.set_data([])
                     return
 
                 if not self.online_results:
@@ -866,10 +880,12 @@ class TreeListMixin:
             
         if selected_indexes:
             file_paths = []
+            item_datas = []
             for idx in selected_indexes:
                 item_data = self.media_model.get_item(idx)
                 if item_data and "ruta" in item_data:
                     file_paths.append(item_data["ruta"])
+                    item_datas.append(item_data)
 
             if file_paths:
                 # Determinar si estamos visualizando una colección virtual
@@ -893,7 +909,7 @@ class TreeListMixin:
                     if collections_list:
                         for col_name in collections_list:
                             act_col = submenu.addAction(col_name)
-                            act_col.triggered.connect(lambda checked=False, cn=col_name, paths=file_paths: [self._add_file_to_collection(cn, fp) for fp in paths])
+                            act_col.triggered.connect(lambda checked=False, cn=col_name, items=item_datas: [self._add_media_to_collection(cn, it) for it in items])
                     else:
                         act_none = submenu.addAction(self.tr("(Sin colecciones)"))
                         act_none.setEnabled(False)
@@ -1006,6 +1022,52 @@ class TreeListMixin:
             logger.info(f"EditingMediaTab: Archivo {os.path.basename(file_path)} añadido a colección {col_name}")
         else:
             logger.info(f"EditingMediaTab: El archivo ya se encuentra en la colección {col_name}")
+
+    def _add_media_to_collection(self, col_name, item_data):
+        """Añade un medio a una colección virtual, conservando el título web y la licencia si es remoto."""
+        if not item_data:
+            return
+
+        dest = item_data.get("dest_path")
+        has_real_file = bool(dest and os.path.exists(dest))
+        path = dest if has_real_file else item_data.get("ruta", "")
+        if not path:
+            return
+
+        is_remote = item_data.get("es_remoto") or (isinstance(path, str) and (path.startswith("http://") or path.startswith("https://")))
+        if is_remote and not has_real_file:
+            success = self.controller.add_to_collection(col_name, item_data)
+        else:
+            success = self.controller.add_to_collection(col_name, path)
+
+        display_name = item_data.get("nombre") or os.path.basename(path)
+        if success:
+            logger.info(f"EditingMediaTab: Archivo '{display_name}' añadido a colección '{col_name}'")
+        else:
+            logger.info(f"EditingMediaTab: El archivo ya se encuentra en la colección '{col_name}'")
+
+    def _upgrade_web_collection_entry(self, col_name, placeholder_url, item_data):
+        """Descarga en segundo plano el archivo original de un medio de Freesound recién
+        añadido a una colección y, al terminar, reemplaza la URL de previsualización por
+        la ruta real en disco. Si el usuario no está autenticado con Freesound, no hace
+        nada y la colección conserva la URL de streaming (no hay forma de obtener el
+        archivo original sin iniciar sesión)."""
+        if not hasattr(self, "_start_high_quality_download"):
+            return
+        token = getattr(self.controller, "freesound_auth", {}).get("access_token", "")
+        if not token or not item_data.get("id"):
+            return
+
+        def _on_success(resolved_path):
+            self.controller.remove_from_collection(col_name, placeholder_url)
+            self._add_file_to_collection(col_name, resolved_path)
+            if hasattr(self, "_update_media_list"):
+                self._update_media_list()
+
+        def _on_error(err):
+            logger.info(f"EditingMediaTab: No se pudo descargar el original de '{item_data.get('nombre')}' para la colección '{col_name}': {err}")
+
+        self._start_high_quality_download(item_data, on_success=_on_success, on_error=_on_error)
 
     def _remove_file_from_collection(self, col_name, file_path):
         self.controller.remove_from_collection(col_name, file_path)

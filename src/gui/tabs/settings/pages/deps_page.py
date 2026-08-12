@@ -49,6 +49,19 @@ class UpdateCheckWorker(QThread):
             results[dep_id] = {"local": local_ver, "remote": remote_ver}
         self.finished_signal.emit(results)
 
+class WPCUpdateCheckWorker(QThread):
+    """Consulta en segundo plano la última versión remota de WPC (pip/PyPI)."""
+    finished_signal = Signal(object)  # remote_version (str) o None
+
+    def run(self):
+        try:
+            remote_ver = wpc_remote()
+        except Exception as e:
+            logger.error(f"Error obteniendo la versión remota de WPC: {e}")
+            remote_ver = None
+        self.finished_signal.emit(remote_ver)
+
+
 class DependencyDownloadWorker(QThread):
     finished_signal = Signal(bool, str, str)  # success, message, dep_id
     progress_signal = Signal(str, str) # current phase message, dep_id
@@ -515,11 +528,18 @@ class POTProviderPanel(QFrame):
             ver = wpc_local() or "?"
             self._wpc_status.setText(f"✓ Instalado  v{ver}")
             self._wpc_status.setStyleSheet("color: #4CAF50; font-size: 11px;")
-            self._wpc_btn.setText("Actualizar")
+            # Igual que el resto de dependencias: recién instalado se muestra "Actualizado"
+            # y deshabilitado; solo se habilita como "Actualizar" si "Buscar Actualizaciones"
+            # detecta una versión remota más nueva (ver set_wpc_update_available).
+            self._wpc_btn.setText("Actualizado")
+            self._wpc_btn.setDisabled(True)
+            self._wpc_btn.setStyleSheet("")
         else:
             self._wpc_status.setText("✗ No instalado")
             self._wpc_status.setStyleSheet("color: #F44336; font-size: 11px;")
             self._wpc_btn.setText("Instalar")
+            self._wpc_btn.setDisabled(False)
+            self._wpc_btn.setStyleSheet("")
 
     def _update_detected_label(self):
         configured = self._browser_field.text().strip()
@@ -585,6 +605,33 @@ class POTProviderPanel(QFrame):
         self._refresh_status()
         if not ok:
             QMessageBox.warning(self, "Error", f"No se pudo descargar bgutil-pot:\n{msg}")
+
+    def set_wpc_update_available(self, remote_ver):
+        """Llamado tras 'Buscar Actualizaciones': habilita el botón de WPC como 'Actualizar'
+        (con el mismo estilo que el resto de dependencias) solo si hay una versión remota
+        más nueva que la instalada; si no, lo deja como 'Actualizado' y deshabilitado."""
+        if not check_wpc():
+            return
+
+        local_ver = wpc_local() or ""
+        if not remote_ver:
+            return
+
+        r_ver = str(remote_ver).strip().lstrip('v')
+        l_ver = str(local_ver).strip().lstrip('v')
+
+        if r_ver != l_ver and r_ver not in l_ver:
+            self._wpc_status.setText(f"✓ Instalado  v{local_ver} (Nueva: {remote_ver})")
+            self._wpc_status.setStyleSheet("color: #FFC107; font-weight: bold; font-size: 11px;")
+            self._wpc_btn.setText("Actualizar")
+            self._wpc_btn.setDisabled(False)
+            self._wpc_btn.setStyleSheet("background-color: #007BFF; color: white; border: none; padding: 5px; border-radius: 4px;")
+        else:
+            self._wpc_status.setText(f"✓ Instalado  v{local_ver}")
+            self._wpc_status.setStyleSheet("color: #4CAF50; font-size: 11px;")
+            self._wpc_btn.setText("Actualizado")
+            self._wpc_btn.setDisabled(True)
+            self._wpc_btn.setStyleSheet("")
 
     def _on_wpc_action(self):
         self._wpc_btn.setDisabled(True)
@@ -768,6 +815,12 @@ class DependenciesPage(QWidget):
         self.update_worker = UpdateCheckWorker(self.dependencies_config)
         self.update_worker.finished_signal.connect(self.on_update_check_finished)
         self.update_worker.start()
+
+        # También comprobar si hay una actualización disponible para WPC (PO Token Provider)
+        if check_wpc():
+            self._wpc_update_worker = WPCUpdateCheckWorker()
+            self._wpc_update_worker.finished_signal.connect(self.pot_panel.set_wpc_update_available)
+            self._wpc_update_worker.start()
 
     def on_update_check_finished(self, results):
         self.btn_check_updates.setDisabled(False)

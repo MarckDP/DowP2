@@ -390,30 +390,65 @@ class EditingMediaController(QObject):
             return True
         return False
 
-    def add_to_collection(self, collection_name: str, file_path: str) -> bool:
-        """Asocia un archivo (acceso directo o URL remota) a una colección virtual."""
-        is_remote = file_path.startswith("http://") or file_path.startswith("https://")
-        norm_path = file_path if is_remote else os.path.normpath(file_path).replace("\\", "/")
-        if collection_name in self.collections:
-            if norm_path not in self.collections[collection_name]:
-                self.collections[collection_name].append(norm_path)
-                self.save_data()
-                self._invalidate_media_cache()
-                self.collections_changed.emit()
-                return True
-        return False
+    def add_to_collection(self, collection_name: str, file_or_item) -> bool:
+        """Asocia un archivo o diccionario de medio web a una colección virtual."""
+        if collection_name not in self.collections:
+            return False
 
-    def remove_from_collection(self, collection_name: str, file_path: str) -> bool:
-        """Quita un archivo de una colección virtual."""
-        is_remote = file_path.startswith("http://") or file_path.startswith("https://")
-        norm_path = file_path if is_remote else os.path.normpath(file_path).replace("\\", "/")
-        if collection_name in self.collections:
-            if norm_path in self.collections[collection_name]:
-                self.collections[collection_name].remove(norm_path)
-                self.save_data()
-                self._invalidate_media_cache()
-                self.collections_changed.emit()
-                return True
+        if isinstance(file_or_item, dict):
+            item_data = dict(file_or_item)
+            path = item_data.get("ruta", "")
+            if not path:
+                return False
+            for existing in self.collections[collection_name]:
+                ex_path = existing.get("ruta") if isinstance(existing, dict) else str(existing)
+                if ex_path == path:
+                    return False
+            self.collections[collection_name].append(item_data)
+            self.save_data()
+            self._invalidate_media_cache()
+            self.collections_changed.emit()
+            return True
+        else:
+            file_path = str(file_or_item)
+            is_remote = file_path.startswith("http://") or file_path.startswith("https://")
+            norm_path = file_path if is_remote else os.path.normpath(file_path).replace("\\", "/")
+            for existing in self.collections[collection_name]:
+                ex_path = existing.get("ruta") if isinstance(existing, dict) else str(existing)
+                if ex_path == norm_path:
+                    return False
+            self.collections[collection_name].append(norm_path)
+            self.save_data()
+            self._invalidate_media_cache()
+            self.collections_changed.emit()
+            return True
+
+    def remove_from_collection(self, collection_name: str, file_path_or_item) -> bool:
+        """Quita un archivo o medio web de una colección virtual."""
+        if collection_name not in self.collections:
+            return False
+
+        target_path = file_path_or_item.get("ruta") if isinstance(file_path_or_item, dict) else str(file_path_or_item)
+        is_remote = target_path.startswith("http://") or target_path.startswith("https://")
+        norm_target = target_path if is_remote else os.path.normpath(target_path).replace("\\", "/")
+
+        removed = False
+        new_items = []
+        for entry in self.collections[collection_name]:
+            item_path = entry.get("ruta") if isinstance(entry, dict) else str(entry)
+            item_remote = item_path.startswith("http://") or item_path.startswith("https://")
+            norm_item = item_path if item_remote else os.path.normpath(item_path).replace("\\", "/")
+            if norm_item == norm_target:
+                removed = True
+            else:
+                new_items.append(entry)
+
+        if removed:
+            self.collections[collection_name] = new_items
+            self.save_data()
+            self._invalidate_media_cache()
+            self.collections_changed.emit()
+            return True
         return False
 
     # ── Lectura de Archivos (Físicos y Virtuales) ────────────────────────────
@@ -503,7 +538,7 @@ class EditingMediaController(QObject):
         return files
 
     def get_media_files_in_collection(self, collection_name: str) -> list:
-        """Retorna la lista de archivos multimedia asociados a la colección virtual, validando su existencia (con cache)."""
+        """Retorna la lista de archivos multimedia asociados a la colección virtual, conservando metadatos web (con cache)."""
         cache_key = f"collection:{collection_name}"
         if hasattr(self, "_media_cache") and cache_key in self._media_cache:
             return self._media_cache[cache_key]
@@ -516,24 +551,54 @@ class EditingMediaController(QObject):
             paths_to_keep = []
             has_changes = False
             
-            for path in self.collections[collection_name]:
-                is_remote = path.startswith("http://") or path.startswith("https://")
-                if is_remote or (os.path.exists(path) and os.path.isfile(path)):
-                    paths_to_keep.append(path)
-                    
-                    if is_remote:
-                        clean_path = path.split('?')[0]
-                        name = os.path.basename(clean_path)
-                        if not os.path.splitext(name)[1]:
-                            name = name + ".mp3"
-                    else:
-                        name = os.path.basename(path)
+            for entry in self.collections[collection_name]:
+                if isinstance(entry, dict):
+                    path = entry.get("ruta", "")
+                    is_remote = entry.get("es_remoto", False) or (isinstance(path, str) and (path.startswith("http://") or path.startswith("https://")))
+                    dest = entry.get("dest_path")
+                    has_real_file = bool(dest and os.path.exists(dest))
+
+                    if is_remote or has_real_file or (path and os.path.exists(path)):
+                        paths_to_keep.append(entry)
+                        item_dict = dict(entry)
+                        if dest and os.path.exists(dest):
+                            item_dict["dest_path"] = dest
                         
-                    ext = os.path.splitext(name)[1].lower()
-                    files.append(self._build_file_entry(path, name, ext))
-                else:
-                    has_changes = True
-                    logger.info(f"EditingMediaLogic: Removiendo archivo inexistente de la colección: {path}")
+                        # Garantizar metadatos limpios
+                        if not item_dict.get("license"):
+                            item_dict["license"] = "CC0"
+                        if not item_dict.get("library"):
+                            item_dict["library"] = "Freesound" if is_remote else "Local"
+                        if not item_dict.get("file_type"):
+                            item_dict["file_type"] = "AUDIO" if item_dict.get("tipo") == "audio" else "MEDIA"
+                        item_dict["es_remoto"] = True if is_remote and not has_real_file else False
+                        files.append(item_dict)
+                    else:
+                        has_changes = True
+                        logger.info(f"EditingMediaLogic: Removiendo entrada inexistente de la colección: {path}")
+
+                elif isinstance(entry, str):
+                    path = entry
+                    is_remote = path.startswith("http://") or path.startswith("https://")
+                    if is_remote or (os.path.exists(path) and os.path.isfile(path)):
+                        paths_to_keep.append(path)
+                        if is_remote:
+                            clean_path = path.split('?')[0]
+                            name = os.path.basename(clean_path)
+                            if not os.path.splitext(name)[1]:
+                                name = name + ".mp3"
+                            ext = os.path.splitext(name)[1].lower()
+                            file_item = self._build_file_entry(path, name, ext)
+                            file_item["license"] = "Freesound"
+                            file_item["library"] = "Freesound"
+                            files.append(file_item)
+                        else:
+                            name = os.path.basename(path)
+                            ext = os.path.splitext(name)[1].lower()
+                            files.append(self._build_file_entry(path, name, ext))
+                    else:
+                        has_changes = True
+                        logger.info(f"EditingMediaLogic: Removiendo archivo inexistente de la colección: {path}")
 
             if has_changes:
                 self.collections[collection_name] = paths_to_keep

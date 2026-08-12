@@ -46,68 +46,95 @@ class EditorStatusCornerWidget(QWidget):
         self.btn_settings = QPushButton()
         self.btn_settings.setFixedSize(QSize(28, 28))
         self.btn_settings.setCursor(Qt.PointingHandCursor)
-        self.btn_settings.setToolTip("Ajustes de Integraciones")
+        self.btn_settings.setToolTip("Ajustes")
         
         base_dir = os.path.dirname(os.path.abspath(__file__))
-        icons_dir = os.path.join(os.path.dirname(base_dir), "assets", "icons", "svg")
-        self.btn_settings.setIcon(QIcon(os.path.join(icons_dir, "settings.svg")))
-        
-        self._icon_green = QIcon(os.path.join(icons_dir, "check_circle_green.svg"))
-        self._icon_yellow = QIcon(os.path.join(icons_dir, "warning.svg")) # or some other icon
-        self._icon_red = QIcon(os.path.join(icons_dir, "error_red.svg"))
-        self._icon_off = QIcon(os.path.join(icons_dir, "pause.svg"))
-        
+        self.icons_dir = os.path.join(os.path.dirname(base_dir), "assets", "icons", "svg")
+        self.btn_settings.setIcon(QIcon(os.path.join(self.icons_dir, "settings.svg")))
+
+        self._icon_green = QIcon(os.path.join(self.icons_dir, "check_circle_green.svg"))
+        self._icon_yellow = QIcon(os.path.join(self.icons_dir, "warning.svg")) # or some other icon
+        self._icon_red = QIcon(os.path.join(self.icons_dir, "error_red.svg"))
+        self._icon_off = QIcon(os.path.join(self.icons_dir, "pause.svg"))
+
         self.btn_toggle.toggled.connect(self.on_toggle)
         self.btn_settings.clicked.connect(self.on_settings_clicked)
-        
+
         # Diccionario para almacenar los iconos de apps
         self.app_icons = {}
-        
+        self._build_app_icons()
+
+        self.layout.addWidget(self.btn_toggle)
+        self.layout.addWidget(self.btn_settings)
+
+        self._active_editor = None
+        self._process_status = {}
+        self.update_ui_state()
+
+    def _build_app_icons(self):
+        """Crea (o recrea) los íconos de apps habilitadas en Integraciones."""
+        from PySide6.QtWidgets import QLabel, QGraphicsOpacityEffect
+        from PySide6.QtGui import QPixmap
+
         # Cargar configuración para ver qué apps están habilitadas
         config = get_config()
         integrations = config.get('integrations', {})
-        
+
         apps = [
             ("premiere", "premiere pro.svg", "Adobe Premiere Pro"),
             ("aftereffects", "after effects.svg", "Adobe After Effects"),
             ("davinci", "davinci resolve.svg", "DaVinci Resolve")
         ]
-        
+
         for app_id, svg_name, app_name in apps:
             is_enabled = integrations.get(f"{app_id}_enabled", False)
-            if is_enabled:
+            existing_lbl = self.app_icons.get(app_id)
+
+            if is_enabled and existing_lbl is None:
                 lbl = QLabel()
                 lbl.setFixedSize(28, 28)
                 lbl.setAlignment(Qt.AlignCenter)
                 lbl.setCursor(Qt.PointingHandCursor)
                 lbl.setToolTip(f"{app_name} (Cerrado)")
-                
+
                 # Cargar pixmap
-                icon_path = os.path.join(icons_dir, svg_name)
+                icon_path = os.path.join(self.icons_dir, svg_name)
                 # Escalar a 24x24 para dejar espacio al borde de 2px (24 + 2 + 2 = 28)
                 pixmap = QPixmap(icon_path).scaled(24, 24, Qt.KeepAspectRatio, Qt.SmoothTransformation)
                 lbl.setPixmap(pixmap)
-                
+
                 # Efecto de opacidad/color
                 effect = QGraphicsOpacityEffect(lbl)
                 effect.setOpacity(0.3) # Estado 1: Cerrado = opaco
                 lbl.setGraphicsEffect(effect)
-                
+
                 # Guardar info en el label para click handling
                 lbl.setProperty("app_id", app_id)
                 lbl.setProperty("app_name", app_name)
                 lbl.setProperty("exe_path", integrations.get(f"{app_id}_path", ""))
                 lbl.setProperty("state", 1) # 1=Closed, 2=Open, 3=Connected
-                lbl.mousePressEvent = lambda e, l=lbl: self.on_app_icon_clicked(l)
-                
-                self.layout.addWidget(lbl)
+                lbl.mousePressEvent = lambda e, l=lbl: self.on_app_icon_mouse_press(e, l)
+
+                # Insertar antes del botón de toggle (si ya está en el layout) para
+                # mantener el orden; durante la construcción inicial aún no está
+                # agregado, así que simplemente se anexa al final.
+                toggle_idx = self.layout.indexOf(self.btn_toggle)
+                insert_at = toggle_idx if toggle_idx != -1 else self.layout.count()
+                self.layout.insertWidget(insert_at, lbl)
                 self.app_icons[app_id] = lbl
-        
-        self.layout.addWidget(self.btn_toggle)
-        self.layout.addWidget(self.btn_settings)
-        
-        self._active_editor = None
-        self._process_status = {}
+            elif is_enabled and existing_lbl is not None:
+                # Ya existe: solo refrescar la ruta del ejecutable por si cambió.
+                existing_lbl.setProperty("exe_path", integrations.get(f"{app_id}_path", ""))
+            elif not is_enabled and existing_lbl is not None:
+                # Se deshabilitó la integración: quitar el ícono de inmediato.
+                self.layout.removeWidget(existing_lbl)
+                existing_lbl.deleteLater()
+                del self.app_icons[app_id]
+
+    def refresh_app_icons(self):
+        """Se llama cuando el usuario activa/desactiva una integración en Ajustes,
+        para que el ícono aparezca o desaparezca sin necesidad de reiniciar la app."""
+        self._build_app_icons()
         self.update_ui_state()
         
     def late_init(self):
@@ -172,6 +199,24 @@ class EditorStatusCornerWidget(QWidget):
                 lbl.setStyleSheet("border: 2px solid transparent; border-radius: 6px;")
                 lbl.setToolTip(f"{lbl.property('app_name')} (Cerrado - Clic para abrir)")
                 
+    def on_app_icon_mouse_press(self, event, lbl):
+        if event.button() == Qt.RightButton:
+            self._show_app_icon_context_menu(lbl, event.globalPosition().toPoint())
+        else:
+            self.on_app_icon_clicked(lbl)
+
+    def _show_app_icon_context_menu(self, lbl, global_pos):
+        from PySide6.QtWidgets import QMenu
+        menu = QMenu(self)
+        act_configure = menu.addAction(self.tr("Configurar integración"))
+        act_configure.triggered.connect(lambda: self._open_integration_settings())
+        menu.exec(global_pos)
+
+    def _open_integration_settings(self):
+        self.main_window.tabs.setCurrentIndex(5)
+        settings_tab = self.main_window.tab_settings
+        settings_tab.btn_integrations.click()
+
     def on_app_icon_clicked(self, lbl):
         import subprocess
         import os
@@ -228,11 +273,12 @@ class EditorStatusCornerWidget(QWidget):
                 self.editor_manager.force_adobe_target(None)
                 
     def on_settings_clicked(self):
-        # Ir a la pestaña principal de Ajustes (índice 5 en main_window.tabs)
+        # Ir a la pestaña de Ajustes (índice 5 en main_window.tabs, oculta de la barra de
+        # pestañas: este botón es ahora el único punto de entrada a Ajustes) mostrando la
+        # sub-pestaña General.
         self.main_window.tabs.setCurrentIndex(5)
-        # Ir a la sub-pestaña de Integraciones
         settings_tab = self.main_window.tab_settings
-        settings_tab.btn_integrations.click()
+        settings_tab.btn_general.click()
 
 
 class MainWindow(QMainWindow):
@@ -290,10 +336,12 @@ class MainWindow(QMainWindow):
         self.tab_editing = EditingMediaTab()
         self.tabs.addTab(self.tab_editing, self.tr("Medios de Edición"))
 
-        # 6. Ajustes
+        # 6. Ajustes (oculta de la barra de pestañas: se accede desde el botón de Ajustes
+        # en la esquina superior derecha, que reemplazó al antiguo botón de integraciones)
         self.tab_settings = SettingsTab()
         self.tabs.addTab(self.tab_settings, self.tr("Ajustes"))
-        
+        self.tabs.setTabVisible(5, False)
+
         # Corner Widget (Editor Status)
         self.editor_status_widget = EditorStatusCornerWidget(self)
         self.tabs.setCornerWidget(self.editor_status_widget, Qt.TopRightCorner)
@@ -302,6 +350,7 @@ class MainWindow(QMainWindow):
 
         # ── Conexiones ────────────────────────────────────────────────────────
         self.tab_settings.theme_changed.connect(self.update_theme)
+        self.tab_settings.integrations_changed.connect(self.editor_status_widget.refresh_app_icons)
         self.tabs.currentChanged.connect(self.on_tab_changed)
 
         logger.info("MainWindow: Sistema de pestañas inicializado")

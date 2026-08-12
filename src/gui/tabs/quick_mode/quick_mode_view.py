@@ -75,10 +75,10 @@ class QuickModeTab(QWidget):
         """
         self.options_panel.setStyleSheet(box_style)
 
-        self.output_options.btn_start_download.setText(self.tr("Descargar"))
-        self.output_options.btn_start_download.setEnabled(True)
-        self.output_options.btn_start_download.clicked.connect(self._on_download_clicked)
-        
+        # En Modo Rápido el botón "Descargar" junto a la URL ya dispara la descarga:
+        # el botón de descarga duplicado dentro de "Opciones de Salida" es innecesario aquí.
+        self.output_options.btn_start_download.setVisible(False)
+
         self.output_options.btn_open_output_path.clicked.disconnect()
         self.output_options.btn_open_output_path.clicked.connect(self._on_open_output_path_clicked)
 
@@ -260,7 +260,6 @@ class QuickModeTab(QWidget):
     def _set_controls_enabled(self, enabled):
         self.url_input.setEnabled(enabled)
         self.btn_download.setEnabled(enabled or self.controller.is_downloading)
-        self.output_options.btn_start_download.setEnabled(enabled or self.controller.is_downloading)
         self.options_panel.setEnabled(enabled)
         self.output_options.output_path_input.setEnabled(enabled)
         self.output_options.btn_select_output_path.setEnabled(enabled)
@@ -274,7 +273,6 @@ class QuickModeTab(QWidget):
 
     def _set_download_text(self, text):
         self.btn_download.setText(text)
-        self.output_options.btn_start_download.setText(text)
 
     def _on_clipboard_url_detected(self, url):
         """Llamado cuando el monitor de portapapeles pega una URL en nuestro campo."""

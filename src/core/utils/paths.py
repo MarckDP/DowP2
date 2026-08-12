@@ -48,6 +48,12 @@ def get_waveform_cache_dir() -> str:
     os.makedirs(wf_dir, exist_ok=True)
     return wf_dir
 
+def get_subclips_dir() -> str:
+    """Retorna el directorio para guardar subclips rápidos de medios cuando no hay editores conectados."""
+    from core.utils.config_manager import get_default_subclip_dir
+    return get_default_subclip_dir()
+
+
 
 def get_config_path() -> str:
     """Retorna la ruta al archivo de configuración general config.json."""

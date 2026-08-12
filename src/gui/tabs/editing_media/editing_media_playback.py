@@ -290,11 +290,12 @@ class PlaybackMixin:
                     in_sec = in_ratio * dur_sec
                     out_sec = out_ratio * dur_sec
                     
-                    # Resolver carpeta designada para descargas de alta calidad
+                    # Resolver carpeta designada para guardar subclips
                     if is_remote and hasattr(self, "_resolve_freesound_dest_path"):
                         dest_dir = os.path.dirname(self._resolve_freesound_dest_path(item_data))
                     else:
-                        dest_dir = os.path.dirname(local_path)
+                        from core.utils.paths import get_subclips_dir
+                        dest_dir = get_subclips_dir()
                     os.makedirs(dest_dir, exist_ok=True)
 
                     base_name, ext = os.path.splitext(os.path.basename(local_path))
@@ -592,6 +593,9 @@ class PlaybackMixin:
         self._saved_subclips_cache[path] = dlg.get_subclips()
         self._saved_subclip_range_cache[path] = (dlg.in_sec, dlg.out_sec)
 
+        if hasattr(self, "_update_edit_subclip_button_state") and path == getattr(self, "last_selected_media_path", None):
+            self._update_edit_subclip_button_state(bool(self._saved_subclips_cache[path]))
+
     def _on_subclip_dialog_download_success(self, dlg, item_data, local_path):
         logger.info(f"[EditingMedia] Descarga en alta calidad lista para el editor de subclips: {local_path}")
         dlg.set_resolved_media_path(local_path)
@@ -853,11 +857,15 @@ class PlaybackMixin:
         if is_remote and dest_exists:
             self.btn_download.setVisible(True)
             self.btn_download.setEnabled(False)
-            self.btn_download.setText(self.tr("En Disco"))
+            self.btn_download.setToolTip(self.tr("En Disco"))
         else:
             self.btn_download.setVisible(is_remote)
             self.btn_download.setEnabled(is_remote)
-            self.btn_download.setText(self.tr("Descargar Medio"))
+            self.btn_download.setToolTip(self.tr("Descargar Medio"))
+
+        if hasattr(self, "_update_edit_subclip_button_state"):
+            has_subclips = bool(getattr(self, "_saved_subclips_cache", {}).get(path))
+            self._update_edit_subclip_button_state(has_subclips)
 
 
         if is_remote:

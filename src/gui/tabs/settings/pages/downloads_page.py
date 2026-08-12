@@ -99,6 +99,21 @@ class DownloadsPage(QWidget):
         self.sponsors_row.addWidget(self.sponsors_switch)
         self.content_layout.addLayout(self.sponsors_row)
 
+        # 4. Switch: Impersonate
+        self.imp_row = QHBoxLayout()
+        self.imp_vbox = QVBoxLayout()
+        self.imp_label = QLabel(self.tr("Usar Impersonate (Disfraz de Navegador)"))
+        self.imp_label.setObjectName("settingsLabel")
+        self.imp_desc = QLabel(self.tr("Evita bloqueos de YouTube simulando ser Chrome. (Puede ser más lento)"))
+        self.imp_desc.setStyleSheet("color: #888888; font-size: 11px;")
+        self.imp_vbox.addWidget(self.imp_label)
+        self.imp_vbox.addWidget(self.imp_desc)
+        self.imp_switch = ToggleSwitch()
+        self.imp_row.addLayout(self.imp_vbox)
+        self.imp_row.addStretch()
+        self.imp_row.addWidget(self.imp_switch)
+        self.content_layout.addLayout(self.imp_row)
+
         # Finalizar setup del scroll area
         self.scroll_area.setWidget(self.scroll_content)
         self.main_layout.addWidget(self.scroll_area)
@@ -110,6 +125,7 @@ class DownloadsPage(QWidget):
         self.metadata_switch.toggled.connect(self.on_embed_metadata_toggled)
         self.thumb_switch.toggled.connect(self.on_embed_thumbnail_toggled)
         self.sponsors_switch.toggled.connect(self.on_remove_sponsors_toggled)
+        self.imp_switch.toggled.connect(self.on_impersonate_toggled)
 
     def update_switch_colors(self):
         config = get_config()
@@ -117,12 +133,14 @@ class DownloadsPage(QWidget):
         self.metadata_switch.setTrackColors("#333333", accent)
         self.thumb_switch.setTrackColors("#333333", accent)
         self.sponsors_switch.setTrackColors("#333333", accent)
+        self.imp_switch.setTrackColors("#333333", accent)
 
     def load_current_settings(self):
         config = get_config()
         self.metadata_switch.setChecked(config.get("embed_metadata", True))
         self.thumb_switch.setChecked(config.get("embed_thumbnail", True))
         self.sponsors_switch.setChecked(config.get("remove_sponsors", False))
+        self.imp_switch.setChecked(config.get("use_impersonate", False))
 
     def on_embed_metadata_toggled(self, checked):
         if self._is_loading: return
@@ -144,3 +162,10 @@ class DownloadsPage(QWidget):
         config["remove_sponsors"] = checked
         save_config(config)
         logger.info(f"DownloadsPage: Eliminar sponsors cambiado a: {checked}")
+
+    def on_impersonate_toggled(self, checked):
+        if self._is_loading: return
+        config = get_config()
+        config["use_impersonate"] = checked
+        save_config(config)
+        logger.info(f"DownloadsPage: Uso de Impersonate cambiado a: {checked}")

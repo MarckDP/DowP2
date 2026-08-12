@@ -385,6 +385,69 @@ class MemoryCachePage(QWidget):
 
         self.content_layout.addWidget(self.download_dir_card)
 
+        # ---------------- CARPETA DE SUBCLIPS RÁPIDOS (sin editor conectado) ----------------
+        self.subclip_dir_card = QFrame()
+        self.subclip_dir_card.setObjectName("settingsCard")
+        self.subclip_dir_card.setStyleSheet("""
+            QFrame#settingsCard {
+                background-color: #1e1e1e;
+                border: 1px solid #2d2d2d;
+                border-radius: 8px;
+                padding: 12px;
+            }
+        """)
+        sub_layout = QVBoxLayout(self.subclip_dir_card)
+        sub_layout.setSpacing(8)
+
+        lbl_sub_title_row = QLabel(self.tr("Carpeta de subclips rápidos (sin editor conectado)"))
+        lbl_sub_title_row.setStyleSheet("color: #ffffff; font-weight: bold; font-size: 13px;")
+        sub_layout.addWidget(lbl_sub_title_row)
+
+        lbl_sub_desc = QLabel(self.tr(
+            "Carpeta donde se guardan los recortes rápidos de subclips cuando no hay un editor de video "
+            "conectado. Por defecto se guardan en la carpeta 'subclip_media' de AppData."
+        ))
+        lbl_sub_desc.setWordWrap(True)
+        lbl_sub_desc.setStyleSheet("color: #888888; font-size: 11px;")
+        sub_layout.addWidget(lbl_sub_desc)
+
+        sub_path_hbox = QHBoxLayout()
+        sub_path_hbox.setSpacing(8)
+
+        self.subclip_dir_input = QLineEdit()
+        self.subclip_dir_input.setReadOnly(True)
+        self.subclip_dir_input.setStyleSheet("""
+            QLineEdit {
+                background-color: #121212;
+                color: #cccccc;
+                border: 1px solid #3d3d3d;
+                border-radius: 6px;
+                padding: 6px 8px;
+                font-size: 11px;
+            }
+        """)
+
+        self.btn_browse_subclip_dir = QPushButton(self.tr("Examinar..."))
+        self.btn_browse_subclip_dir.setFixedHeight(30)
+        self.btn_browse_subclip_dir.setCursor(Qt.PointingHandCursor)
+        self.btn_browse_subclip_dir.setStyleSheet(browse_btn_style)
+        self.btn_browse_subclip_dir.clicked.connect(self.on_browse_subclip_dir_clicked)
+
+        self.btn_reset_subclip_dir = QPushButton(self.tr("Restablecer"))
+        self.btn_reset_subclip_dir.setFixedHeight(30)
+        self.btn_reset_subclip_dir.setCursor(Qt.PointingHandCursor)
+        self.btn_reset_subclip_dir.setStyleSheet(browse_btn_style)
+        self.btn_reset_subclip_dir.clicked.connect(self.on_reset_subclip_dir_clicked)
+
+        sub_path_hbox.addWidget(self.subclip_dir_input, 1)
+        sub_path_hbox.addWidget(self.btn_browse_subclip_dir)
+        sub_path_hbox.addWidget(self.btn_reset_subclip_dir)
+        sub_layout.addLayout(sub_path_hbox)
+
+        self._refresh_subclip_dir_label()
+
+        self.content_layout.addWidget(self.subclip_dir_card)
+
         # Finalizar setup del scroll area
         self.scroll_area.setWidget(self.scroll_content)
         self.main_layout.addWidget(self.scroll_area)
@@ -508,3 +571,37 @@ class MemoryCachePage(QWidget):
         config["default_web_download_dir"] = ""
         save_config(config)
         self._refresh_download_dir_label()
+
+    def _refresh_subclip_dir_label(self):
+        from core.utils.config_manager import get_config
+        from core.utils.paths import get_subclips_dir
+        current_dir = get_config().get("default_subclip_dir", "")
+        if current_dir:
+            self.subclip_dir_input.setText(current_dir)
+        else:
+            default_path = get_subclips_dir()
+            self.subclip_dir_input.setText(self.tr(f"(Por defecto: {default_path})"))
+
+    def on_browse_subclip_dir_clicked(self):
+        from core.utils.config_manager import get_config, save_config
+        from core.utils.paths import get_subclips_dir
+        config = get_config()
+        current_dir = config.get("default_subclip_dir") or get_subclips_dir()
+        folder = QFileDialog.getExistingDirectory(
+            self,
+            self.tr("Seleccionar carpeta para subclips rápidos"),
+            current_dir
+        )
+        if folder:
+            config["default_subclip_dir"] = folder
+            save_config(config)
+            self._refresh_subclip_dir_label()
+
+    def on_reset_subclip_dir_clicked(self):
+        from core.utils.config_manager import get_config, save_config
+        config = get_config()
+        if not config.get("default_subclip_dir"):
+            return
+        config["default_subclip_dir"] = ""
+        save_config(config)
+        self._refresh_subclip_dir_label()

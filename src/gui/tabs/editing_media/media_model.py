@@ -172,7 +172,9 @@ class MediaTableModel(QAbstractTableModel):
                 elif col == 2: 
                     if not is_web:
                         return str(item.get("tamaño", "-"))
-                    desc = str(item.get("description", item.get("desc", "-"))).strip()
+                    desc = str(item.get("description", item.get("desc", "-"))).replace("\r\n", " ").replace("\n", " ").replace("\r", " ").strip()
+                    import re
+                    desc = re.sub(r"\s+", " ", desc)
                     return desc[:117] + "..." if len(desc) > 120 else (desc if desc else "-")
                 elif col == 3: 
                     if not is_web:
@@ -240,11 +242,15 @@ class MediaTableModel(QAbstractTableModel):
 
             if tipo == "audio":
                 if (not is_web) or (is_web and is_downloaded):
-                    cached_icon = wf_mgr.get_cached_qicon(file_path)
+                    # En modo lista las filas deben permanecer delgadas: el ícono de forma de
+                    # onda se renderiza pequeño (18px) en vez del tamaño grande usado en la
+                    # cuadrícula, que antes inflaba la altura de la fila.
+                    icon_size = QSize(80, 80) if self._view_mode == "grid" else QSize(18, 18)
+                    cached_icon = wf_mgr.get_cached_qicon(file_path, icon_size)
                     if cached_icon is not None:
                         return cached_icon
                     else:
-                        wf_mgr.request_waveform(file_path)
+                        wf_mgr.request_waveform(file_path, size=icon_size)
                         # Devolver ícono por defecto mientras carga
                         if self._view_mode == "grid":
                             return self.get_cached_icon("music_note.svg_placeholder", "#3498db")
@@ -259,7 +265,8 @@ class MediaTableModel(QAbstractTableModel):
                     peaks = fs_cache.get_cached_waveform_peaks(waveform_url)
                     if peaks is not None:
                         from core.tabs.editing_media.waveform_cache_manager import render_waveform_icon
-                        return render_waveform_icon(peaks)
+                        icon_size = QSize(80, 80) if self._view_mode == "grid" else QSize(18, 18)
+                        return render_waveform_icon(peaks, icon_size)
 
                 if self._view_mode == "grid":
                     return self.get_cached_icon("travel_explore.svg_placeholder", "#3498db")
@@ -267,14 +274,17 @@ class MediaTableModel(QAbstractTableModel):
                     return self.get_cached_icon("travel_explore.svg", "#3498db", size=18)
 
             # Si es local y es video/imagen, cargar miniatura
+            # En modo lista se pide una miniatura pequeña (18px) para que la fila no se
+            # infle con el ícono de 256px pensado para la cuadrícula.
+            thumb_size = 256 if self._view_mode == "grid" else 18
             thumb_mgr = ThumbnailCacheManager.get_instance()
-            cached_icon = thumb_mgr.get_cached_qicon(file_path)
-            
+            cached_icon = thumb_mgr.get_cached_qicon(file_path, thumb_size)
+
             if cached_icon:
                 return cached_icon
             else:
                 # Solicitar la miniatura de forma asíncrona
-                thumb_mgr.request_thumbnail(file_path, tipo)
+                thumb_mgr.request_thumbnail(file_path, tipo, thumb_size)
                 
                 # Devolver ícono por defecto mientras carga
                 if self._view_mode == "grid":
@@ -286,8 +296,11 @@ class MediaTableModel(QAbstractTableModel):
                     elif tipo == "imagen": return self.get_cached_icon("image.svg", "#2ecc71", size=18)
                     elif tipo == "audio": return self.get_cached_icon("music_note.svg", "#3498db", size=18)
 
-        elif role == Qt.SizeHintRole and self._view_mode == "grid" and col == 0:
-            return self._grid_size_hint
+        elif role == Qt.SizeHintRole:
+            if self._view_mode == "grid" and col == 0:
+                return self._grid_size_hint
+            elif self._view_mode == "list":
+                return QSize(-1, 26)
 
         elif role == Qt.ForegroundRole:
             if tipo == "load_more":

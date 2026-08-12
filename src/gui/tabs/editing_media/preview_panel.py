@@ -9,6 +9,7 @@ from gui.styles import (
     get_theme_token,
     apply_player_play_button_style,
     apply_player_loop_button_style,
+    apply_edit_subclip_button_style,
     create_checkerboard_pixmap,
 )
 from gui.tabs.editing_media.editing_media_icons import get_colored_svg_icon
@@ -149,20 +150,8 @@ class PreviewContainerWidget(QFrame):
         self.btn_edit_subclip = QPushButton()
         self.btn_edit_subclip.setIconSize(QSize(14, 14))
         self.btn_edit_subclip.setFixedSize(26, 26)
-        self.btn_edit_subclip.setToolTip(self.tr("Editar / Recortar Subclips (In/Out)"))
-        edit_icon = get_svg_icon("edit.svg")
-        if not edit_icon.isNull():
-            self.btn_edit_subclip.setIcon(edit_icon)
-        self.btn_edit_subclip.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {get_theme_token('fondo_elemento', '#2d2d2d')};
-                border: 1px solid {get_theme_token('borde_normal', '#444444')};
-                border-radius: 13px;
-            }}
-            QPushButton:hover {{
-                background-color: {get_theme_token('acento_primario', '#B9E640')};
-            }}
-        """)
+        self._has_subclips = False
+        apply_edit_subclip_button_style(self.btn_edit_subclip, has_subclips=False, icon_size=14)
         btn_layout.addWidget(self.btn_edit_subclip)
 
         # Etiqueta de tiempo
@@ -184,6 +173,10 @@ class PreviewContainerWidget(QFrame):
             self.media_player.positionChanged.connect(self._on_position_changed)
             self.media_player.durationChanged.connect(self._on_duration_changed)
             self.media_player.playbackStateChanged.connect(self._on_playback_state_changed)
+            # El bucle se maneja manualmente (en vez de confiar en QMediaPlayer.setLoops(),
+            # cuya aplicación en caliente resultaba poco fiable con algunos backends: a veces
+            # había que activar/desactivar el botón más de una vez para que surtiera efecto).
+            self.media_player.mediaStatusChanged.connect(self._on_media_status_changed_loop)
         
         self.show_default_state()
 
@@ -299,9 +292,6 @@ class PreviewContainerWidget(QFrame):
                 self.controls_widget.setVisible(True)
             try:
                 self.media_player.setSource(QUrl.fromLocalFile(path))
-                loops = QMediaPlayer.Infinite if getattr(self, "_video_loop_active", False) else 1
-
-                self.media_player.setLoops(loops)
                 self.media_player.play()
                 logger.debug(f"PreviewPanel: Reproduciendo video preview: {path}")
             except Exception as e:
@@ -399,12 +389,21 @@ class PreviewContainerWidget(QFrame):
         is_playing = (state == QMediaPlayer.PlayingState)
         apply_player_play_button_style(self.btn_play_pause, is_playing=is_playing, icon_size=14)
 
+    def set_edit_subclip_active(self, has_subclips: bool):
+        """Actualiza la apariencia 'encendida/apagada' del botón de editar subclips según si
+        el medio actualmente mostrado ya tiene subclips guardados."""
+        self._has_subclips = has_subclips
+        apply_edit_subclip_button_style(self.btn_edit_subclip, has_subclips=has_subclips, icon_size=14)
+
     def _toggle_video_loop(self):
-        """Alterna entre reproducción en bucle infinito y reproducción única."""
+        """Alterna entre reproducción en bucle y reproducción única."""
         self._video_loop_active = not self._video_loop_active
-        if self.media_player:
-            if self._video_loop_active:
-                self.media_player.setLoops(QMediaPlayer.Infinite)
-            else:
-                self.media_player.setLoops(1)
         apply_player_loop_button_style(self.btn_loop, is_active=self._video_loop_active, icon_size=14)
+
+    def _on_media_status_changed_loop(self, status):
+        """Reinicia manualmente la reproducción al llegar al final si el bucle está activo.
+        Esto evita depender de QMediaPlayer.setLoops(), que no siempre aplicaba el cambio
+        de inmediato al alternar el botón durante la reproducción."""
+        if status == QMediaPlayer.MediaStatus.EndOfMedia and getattr(self, "_video_loop_active", False):
+            self.media_player.setPosition(0)
+            self.media_player.play()

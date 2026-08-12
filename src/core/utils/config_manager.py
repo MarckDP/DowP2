@@ -34,6 +34,7 @@ def get_config():
         "auto_paste_url": True,
         "labels": [],
         "default_web_download_dir": "",
+        "default_subclip_dir": "",
         "editing_media_view_mode": "grid",
         "editing_media_icon_size": 112,
         "editing_media_splitter_sizes": [240, 480, 480],
@@ -96,3 +97,14 @@ def get_default_web_download_dir():
     if val and os.path.exists(val):
         return os.path.normpath(val).replace("\\", "/")
     return os.path.normpath(os.path.expanduser("~/Downloads")).replace("\\", "/")
+
+def get_default_subclip_dir():
+    """Retorna la carpeta de subclips predeterminada configurada o %APPDATA%/DowP2/subclip_media."""
+    cfg = get_config()
+    val = cfg.get("default_subclip_dir")
+    if val and os.path.exists(val):
+        return os.path.normpath(val).replace("\\", "/")
+    from core.utils.paths import get_app_data_dir
+    sub_dir = os.path.join(get_app_data_dir(), "subclip_media")
+    os.makedirs(sub_dir, exist_ok=True)
+    return os.path.normpath(sub_dir).replace("\\", "/")

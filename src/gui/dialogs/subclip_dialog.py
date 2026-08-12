@@ -37,6 +37,10 @@ class SubclipWaveformWidget(QWidget):
         # Datos de alta resolución: lista de tuplas (min, max) normalizadas -1..1
         self._hires_peaks = []  # Datos crudos de alta res
         self._display_peaks = []  # Re-muestreados al ancho actual
+
+        # Rangos (in_ratio, out_ratio) de subclips ya guardados, para mostrarlos de fondo
+        # con baja opacidad mientras se crea uno nuevo.
+        self._saved_subclip_ratios = []
         
         self.is_loading = False
         self.loading_phase = 0.0
@@ -174,6 +178,12 @@ class SubclipWaveformWidget(QWidget):
         self.out_ratio = max(self.in_ratio, min(out_r, 1.0))
         self.update()
 
+    def set_saved_subclip_ratios(self, ranges: list):
+        """Actualiza los rangos (in_ratio, out_ratio) de los subclips ya guardados, dibujados
+        de fondo con baja opacidad para poder ver cuántos hay y dónde están mientras se crean más."""
+        self._saved_subclip_ratios = list(ranges) if ranges else []
+        self.update()
+
     def set_playback_ratio(self, ratio: float):
         self._playback_ratio = max(0.0, min(ratio, 1.0))
         self.update()
@@ -309,7 +319,19 @@ class SubclipWaveformWidget(QWidget):
         mid_y = h / 2.0
         x_in = int(self.in_ratio * w)
         x_out = int(self.out_ratio * w)
-        
+
+        # Subclips ya guardados: franjas de baja opacidad de fondo, para ver cuántos hay
+        # y dónde están mientras se crea uno nuevo.
+        saved_color = QColor(64, 169, 230, 45)
+        saved_border = QPen(QColor(64, 169, 230, 120), 1, Qt.DashLine)
+        for sub_in_r, sub_out_r in self._saved_subclip_ratios:
+            sx_in = int(sub_in_r * w)
+            sx_out = int(sub_out_r * w)
+            painter.fillRect(sx_in, 0, max(1, sx_out - sx_in), h, saved_color)
+            painter.setPen(saved_border)
+            painter.drawLine(sx_in, 0, sx_in, h)
+            painter.drawLine(sx_out, 0, sx_out, h)
+
         # Fondo sutil de la zona seleccionada
         highlight = QColor(185, 230, 64, 15)
         painter.fillRect(x_in, 0, max(1, x_out - x_in), h, highlight)
@@ -515,6 +537,9 @@ class SubclipEditorDialog(QDialog):
         self.in_sec = initial_in_sec if initial_in_sec is not None else 0.0
         self.out_sec = initial_out_sec if initial_out_sec is not None else self.duration_sec
         self.subclips = list(existing_subclips) if existing_subclips else []
+        # Rango (in_sec, out_sec) del subclip que se está previsualizando en bucle desde la
+        # lista de subclips guardados; None cuando no hay una previsualización en bucle activa.
+        self._preview_loop_range = None
         # Modo "pendiente": el medio es remoto y aún se está descargando en alta calidad en segundo plano.
         self.pending_download = pending_download
         self._display_name = display_name or os.path.basename(media_path) or "Medio remoto"
@@ -1160,6 +1185,9 @@ class SubclipEditorDialog(QDialog):
             super().keyPressEvent(event)
 
     def _toggle_play_pause(self):
+        # Usar el play/pause "normal" de la ventana siempre sale de la previsualización en
+        # bucle de un subclip (si había una activa).
+        self._preview_loop_range = None
         if self.media_player.playbackState() == QMediaPlayer.PlayingState:
             self.media_player.pause()
             self.btn_play.setIcon(get_svg_icon("play_arrow.svg"))
@@ -1194,8 +1222,14 @@ class SubclipEditorDialog(QDialog):
 
     def _on_waveform_seek(self, ratio: float):
         if self.duration_sec > 0:
-            pos_ms = int(ratio * self.duration_sec * 1000)
-            self.media_player.setPosition(pos_ms)
+            pos_sec = ratio * self.duration_sec
+            # Si el usuario mueve manualmente el cabezal fuera del rango del subclip que se
+            # está previsualizando en bucle, se sale de ese modo de bucle.
+            if self._preview_loop_range is not None:
+                lo, hi = self._preview_loop_range
+                if pos_sec < lo or pos_sec > hi:
+                    self._preview_loop_range = None
+            self.media_player.setPosition(int(pos_sec * 1000))
 
     def _on_waveform_range_changed(self, in_r: float, out_r: float):
         if self.duration_sec > 0:
@@ -1205,6 +1239,15 @@ class SubclipEditorDialog(QDialog):
 
     def _on_player_position_changed(self, pos_ms: int):
         pos_sec = pos_ms / 1000.0
+
+        # Previsualización en bucle de un subclip guardado: al llegar al final del rango,
+        # volver al inicio en vez de seguir reproduciendo más allá de él.
+        if self._preview_loop_range is not None:
+            lo, hi = self._preview_loop_range
+            if pos_sec >= hi:
+                self.media_player.setPosition(int(lo * 1000))
+                return
+
         if self.duration_sec > 0:
             ratio = pos_sec / self.duration_sec
             self.waveform_widget.set_playback_ratio(ratio)
@@ -1218,6 +1261,7 @@ class SubclipEditorDialog(QDialog):
                 self.out_sec = new_dur
             self.duration_sec = new_dur
             self._update_waveform_range()
+            self._update_saved_subclip_ratios()
             self._update_time_label()
 
     def _update_time_label(self):
@@ -1307,12 +1351,26 @@ class SubclipEditorDialog(QDialog):
             item.setSizeHint(QSize(220, 66))
             self.list_subclips.setItemWidget(item, w)
 
+        self._update_saved_subclip_ratios()
+
+    def _update_saved_subclip_ratios(self):
+        """Envía a la waveform los rangos de los subclips ya guardados para mostrarlos de
+        fondo con baja opacidad."""
+        if self.duration_sec <= 0:
+            return
+        ranges = [(sc["in"] / self.duration_sec, sc["out"] / self.duration_sec) for sc in self.subclips]
+        self.waveform_widget.set_saved_subclip_ratios(ranges)
+
     def _preview_subclip(self, index: int):
         if 0 <= index < len(self.subclips):
             sc = self.subclips[index]
+            # Reproduce en bucle dentro del rango del subclip hasta que el usuario mueva el
+            # cabezal manualmente fuera de él o use el play normal de la ventana.
+            self._preview_loop_range = (sc["in"], sc["out"])
             self.media_player.setPosition(int(sc["in"] * 1000))
             self.media_player.play()
             self.btn_play.setIcon(get_svg_icon("pause.svg"))
+            self.meter_timer.start()
 
     def _delete_subclip(self, index: int):
         if 0 <= index < len(self.subclips):

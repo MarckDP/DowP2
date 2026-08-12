@@ -339,6 +339,59 @@ def apply_player_loop_button_style(btn, is_active: bool = False, icon_size: int 
         """)
 
 
+def apply_edit_subclip_button_style(btn, has_subclips: bool = False, icon_size: int = 14):
+    """
+    Aplica el estilo unificado al botón de Editar/Recortar Subclips de los reproductores.
+    - has_subclips=True ("encendido"): fondo verde acento, ícono en negro (buen contraste
+      tanto en reposo como en hover, ya que el fondo siempre es un verde claro/oscuro).
+    - has_subclips=False ("apagado"): fondo gris neutro, ícono gris apagado; el hover es un
+      gris sutil (nunca el verde brillante), evitando el problema de ícono claro sobre fondo
+      claro que ocurría antes al usar siempre el mismo ícono con hover en acento_primario.
+    """
+    from gui.tabs.editing_media.editing_media_icons import get_colored_svg_icon
+
+    radius = 13
+    if hasattr(btn, 'height') and btn.height() > 0:
+        radius = btn.height() // 2
+    elif hasattr(btn, 'fixedSize') and btn.fixedSize().height() > 0:
+        radius = btn.fixedSize().height() // 2
+
+    if has_subclips:
+        btn.setIcon(get_colored_svg_icon("edit.svg", "#000000", size=icon_size))
+        btn.setToolTip("Editar / Recortar Subclips (In/Out) — hay subclips guardados")
+        btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {get_theme_token('acento_secundario', '#1DC038')};
+                border: none;
+                border-radius: {radius}px;
+                padding: 0px;
+            }}
+            QPushButton:hover {{
+                background-color: {get_theme_token('acento_primario', '#B9E640')};
+            }}
+            QPushButton:disabled {{
+                background-color: #555;
+            }}
+        """)
+    else:
+        btn.setIcon(get_colored_svg_icon("edit.svg", "#6c7086", size=icon_size))
+        btn.setToolTip("Editar / Recortar Subclips (In/Out)")
+        btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {get_theme_token('fondo_elemento', '#2d2d2d')};
+                border: 1px solid {get_theme_token('borde_normal', '#2d2d2d')};
+                border-radius: {radius}px;
+                padding: 0px;
+            }}
+            QPushButton:hover {{
+                background-color: {get_theme_token('seleccion_fondo', '#3d3d3d')};
+            }}
+            QPushButton:disabled {{
+                background-color: #555;
+            }}
+        """)
+
+
 def apply_volume_control_style(btn_mute, slider):
     """
     Aplica el estilo unificado basado en tokens de tema para el botón Mute

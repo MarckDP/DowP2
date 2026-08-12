@@ -109,18 +109,21 @@ class ThumbnailCacheManager(QObject):
         self._hash_cache[file_path] = hash_val
         return hash_val
 
-    def get_cached_qicon(self, file_path: str) -> QIcon | None:
-        """Obtiene directamente el QIcon desde la memoria RAM (super rápido y 100% cuadrado)."""
-        if file_path in self._qicon_cache:
-            return self._qicon_cache[file_path]
+    def get_cached_qicon(self, file_path: str, size: int = 256) -> QIcon | None:
+        """Obtiene directamente el QIcon desde la memoria RAM (super rápido y 100% cuadrado).
+        `size` permite pedir una miniatura pequeña (p.ej. en modo lista) sin inflar la altura
+        de la fila con el ícono de 256px pensado para la cuadrícula."""
+        cache_key = (file_path, size)
+        if cache_key in self._qicon_cache:
+            return self._qicon_cache[cache_key]
 
         thumb_path = self.get_cached_thumbnail_path(file_path)
         if thumb_path:
             pix = QPixmap(thumb_path)
             if not pix.isNull():
-                sq_pix = make_square_thumbnail_pixmap(pix, 256)
+                sq_pix = make_square_thumbnail_pixmap(pix, size)
                 icon = _make_multi_state_icon(sq_pix)
-                self._qicon_cache[file_path] = icon
+                self._qicon_cache[cache_key] = icon
                 return icon
 
         return None
@@ -133,9 +136,10 @@ class ThumbnailCacheManager(QObject):
             return target_path
         return None
 
-    def request_thumbnail(self, file_path: str, media_type: str):
+    def request_thumbnail(self, file_path: str, media_type: str, size: int = 256):
         """Solicita una miniatura de forma no bloqueante."""
-        if file_path in self._qicon_cache:
+        cache_key = (file_path, size)
+        if cache_key in self._qicon_cache:
             return
 
         if file_path in self._pending_files or file_path in self._failed_files:
@@ -145,11 +149,11 @@ class ThumbnailCacheManager(QObject):
         if cached_path:
             pix = QPixmap(cached_path)
             if not pix.isNull():
-                sq_pix = make_square_thumbnail_pixmap(pix, 256)
+                sq_pix = make_square_thumbnail_pixmap(pix, size)
                 icon = _make_multi_state_icon(sq_pix)
             else:
                 icon = _make_multi_state_icon(QPixmap(cached_path))
-            self._qicon_cache[file_path] = icon
+            self._qicon_cache[cache_key] = icon
             self.thumbnail_loaded.emit(file_path, cached_path)
             return
 
@@ -166,7 +170,7 @@ class ThumbnailCacheManager(QObject):
             icon = _make_multi_state_icon(sq_pix)
         else:
             icon = _make_multi_state_icon(QPixmap(thumb_path))
-        self._qicon_cache[file_path] = icon
+        self._qicon_cache[(file_path, 256)] = icon
         self.thumbnail_loaded.emit(file_path, thumb_path)
 
     def _on_worker_failed(self, file_path: str):

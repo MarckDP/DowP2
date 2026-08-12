@@ -133,7 +133,7 @@ def get_base_ydl_opts(extra_opts=None):
     # --- PO TOKEN PROVIDER (multi-provider) ---
     # Lee el provider activo de config.json y aplica los extractor_args correctos.
     # Ambos providers comparten la misma lista de player_client.
-    _pot_provider = config.get("pot_provider", "bgutil")
+    _pot_provider = get_config().get("pot_provider", "bgutil")
 
     _pot_active = False
 

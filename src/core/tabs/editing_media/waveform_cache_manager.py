@@ -142,25 +142,31 @@ class HiResWaveformWorkerSignals(QObject):
     failed = Signal(str)
 
 class HiResWaveformRunnable(QRunnable):
-    """Extrae forma de onda de alta resolución con pares (min, max) para renderizado profesional."""
-    def __init__(self, file_path: str, manager: "WaveformCacheManager", num_peaks: int = 4000):
+    """Extrae forma de onda de alta resolución con pares (min, max) para renderizado profesional.
+
+    `audio_track` (0-based) permite extraer una pista de audio específica en medios
+    multipista, en vez de la primera pista por defecto (0)."""
+    def __init__(self, file_path: str, manager: "WaveformCacheManager", num_peaks: int = 4000, audio_track: int = 0):
         super().__init__()
         self.file_path = file_path
         self.manager = manager
         self.num_peaks = num_peaks
+        self.audio_track = audio_track
         self.signals = HiResWaveformWorkerSignals()
 
     def run(self):
         try:
             peaks = self._extract_minmax_peaks()
             if peaks:
-                self.manager._save_hires_peaks_to_cache(self.file_path, peaks)
-                
+                self.manager._save_hires_peaks_to_cache(self.file_path, peaks, self.audio_track)
+
                 # Derivar picos de baja resolución (120 puntos) para miniaturas e íconos
-                lowres = self._derive_lowres_peaks(peaks, 120)
-                self.manager._save_peaks_to_cache(self.file_path, lowres)
-                self.manager._peaks_cache[self.file_path] = lowres
-                
+                # (solo se cachean/emiten para la pista 0, que es la que usan las listas/íconos).
+                if self.audio_track == 0:
+                    lowres = self._derive_lowres_peaks(peaks, 120)
+                    self.manager._save_peaks_to_cache(self.file_path, lowres)
+                    self.manager._peaks_cache[self.file_path] = lowres
+
                 self.signals.finished.emit(self.file_path, peaks)
             else:
                 self.signals.failed.emit(self.file_path)
@@ -168,7 +174,7 @@ class HiResWaveformRunnable(QRunnable):
             logger.error(f"HiResWaveformRunnable: Error {self.file_path}: {e}")
             self.signals.failed.emit(self.file_path)
         finally:
-            self.manager._hires_task_finished(self.file_path)
+            self.manager._hires_task_finished(self.file_path, self.audio_track)
 
     def _derive_lowres_peaks(self, minmax_peaks: list, target_count: int = 120) -> list:
         if not minmax_peaks:
@@ -199,10 +205,13 @@ class HiResWaveformRunnable(QRunnable):
 
         # Alta resolución: 22050 Hz mono para capturar detalle real
         sample_rate = 22050
-        cmd = [
-            ffmpeg_exe, "-y", "-probesize", "32768", "-analyzeduration", "0",
-            "-i", self.file_path, "-vn", "-f", "s16le", "-ac", "1", "-ar", str(sample_rate), "-"
-        ]
+        cmd = [ffmpeg_exe, "-y", "-probesize", "32768", "-analyzeduration", "0", "-i", self.file_path]
+        if self.audio_track:
+            # Pista de audio específica (medios multipista), 0-based igual que QMediaPlayer.audioTracks().
+            cmd += ["-map", f"0:a:{self.audio_track}"]
+        else:
+            cmd += ["-vn"]
+        cmd += ["-f", "s16le", "-ac", "1", "-ar", str(sample_rate), "-"]
 
         startupinfo = None
         if os.name == 'nt':
@@ -249,7 +258,7 @@ class HiResWaveformRunnable(QRunnable):
 
 class WaveformCacheManager(QObject):
     waveform_loaded = Signal(str, list)  # (file_path, peaks) - low res for icons
-    hires_waveform_loaded = Signal(str, list)  # (file_path, minmax_peaks) - high res
+    hires_waveform_loaded = Signal(str, list, int)  # (file_path, minmax_peaks, audio_track) - high res
 
     _instance = None
 
@@ -269,16 +278,22 @@ class WaveformCacheManager(QObject):
         self._pending_files = set()
         self._failed_files = set()
 
-    def _get_hash_key(self, file_path: str) -> str:
-        if file_path in self._hash_cache:
-            return self._hash_cache[file_path]
+    def _get_hash_key(self, file_path: str, audio_track: int = 0) -> str:
+        # La pista 0 (la inmensa mayoría de los medios) conserva exactamente el mismo hash de
+        # siempre, para no invalidar la caché en disco ya existente. Solo las pistas != 0
+        # (medios multipista) reciben un hash distinto, en su propio archivo de caché.
+        cache_lookup_key = file_path if not audio_track else f"{file_path}::t{audio_track}"
+        if cache_lookup_key in self._hash_cache:
+            return self._hash_cache[cache_lookup_key]
         try:
             stat = os.stat(file_path)
             raw = f"{os.path.abspath(file_path)}_{stat.st_mtime}_{stat.st_size}_wf_v2"
         except Exception:
             raw = f"{os.path.abspath(file_path)}_wf_v2"
+        if audio_track:
+            raw += f"_t{audio_track}"
         hash_val = hashlib.sha256(raw.encode('utf-8')).hexdigest()
-        self._hash_cache[file_path] = hash_val
+        self._hash_cache[cache_lookup_key] = hash_val
         return hash_val
 
     def get_cached_peaks(self, file_path: str) -> list | None:
@@ -339,8 +354,11 @@ class WaveformCacheManager(QObject):
         except Exception as e:
             logger.error(f"WaveformCacheManager: Error guardando json {json_path}: {e}")
 
-    def _save_hires_peaks_to_cache(self, file_path: str, peaks: list):
-        hash_key = self._get_hash_key(file_path)
+    def _hires_cache_key(self, file_path: str, audio_track: int = 0) -> str:
+        return f"{file_path}_hires" if not audio_track else f"{file_path}_hires_t{audio_track}"
+
+    def _save_hires_peaks_to_cache(self, file_path: str, peaks: list, audio_track: int = 0):
+        hash_key = self._get_hash_key(file_path, audio_track)
         json_path = os.path.join(CACHE_DIR, f"{hash_key}_hires.json")
         try:
             with open(json_path, "w", encoding="utf-8") as f:
@@ -348,11 +366,11 @@ class WaveformCacheManager(QObject):
         except Exception as e:
             logger.error(f"WaveformCacheManager: Error guardando hires json {json_path}: {e}")
 
-    def get_cached_hires_peaks(self, file_path: str) -> list | None:
-        cache_key = file_path + "_hires"
+    def get_cached_hires_peaks(self, file_path: str, audio_track: int = 0) -> list | None:
+        cache_key = self._hires_cache_key(file_path, audio_track)
         if cache_key in self._peaks_cache:
             return self._peaks_cache[cache_key]
-        hash_key = self._get_hash_key(file_path)
+        hash_key = self._get_hash_key(file_path, audio_track)
         json_path = os.path.join(CACHE_DIR, f"{hash_key}_hires.json")
         if os.path.exists(json_path) and os.path.getsize(json_path) > 0:
             try:
@@ -366,34 +384,36 @@ class WaveformCacheManager(QObject):
                 pass
         return None
 
-    def request_hires_waveform(self, file_path: str, num_peaks: int = 4000):
-        cache_key = file_path + "_hires"
+    def request_hires_waveform(self, file_path: str, num_peaks: int = 4000, audio_track: int = 0):
+        """`audio_track` (0-based) permite pedir la waveform de una pista de audio específica
+        en medios multipista; por defecto usa la primera pista (0), como siempre."""
+        cache_key = self._hires_cache_key(file_path, audio_track)
         if cache_key in self._peaks_cache:
-            self.hires_waveform_loaded.emit(file_path, self._peaks_cache[cache_key])
+            self.hires_waveform_loaded.emit(file_path, self._peaks_cache[cache_key], audio_track)
             return
         if cache_key in self._pending_files:
             return
-        cached = self.get_cached_hires_peaks(file_path)
+        cached = self.get_cached_hires_peaks(file_path, audio_track)
         if cached is not None:
-            self.hires_waveform_loaded.emit(file_path, cached)
+            self.hires_waveform_loaded.emit(file_path, cached, audio_track)
             return
         self._pending_files.add(cache_key)
-        worker = HiResWaveformRunnable(file_path, self, num_peaks)
-        worker.signals.finished.connect(self._on_hires_worker_finished)
-        worker.signals.failed.connect(self._on_hires_worker_failed)
+        worker = HiResWaveformRunnable(file_path, self, num_peaks, audio_track)
+        worker.signals.finished.connect(lambda fp, peaks, at=audio_track: self._on_hires_worker_finished(fp, peaks, at))
+        worker.signals.failed.connect(lambda fp, at=audio_track: self._on_hires_worker_failed(fp, at))
         self.thread_pool.start(worker)
 
-    def _on_hires_worker_finished(self, file_path: str, peaks: list):
-        cache_key = file_path + "_hires"
+    def _on_hires_worker_finished(self, file_path: str, peaks: list, audio_track: int = 0):
+        cache_key = self._hires_cache_key(file_path, audio_track)
         self._peaks_cache[cache_key] = peaks
-        self.hires_waveform_loaded.emit(file_path, peaks)
+        self.hires_waveform_loaded.emit(file_path, peaks, audio_track)
 
-    def _on_hires_worker_failed(self, file_path: str):
-        cache_key = file_path + "_hires"
+    def _on_hires_worker_failed(self, file_path: str, audio_track: int = 0):
+        cache_key = self._hires_cache_key(file_path, audio_track)
         self._failed_files.add(cache_key)
 
-    def _hires_task_finished(self, file_path: str):
-        cache_key = file_path + "_hires"
+    def _hires_task_finished(self, file_path: str, audio_track: int = 0):
+        cache_key = self._hires_cache_key(file_path, audio_track)
         self._pending_files.discard(cache_key)
 
     def _on_worker_finished(self, file_path: str, peaks: list):

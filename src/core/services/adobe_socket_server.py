@@ -209,8 +209,12 @@ class AdobeSocketServer(QThread):
         self._runner = web.AppRunner(self.app, access_log=None)
         self.loop.run_until_complete(self._runner.setup())
         
-        site = web.TCPSite(self._runner, self.host, self.port)
-        self.loop.run_until_complete(site.start())
+        site = web.TCPSite(self._runner, self.host, self.port, reuse_address=True)
+        try:
+            self.loop.run_until_complete(site.start())
+        except OSError as e:
+            logger.warning(f"[Socket.IO] No se pudo vincular el servidor en {self.host}:{self.port} (puerto ocupado o en espera): {e}")
+            return
         
         try:
             self.loop.run_forever()

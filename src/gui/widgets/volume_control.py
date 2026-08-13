@@ -1,8 +1,56 @@
 # src/gui/widgets/volume_control.py
-from PySide6.QtWidgets import QWidget, QHBoxLayout, QPushButton, QSlider
+from PySide6.QtWidgets import QWidget, QHBoxLayout, QPushButton, QSlider, QStyle, QStyleOptionSlider
 from PySide6.QtCore import Qt, Signal, QSize
 from gui.styles import apply_volume_control_style
 from gui.tabs.editing_media.editing_media_icons import get_colored_svg_icon
+
+
+class ClickJumpSlider(QSlider):
+    """
+    QSlider personalizado que salta inmediatamente a la posición donde se hace clic o arrastra,
+    en lugar de avanzar por bloques (pageStep).
+    """
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            val = self._calc_value_from_pos(event.position().x() if hasattr(event, 'position') else event.x())
+            self.setValue(val)
+            event.accept()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if event.buttons() & Qt.LeftButton:
+            val = self._calc_value_from_pos(event.position().x() if hasattr(event, 'position') else event.x())
+            self.setValue(val)
+            event.accept()
+        super().mouseMoveEvent(event)
+
+    def wheelEvent(self, event):
+        delta = event.angleDelta().y()
+        step = 5 if delta > 0 else -5
+        self.setValue(self.value() + step)
+        event.accept()
+
+    def _calc_value_from_pos(self, x_pos):
+        opt = QStyleOptionSlider()
+        self.initStyleOption(opt)
+        sr = self.style().subControlRect(QStyle.CC_Slider, opt, QStyle.SC_SliderHandle, self)
+        
+        handle_width = sr.width() if sr.isValid() and sr.width() > 0 else 10
+        half_handle = handle_width / 2.0
+        total_width = self.width()
+        
+        if total_width <= handle_width:
+            return self.minimum()
+            
+        usable_width = total_width - handle_width
+        clamped_x = max(half_handle, min(float(x_pos), total_width - half_handle))
+        ratio = (clamped_x - half_handle) / usable_width
+        
+        if self.invertedAppearance():
+            ratio = 1.0 - ratio
+            
+        val = round(self.minimum() + ratio * (self.maximum() - self.minimum()))
+        return max(self.minimum(), min(self.maximum(), val))
 
 
 class VolumeControlWidget(QWidget):
@@ -30,7 +78,7 @@ class VolumeControlWidget(QWidget):
         layout.addWidget(self.btn_mute)
 
         # 2. Slider de Volumen
-        self.slider = QSlider(Qt.Horizontal, self)
+        self.slider = ClickJumpSlider(Qt.Horizontal, self)
         self.slider.setRange(0, 100)
         self.slider.setFixedWidth(slider_width)
         self.slider.setValue(initial_volume)

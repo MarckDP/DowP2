@@ -252,9 +252,15 @@ class EditorStatusCornerWidget(QWidget):
             # Launch app
             if exe_path and os.path.exists(exe_path):
                 from core.logger.logger_manager import logger
-                logger.info(f"Lanzando: {exe_path}")
+                from PySide6.QtCore import QProcess
+                logger.info(f"Lanzando editor (modo desvinculado): {exe_path}")
                 try:
-                    subprocess.Popen(exe_path)
+                    success = QProcess.startDetached(exe_path)
+                    if not success:
+                        if hasattr(os, 'startfile'):
+                            os.startfile(exe_path)
+                        else:
+                            subprocess.Popen(exe_path, creationflags=getattr(subprocess, 'DETACHED_PROCESS', 0))
                 except Exception as e:
                     logger.error(f"Error lanzando {app_id}: {e}")
             else:
@@ -324,17 +330,17 @@ class MainWindow(QMainWindow):
         self.tab_single = AdvancedProcessTab()
         self.tabs.addTab(self.tab_single, self.tr("Proceso Avanzado"))
 
-        # 3. Herramientas de Imagen
+        # 3. Editor de Imagen
         self.tab_image = ImageToolsTab()
-        self.tabs.addTab(self.tab_image, self.tr("Herramientas de Imagen"))
+        self.tabs.addTab(self.tab_image, self.tr("Editor de Imagen"))
 
-        # 4. Herramientas de Video
+        # 4. Herramientas Multimedia
         self.tab_video = VideoToolsTab()
-        self.tabs.addTab(self.tab_video, self.tr("Herramientas de Video"))
+        self.tabs.addTab(self.tab_video, self.tr("Herramientas Multimedia"))
 
-        # 5. Medios de Edición
+        # 5. Gestor de Medios
         self.tab_editing = EditingMediaTab()
-        self.tabs.addTab(self.tab_editing, self.tr("Medios de Edición"))
+        self.tabs.addTab(self.tab_editing, self.tr("Gestor de Medios"))
 
         # 6. Ajustes (oculta de la barra de pestañas: se accede desde el botón de Ajustes
         # en la esquina superior derecha, que reemplazó al antiguo botón de integraciones)

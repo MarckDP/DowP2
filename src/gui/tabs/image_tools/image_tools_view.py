@@ -6,6 +6,6 @@ class ImageToolsTab(QWidget):
     def __init__(self):
         super().__init__()
         layout = QVBoxLayout(self)
-        label = QLabel(self.tr("Herramientas de Imagen (Próximamente)"))
+        label = QLabel(self.tr("Editor de Imagen (Próximamente)"))
         label.setAlignment(Qt.AlignCenter)
         layout.addWidget(label)

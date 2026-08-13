@@ -258,15 +258,44 @@ class DownloaderMaster:
                         
                         if fragment_mode == FragmentState.PRECISE:
                             ydl_opts['force_keyframes_at_cuts'] = True
-                            logger.info(f"DownloaderMaster: Fragmento INDIVIDUAL PRECISO: {ranges} | Sufijo: {suffix}")
+                            try:
+                                from core.utils.hardware_detector import detect_hardware
+                                hw_info = detect_hardware()
+                                pref_enc = hw_info.get("preferred_encoder")
+                                if pref_enc and pref_enc != "libx264":
+                                    gpu_args = ["-c:v", pref_enc]
+                                    if pref_enc == "h264_nvenc":
+                                        gpu_args.extend(["-preset", "p4"])
+                                    elif pref_enc == "h264_qsv":
+                                        gpu_args.extend(["-preset", "veryfast"])
+
+                                    # 1. Inyectar en descargador external (FFmpegFD usado por download_ranges)
+                                    ext_args = ydl_opts.get("external_downloader_args", {})
+                                    if isinstance(ext_args, dict):
+                                        ext_args["ffmpeg"] = list(gpu_args)
+                                    else:
+                                        ext_args = {"ffmpeg": list(gpu_args)}
+                                    ydl_opts["external_downloader_args"] = ext_args
+
+                                    # 2. Inyectar en post-procesadores
+                                    post_args = ydl_opts.get("postprocessor_args", {})
+                                    if isinstance(post_args, dict):
+                                        post_args["ffmpeg"] = list(gpu_args)
+                                    else:
+                                        post_args = {"ffmpeg": list(gpu_args)}
+                                    ydl_opts["postprocessor_args"] = post_args
+
+                                    logger.info(f"DownloaderMaster: Corte Preciso acelerado por GPU ({pref_enc}): {gpu_args}")
+                                else:
+                                    logger.info(f"DownloaderMaster: Fragmento INDIVIDUAL PRECISO (CPU libx264): {ranges}")
+                            except Exception as hw_err:
+                                logger.warning(f"DownloaderMaster: No se pudo inyectar GPU encoder: {hw_err}")
                         else:
                             logger.info(f"DownloaderMaster: Fragmento INDIVIDUAL NORMAL: {ranges} | Sufijo: {suffix}")
                     except Exception as e:
                         logger.error(f"DownloaderMaster: Error configurando rango individual: {e}")
             
             elif fragment_mode == FragmentState.PRECISE:
-                # Este caso solo debería ocurrir si alguien llama a la API con múltiples fragmentos
-                # y modo PRECISE sin pasar por el bucle de download(). Mantenemos compatibilidad de unión.
                 try:
                     from yt_dlp.utils import download_range_func
                     ranges = []
@@ -274,6 +303,16 @@ class DownloaderMaster:
                         ranges.append((start_ms / 1000.0, end_ms / 1000.0))
                     ydl_opts['download_ranges'] = download_range_func(None, ranges)
                     ydl_opts['force_keyframes_at_cuts'] = True
+                    try:
+                        from core.utils.hardware_detector import detect_hardware
+                        hw_info = detect_hardware()
+                        pref_enc = hw_info.get("preferred_encoder")
+                        if pref_enc and pref_enc != "libx264":
+                            gpu_args = ["-c:v", pref_enc]
+                            ydl_opts["external_downloader_args"] = {"ffmpeg": list(gpu_args)}
+                            ydl_opts["postprocessor_args"] = {"ffmpeg": list(gpu_args)}
+                    except Exception:
+                        pass
                     logger.info(f"DownloaderMaster: Unión de {len(fragments)} fragmentos (Modo PRECISE forzado)")
                 except Exception as e:
                     logger.error(f"DownloaderMaster: Error en unión PRECISE: {e}")

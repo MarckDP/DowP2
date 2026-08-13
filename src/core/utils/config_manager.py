@@ -48,6 +48,8 @@ def get_config():
         },
         "pot_provider": "bgutil",       # "bgutil" | "wpc" | "none"
         "pot_wpc_browser_path": "",     # ruta al ejecutable Chromium; vacío = auto-detect
+        "max_concurrent_downloads": 3,  # Número máximo de descargas simultáneas (1 a 10)
+        "hardware_info": {},            # Información del sistema y GPU detectada
     }
     for k, v in defaults.items():
         if k not in _cached_config:

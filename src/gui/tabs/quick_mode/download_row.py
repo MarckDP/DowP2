@@ -253,8 +253,14 @@ class QuickDownloadRow(QFrame):
         self._is_completed = True
         if filepath:
             self.downloaded_filepath = filepath
-        if self.downloaded_filepath and os.path.exists(self.downloaded_filepath):
-            self.btn_reveal.show()
+        if self.downloaded_filepath:
+            if os.path.exists(self.downloaded_filepath):
+                self.btn_reveal.show()
+            else:
+                # Si las extensiones temporales cambiaron al fusionar con ffmpeg, verificar el directorio destino
+                parent = os.path.dirname(self.downloaded_filepath)
+                if parent and os.path.exists(parent):
+                    self.btn_reveal.show()
 
     def mark_error(self):
         """Marca este item como error."""

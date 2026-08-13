@@ -33,7 +33,9 @@ class QuickDownloadController(QObject):
         self.last_request_data = None
         self.last_downloaded_filepath = None
         
-        # Atributos de seguimiento independientes para la descarga actual
+        # Atributos de seguimiento para las descargas
+        self.active_workers = []
+        self.pending_tasks = []
         self.current_item_rows = []
         self.current_item_keys = []
         self.current_item_pos = 0
@@ -121,9 +123,7 @@ class QuickDownloadController(QObject):
                 playlist_items=",".join(str(i + 1) for i in selected),
             )
             
-            # Sobrescribir opciones con las del diálogo de selección de playlist
             req["mode"] = dialog.result_data.get("playlist_mode") or req["mode"]
-            # Re-evaluar formato si cambió el modo/calidad de la playlist
             from core.ytdlp_logic.format_selectors import quick_format_selector
             req["format_selector"] = quick_format_selector(req["mode"], dialog.result_data.get("playlist_quality") or quality)
 
@@ -158,7 +158,6 @@ class QuickDownloadController(QObject):
     def open_cut_dialog_and_download(self, url, data, mode, quality, output_path, speed_limit_val,
                                      chk_thumb_file_checked, chk_thumb_only_checked):
         """Abre el diálogo de fragmento de corte."""
-        # 1. Buscar la miniatura del video
         thumb_url = None
         thumbs = data.get("thumbnails") or []
         valid_thumbs = [t for t in thumbs if t.get("url")]
@@ -168,7 +167,6 @@ class QuickDownloadController(QObject):
         else:
             thumb_url = data.get("thumbnail")
 
-        # Descargar miniatura de manera síncrona
         pixmap = None
         if thumb_url:
             try:
@@ -181,7 +179,6 @@ class QuickDownloadController(QObject):
             except Exception as e:
                 logger.warning(f"QuickDownloadController: No se pudo descargar miniatura para FragmentDialog: {e}")
 
-        # 2. Encontrar stream_url para la vista previa del reproductor
         formats = data.get("formats") or []
         preview_format = None
         for f in formats:
@@ -197,7 +194,6 @@ class QuickDownloadController(QObject):
                     break
         stream_url = preview_format.get("url", "") if preview_format else ""
 
-        # 3. Lanzar FragmentDialog con un overlay semitransparente sobre la ventana principal
         from gui.dialogs.fragment_dialog import FragmentDialog
         
         dialog = FragmentDialog(
@@ -231,13 +227,11 @@ class QuickDownloadController(QObject):
             except Exception:
                 pass
 
-        # 4. Si el usuario guarda el fragmento
         if result:
             frag_data = dialog.get_fragments_data()
             selected_fragments = frag_data["fragments"]
             fragment_mode = frag_data["mode"]
             
-            # Construimos la petición de descarga
             req = build_quick_request_data(
                 url=url,
                 title=data.get("title", ""),
@@ -252,7 +246,6 @@ class QuickDownloadController(QObject):
             req["selected_fragments"] = selected_fragments
             req["fragment_mode"] = fragment_mode
             
-            self.is_downloading = True
             self.busy_state_changed.emit(False, "")
             self.download_text_changed.emit(self.tr("Descargar") if hasattr(self, "tr") else "Descargar")
             
@@ -262,37 +255,61 @@ class QuickDownloadController(QObject):
             self.progress_updated.emit(0, self.tr("Recorte cancelado") if hasattr(self, "tr") else "Recorte cancelado", "wait")
 
     def start_worker(self, request_data, selected_entries=None, selected_indices=None):
-        """Inicia el DownloadWorker."""
-        self.cancellation_event.clear()
+        """Inicia un DownloadWorker respectando la concurrencia global."""
+        from core.utils.config_manager import get_config
+        max_concurrent = get_config().get("max_concurrent_downloads", 3)
+
         self.last_request_data = request_data.copy()
         self.last_downloaded_filepath = None
         
-        # Agregamos las nuevas filas acumulativamente
-        self.current_item_rows, self.current_item_keys = self.tab.activity_panel.add_activity_rows(
+        item_rows, item_keys = self.tab.activity_panel.add_activity_rows(
             selected_entries or [], selected_indices or []
         )
-        self.current_item_pos = 1 if self.current_item_rows else 0
-        self.completed_items = 0
-        
-        self.download_worker = DownloadWorker(request_data, self.cancellation_event)
-        self.download_worker.progress.connect(self._on_download_progress)
-        self.download_worker.finished.connect(self._on_download_finished)
-        
+        self.current_item_rows.extend(item_rows)
+        self.current_item_keys.extend(item_keys)
+
+        canc_event = threading.Event()
+        task_data = {
+            "request_data": request_data.copy(),
+            "item_rows": item_rows,
+            "item_keys": item_keys,
+            "cancellation_event": canc_event,
+        }
+
+        if len(self.active_workers) < max_concurrent:
+            self._start_task_worker(task_data)
+        else:
+            for row in item_rows:
+                row.update_progress(0, status=self.tr("En cola") if hasattr(self, "tr") else "En cola")
+            self.pending_tasks.append(task_data)
+            self.is_downloading = True
+            self.progress_updated.emit(0, self.tr("En cola...") if hasattr(self, "tr") else "En cola...", "wait")
+
+    def _start_task_worker(self, task_data):
+        worker = DownloadWorker(task_data["request_data"], task_data["cancellation_event"])
+        task_data["worker"] = worker
+        self.download_worker = worker
+
+        worker.progress.connect(lambda d, task=task_data: self._on_task_progress(d, task))
+        worker.finished.connect(lambda success, msg, task=task_data: self._on_task_finished(success, msg, task))
+
+        self.active_workers.append(task_data)
         self.is_downloading = True
         self.controls_state_changed.emit(False)
         self.download_text_changed.emit(self.tr("Descargar") if hasattr(self, "tr") else "Descargar")
         self.progress_updated.emit(0, self.tr("Iniciando descarga...") if hasattr(self, "tr") else "Iniciando descarga...", "running")
-        
-        self.download_worker.start()
+        worker.start()
 
     def cancel_download(self):
-        """Cancela la descarga activa en curso."""
-        if self.download_worker:
-            self.cancellation_event.set()
+        """Cancela todas las descargas activas y limpia las pendientes."""
+        self.pending_tasks.clear()
+        for task in list(self.active_workers):
+            task["cancellation_event"].set()
+        self.active_workers.clear()
         self.is_downloading = False
         self.controls_state_changed.emit(True)
         self.download_text_changed.emit(self.tr("Descargar") if hasattr(self, "tr") else "Descargar")
-        self.progress_updated.emit(0, self.tr("Cancelando descarga...") if hasattr(self, "tr") else "Cancelando descarga...", "wait")
+        self.progress_updated.emit(0, self.tr("Descargas canceladas") if hasattr(self, "tr") else "Descargas canceladas", "wait")
 
     def _find_actual_downloaded_file(self, filepath):
         """Busca el archivo real descargado ignorando extensiones temporales."""
@@ -313,7 +330,6 @@ class QuickDownloadController(QObject):
             if base_name.endswith(temp_ext):
                 base_name = base_name[:-len(temp_ext)]
                 
-        # Handle HLS temp files like .fhls-761
         import re
         base_name = re.sub(r'\.f[a-zA-Z0-9-]+$', '', base_name)
                 
@@ -331,7 +347,7 @@ class QuickDownloadController(QObject):
             
         return best_match
 
-    def _on_download_progress(self, data):
+    def _on_task_progress(self, data, task_data):
         if data.get("status") == "downloading":
             from core.ytdlp_logic.analyzer import strip_ansi_codes
             p_str = strip_ansi_codes(data.get("_percent_str", "0%")).replace("%", "").strip()
@@ -342,10 +358,7 @@ class QuickDownloadController(QObject):
             speed = strip_ansi_codes(data.get("_speed_str", "")).strip() or "..."
             eta = strip_ansi_codes(data.get("_eta_str", "")).strip() or "..."
             
-            row_idx = self._resolve_progress_row(data)
-            if row_idx is not None and 0 <= row_idx < len(self.current_item_rows):
-                self.current_item_pos = row_idx + 1
-                row = self.current_item_rows[row_idx]
+            for row in task_data["item_rows"]:
                 row.update_progress(
                     val,
                     info=f"{speed} - ETA: {eta}",
@@ -354,83 +367,66 @@ class QuickDownloadController(QObject):
                 info = data.get("info_dict")
                 if info:
                     row.update_metadata_from_dict(info)
-                    
-            total = max(1, len(self.current_item_rows))
-            global_percent = ((max(0, self.current_item_pos - 1) + (val / 100.0)) / total) * 100.0
-            
-            msg = (self.tr("{} de {}").format(max(1, self.current_item_pos), total)
-                   if hasattr(self, "tr") else f"{max(1, self.current_item_pos)} de {total}")
-            self.progress_updated.emit(int(global_percent), msg, "downloading")
+            self.progress_updated.emit(int(val), f"{int(val)}% - {speed}", "downloading")
             
         elif data.get("status") == "finished":
             filepath = data.get("filename")
             if filepath:
                 self.last_downloaded_filepath = filepath
-            row_idx = self._resolve_progress_row(data)
-            if row_idx is not None and 0 <= row_idx < len(self.current_item_rows):
-                row = self.current_item_rows[row_idx]
+            for row in task_data["item_rows"]:
                 row.update_progress(100, status=self.tr("Procesando") if hasattr(self, "tr") else "Procesando")
                 if filepath:
                     row.downloaded_filepath = filepath
                 info = data.get("info_dict")
                 if info:
                     row.update_metadata_from_dict(info)
-                self.completed_items = max(self.completed_items, row_idx + 1)
-                self.current_item_pos = min(len(self.current_item_rows), row_idx + 2)
-                
-            total = max(1, len(self.current_item_rows))
-            msg = (self.tr("{} de {}").format(min(total, self.completed_items + 1), total)
-                   if hasattr(self, "tr") else f"{min(total, self.completed_items + 1)} de {total}")
-            self.progress_updated.emit(
-                int((self.completed_items / total) * 100),
-                msg,
-                "downloading"
-            )
 
-    def _resolve_progress_row(self, data):
-        if len(self.current_item_rows) <= 1:
-            return 0 if self.current_item_rows else None
-        info = data.get("info_dict") or {}
-        playlist_index = info.get("playlist_index")
-        if playlist_index in self.current_item_keys:
-            return self.current_item_keys.index(playlist_index)
-        return max(0, min(len(self.current_item_rows) - 1, self.current_item_pos - 1))
-
-    def _on_download_finished(self, success, message):
-        self.is_downloading = False
-        self.controls_state_changed.emit(True)
-        self.download_text_changed.emit(self.tr("Descargar") if hasattr(self, "tr") else "Descargar")
-        
-        if success:
-            from core.services.editor_integration_manager import EditorIntegrationManager
-            editor_mgr = EditorIntegrationManager.get_instance()
+    def _on_task_finished(self, success, message, task_data):
+        if task_data in self.active_workers:
+            self.active_workers.remove(task_data)
             
-            for row in self.current_item_rows:
+        if task_data.get("worker"):
+            task_data["worker"].deleteLater()
+
+        from core.services.editor_integration_manager import EditorIntegrationManager
+        editor_mgr = EditorIntegrationManager.get_instance()
+
+        for row in task_data["item_rows"]:
+            if success:
                 row.update_progress(100, status=self.tr("Completado") if hasattr(self, "tr") else "Completado")
-                row.mark_completed()
-                
-                # Enviar al editor si corresponde
-                if editor_mgr and editor_mgr.is_auto_send_enabled and hasattr(row, 'downloaded_filepath') and row.downloaded_filepath:
+                actual_path = None
+                if hasattr(row, 'downloaded_filepath') and row.downloaded_filepath:
                     actual_path = self._find_actual_downloaded_file(row.downloaded_filepath)
-                    editor_mgr.process_raw_download(actual_path or row.downloaded_filepath, self.last_request_data)
+                if not actual_path and self.last_downloaded_filepath:
+                    actual_path = self._find_actual_downloaded_file(self.last_downloaded_filepath)
                     
-            title = self.last_request_data.get("title", "").strip()
-            output_dir = self.last_request_data.get("output_path", "")
+                row.mark_completed(filepath=actual_path or getattr(row, 'downloaded_filepath', None))
+                
+                if editor_mgr and editor_mgr.is_auto_send_enabled and hasattr(row, 'downloaded_filepath') and row.downloaded_filepath:
+                    editor_mgr.process_raw_download(actual_path or row.downloaded_filepath, task_data["request_data"])
+            else:
+                row.update_progress(0, status=self.tr("Error") if hasattr(self, "tr") else "Error")
+                row.mark_error()
+
+        if success:
+            title = task_data["request_data"].get("title", "").strip()
+            output_dir = task_data["request_data"].get("output_path", "")
             if title and output_dir:
-                keep_thumb = self.last_request_data.get("download_thumbnail_file", False)
+                keep_thumb = task_data["request_data"].get("download_thumbnail_file", False)
                 CleanupManager.cleanup_ytdlp_temp_files(output_dir, title, keep_thumbnail=keep_thumb)
                 CleanupManager.deferred_cleanup(output_dir, title, keep_thumbnail=keep_thumb)
-            self.progress_updated.emit(100, self.tr("Descarga completada con éxito") if hasattr(self, "tr") else "Descarga completada con éxito", "done")
-            logger.info("QuickDownloadController: Descarga finalizada con éxito.")
-        else:
-            if self.current_item_rows:
-                idx = max(0, min(len(self.current_item_rows) - 1, self.current_item_pos - 1))
-                self.current_item_rows[idx].update_progress(0, status=self.tr("Error") if hasattr(self, "tr") else "Error")
-                self.current_item_rows[idx].mark_error()
-            self.progress_updated.emit(0, self.tr(f"Error: {message}") if hasattr(self, "tr") else f"Error: {message}", "error")
-            logger.error(f"QuickDownloadController: Error en descarga: {message}")
-            
-        if self.download_worker:
-            self.download_worker.deleteLater()
-        self.download_worker = None
+
+        # Despachar siguiente tarea si existe
+        from core.utils.config_manager import get_config
+        max_concurrent = get_config().get("max_concurrent_downloads", 3)
+        if self.pending_tasks and len(self.active_workers) < max_concurrent:
+            next_task = self.pending_tasks.pop(0)
+            self._start_task_worker(next_task)
+
+        if not self.active_workers and not self.pending_tasks:
+            self.is_downloading = False
+            self.controls_state_changed.emit(True)
+            self.download_text_changed.emit(self.tr("Descargar") if hasattr(self, "tr") else "Descargar")
+            self.progress_updated.emit(100, self.tr("Descargas completadas") if hasattr(self, "tr") else "Descargas completadas", "done")
+
         self.download_finished_signal.emit(success, message)

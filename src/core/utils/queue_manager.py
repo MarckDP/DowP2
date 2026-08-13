@@ -37,10 +37,41 @@ class Job:
         self.final_filepath = None
         self.created_at = time.time()
 
+class SingleJobWorker(QThread):
+    """Hilo individual de descarga para un trabajo en la cola."""
+    finished_job = Signal(str, str) # job_id, status
+
+    def __init__(self, job, queue_worker):
+        super().__init__()
+        self.job = job
+        self.queue_worker = queue_worker
+        self.cancellation_event = threading.Event()
+        self.downloader = None
+
+    def cancel(self):
+        self.cancellation_event.set()
+        if self.downloader:
+            self.downloader.cancel_download()
+
+    def run(self):
+        try:
+            if self.job.job_type == "DOWNLOAD":
+                self.queue_worker._execute_download(self.job, self.cancellation_event, self)
+            elif self.job.job_type == "PLAYLIST":
+                self.queue_worker._execute_playlist(self.job, self.cancellation_event, self)
+        except Exception as e:
+            import traceback
+            logger.error(f"SingleJobWorker: Error inesperado en job {self.job.job_id}: {traceback.format_exc()}")
+            self.job.status = JobStatus.FAILED
+            self.job.error_message = str(e)
+            self.queue_worker.job_status_changed.emit(self.job.job_id, JobStatus.FAILED)
+        finally:
+            self.finished_job.emit(self.job.job_id, self.job.status)
+
+
 class QueueWorker(QThread):
     """
-    Hilo de trabajo secundario encargado de procesar la cola de trabajos secuencialmente.
-    Esto previene el congelamiento de la interfaz principal de la aplicación.
+    Hilo despachador de la cola encargado de gestionar trabajos concurrentes.
     """
     job_status_changed = Signal(str, str)             # job_id, status
     job_progress_changed = Signal(str, float, str, str) # job_id, progress%, speed, eta
@@ -51,52 +82,60 @@ class QueueWorker(QThread):
         self.manager = manager
         self._is_running = True
         self._cancellation_event = threading.Event()
-        self._current_downloader = None
+        self._active_workers = {}
+        self._workers_mutex = QRecursiveMutex()
 
     def stop(self):
-        """Detiene el hilo de forma segura."""
+        """Detiene el despachador y sus hilos de descarga activos."""
         self._is_running = False
         self._cancellation_event.set()
-        if self._current_downloader:
-            self._current_downloader.cancel_download()
+        with QMutexLocker(self._workers_mutex):
+            for worker in list(self._active_workers.values()):
+                worker.cancel()
         self.wait(1000)
 
     def run(self):
-        logger.info("QueueWorker: Hilo de cola iniciado.")
+        logger.info("QueueWorker: Hilo despachador de cola iniciado.")
+        from core.utils.config_manager import get_config
         while self._is_running:
-            # 1. Comprobar si está pausado
             if self.manager.is_paused():
-                time.sleep(0.5)
+                time.sleep(0.3)
                 continue
 
-            # 2. Obtener el siguiente trabajo pendiente
-            job = self.manager._get_next_pending_job()
-            if not job:
-                # No hay más trabajos pendientes, pausar el despachador
-                self.manager.pause_queue()
-                self.finished_all.emit()
-                time.sleep(0.5)
-                continue
+            max_concurrent = get_config().get("max_concurrent_downloads", 3)
+            
+            with QMutexLocker(self._workers_mutex):
+                active_count = len(self._active_workers)
 
-            # 3. Procesar según tipo de trabajo
-            try:
-                if job.job_type == "DOWNLOAD":
-                    self._execute_download(job)
-                elif job.job_type == "PLAYLIST":
-                    self._execute_playlist(job)
+            if active_count < max_concurrent:
+                job = self.manager._get_next_pending_job()
+                if job:
+                    job.status = JobStatus.RUNNING
+                    self.job_status_changed.emit(job.job_id, JobStatus.RUNNING)
+                    
+                    worker = SingleJobWorker(job, self)
+                    worker.finished_job.connect(self._on_single_job_finished)
+                    with QMutexLocker(self._workers_mutex):
+                        self._active_workers[job.job_id] = worker
+                    worker.start()
+                    continue
                 else:
-                    logger.warning(f"QueueWorker: Tipo de trabajo desconocido: {job.job_type}")
-                    job.status = JobStatus.FAILED
-                    job.error_message = f"Tipo de trabajo desconocido: {job.job_type}"
-                    self.job_status_changed.emit(job.job_id, JobStatus.FAILED)
-            except Exception as e:
-                import traceback
-                logger.error(f"QueueWorker: Error inesperado en job {job.job_id}: {traceback.format_exc()}")
-                job.status = JobStatus.FAILED
-                job.error_message = str(e)
-                self.job_status_changed.emit(job.job_id, JobStatus.FAILED)
+                    with QMutexLocker(self._workers_mutex):
+                        if len(self._active_workers) == 0:
+                            self.manager.pause_queue()
+                            self.finished_all.emit()
+            time.sleep(0.3)
 
-            time.sleep(0.2)
+    def _on_single_job_finished(self, job_id, status):
+        with QMutexLocker(self._workers_mutex):
+            if job_id in self._active_workers:
+                worker = self._active_workers.pop(job_id)
+                worker.deleteLater()
+
+    def cancel_current_job(self):
+        with QMutexLocker(self._workers_mutex):
+            for worker in list(self._active_workers.values()):
+                worker.cancel()
 
     def _download_best_thumb(self, entry, output_dir, title, force_png=False):
         """
@@ -161,14 +200,18 @@ class QueueWorker(QThread):
             logger.warning(f"QueueWorker: Falló descarga de miniatura para '{title}': {e}")
             return None
 
-    def _execute_download(self, job):
+    def _execute_download(self, job, cancellation_event=None, worker_ref=None):
         """Ejecuta una descarga usando DownloaderMaster de forma sincrónica dentro de este hilo."""
-        self._cancellation_event.clear()
+        if cancellation_event is None:
+            cancellation_event = self._cancellation_event
+
         job.status = JobStatus.RUNNING
         self.job_status_changed.emit(job.job_id, JobStatus.RUNNING)
 
         from core.ytdlp_logic.downloader_master import DownloaderMaster
-        self._current_downloader = DownloaderMaster()
+        downloader = DownloaderMaster()
+        if worker_ref:
+            worker_ref.downloader = downloader
 
         # Generar un progress callback que emita la señal Qt de progreso
         def progress_callback(d):
@@ -253,10 +296,10 @@ class QueueWorker(QThread):
                 except Exception:
                     pass
 
-        success, message = self._current_downloader.download(
+        success, message = downloader.download(
             config_to_use,
             progress_callback=progress_callback,
-            cancellation_event=self._cancellation_event
+            cancellation_event=cancellation_event
         )
 
         # RESTAURAR GUARDIA DE MEMORIA
@@ -294,8 +337,10 @@ class QueueWorker(QThread):
                 job.error_message = strip_ansi_codes(message) if message else message
                 self.job_status_changed.emit(job.job_id, JobStatus.FAILED)
 
-    def _execute_playlist(self, job):
-        self._cancellation_event.clear()
+    def _execute_playlist(self, job, cancellation_event=None, worker_ref=None):
+        if cancellation_event is None:
+            cancellation_event = self._cancellation_event
+
         job.status = JobStatus.RUNNING
         job.progress = 0.0
         self.job_status_changed.emit(job.job_id, JobStatus.RUNNING)
@@ -314,7 +359,8 @@ class QueueWorker(QThread):
 
         from core.ytdlp_logic.downloader_master import DownloaderMaster
         master = DownloaderMaster()
-        self._current_downloader = master
+        if worker_ref:
+            worker_ref.downloader = master
 
         playlist_title = self._sanitize_filename(job.config.get("title") or "Playlist")
         base_output = job.config.get("output_path") or self._default_output_path()
@@ -402,7 +448,7 @@ class QueueWorker(QThread):
             success, message = master.download(
                 child_data,
                 progress_callback=progress_callback,
-                cancellation_event=self._cancellation_event
+                cancellation_event=cancellation_event
             )
             
             if success:
@@ -675,6 +721,13 @@ class QueueManager(QObject):
 
     def _on_worker_progress_changed(self, job_id: str, percent: float, speed: str, eta: str):
         self.job_progress_changed.emit(job_id, percent, speed, eta)
+
+    def update_max_concurrent_downloads(self, value: int):
+        logger.info(f"QueueManager: Límite de descargas simultáneas actualizado a: {value}")
+
+    @classmethod
+    def get_instance(cls):
+        return get_queue_manager()
 
     def shutdown(self):
         """Apaga el hilo de forma segura al cerrar la app."""

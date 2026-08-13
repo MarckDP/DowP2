@@ -1,8 +1,9 @@
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QScrollArea
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QScrollArea, QSpinBox
 from PySide6.QtCore import Qt
 from core.utils.i18n import logger
 from core.utils.config_manager import get_config, save_config
 from gui.widgets.toggle_switch import ToggleSwitch
+from gui.styles import get_theme_token
 
 
 class DownloadsPage(QWidget):
@@ -114,6 +115,35 @@ class DownloadsPage(QWidget):
         self.imp_row.addWidget(self.imp_switch)
         self.content_layout.addLayout(self.imp_row)
 
+        # 5. SpinBox: Descargas simultáneas
+        self.concurrent_row = QHBoxLayout()
+        self.concurrent_vbox = QVBoxLayout()
+        self.concurrent_label = QLabel(self.tr("Descargas simultáneas"))
+        self.concurrent_label.setObjectName("settingsLabel")
+        self.concurrent_desc = QLabel(self.tr("Número máximo de descargas que se procesarán en paralelo a la vez (1 a 10)."))
+        self.concurrent_desc.setStyleSheet("color: #888888; font-size: 11px;")
+        self.concurrent_vbox.addWidget(self.concurrent_label)
+        self.concurrent_vbox.addWidget(self.concurrent_desc)
+        
+        self.concurrent_spin = QSpinBox()
+        self.concurrent_spin.setRange(1, 10)
+        self.concurrent_spin.setFixedWidth(70)
+        self.concurrent_spin.setFixedHeight(28)
+        self.concurrent_spin.setStyleSheet(f"""
+            QSpinBox {{
+                background-color: {get_theme_token('fondo_secundario', '#1e1e1e')};
+                color: {get_theme_token('texto_principal', '#ffffff')};
+                border: 1px solid {get_theme_token('borde', '#2d2d2d')};
+                border-radius: 6px;
+                padding: 2px 6px;
+                font-weight: bold;
+            }}
+        """)
+        self.concurrent_row.addLayout(self.concurrent_vbox)
+        self.concurrent_row.addStretch()
+        self.concurrent_row.addWidget(self.concurrent_spin)
+        self.content_layout.addLayout(self.concurrent_row)
+
         # Finalizar setup del scroll area
         self.scroll_area.setWidget(self.scroll_content)
         self.main_layout.addWidget(self.scroll_area)
@@ -126,6 +156,7 @@ class DownloadsPage(QWidget):
         self.thumb_switch.toggled.connect(self.on_embed_thumbnail_toggled)
         self.sponsors_switch.toggled.connect(self.on_remove_sponsors_toggled)
         self.imp_switch.toggled.connect(self.on_impersonate_toggled)
+        self.concurrent_spin.valueChanged.connect(self.on_concurrent_downloads_changed)
 
     def update_switch_colors(self):
         config = get_config()
@@ -141,6 +172,7 @@ class DownloadsPage(QWidget):
         self.thumb_switch.setChecked(config.get("embed_thumbnail", True))
         self.sponsors_switch.setChecked(config.get("remove_sponsors", False))
         self.imp_switch.setChecked(config.get("use_impersonate", False))
+        self.concurrent_spin.setValue(config.get("max_concurrent_downloads", 3))
 
     def on_embed_metadata_toggled(self, checked):
         if self._is_loading: return
@@ -169,3 +201,15 @@ class DownloadsPage(QWidget):
         config["use_impersonate"] = checked
         save_config(config)
         logger.info(f"DownloadsPage: Uso de Impersonate cambiado a: {checked}")
+
+    def on_concurrent_downloads_changed(self, value):
+        if self._is_loading: return
+        config = get_config()
+        config["max_concurrent_downloads"] = value
+        save_config(config)
+        logger.info(f"DownloadsPage: Descargas simultáneas cambiadas a: {value}")
+        from core.utils.queue_manager import QueueManager
+        qm = QueueManager.get_instance() if hasattr(QueueManager, "get_instance") else None
+        if qm:
+            qm.update_max_concurrent_downloads(value)
+

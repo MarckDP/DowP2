@@ -11,6 +11,7 @@ from .pages.cookies_page import CookiesPage
 from .pages.deps_page import DependenciesPage
 from .pages.labels_page import LabelsPage
 from .pages.integrations_page import IntegrationsPage
+from .pages.system_page import SystemPage
 
 class SidebarButton(QPushButton):
     """Custom button for sidebar to handle styling via objectName and QSS"""
@@ -66,6 +67,7 @@ class SettingsTab(QWidget):
         self.btn_deps = SidebarButton(self.tr("Dependencias"))
         self.btn_labels = SidebarButton(self.tr("Etiquetas"))
         self.btn_integrations = SidebarButton(self.tr("Integraciones"))
+        self.btn_system = SidebarButton(self.tr("Acerca de"))
         self.btn_models = SidebarButton(self.tr("Modelos"))
         self.btn_console = SidebarButton(self.tr("Consola"))
 
@@ -77,8 +79,9 @@ class SettingsTab(QWidget):
         self.btn_group.addButton(self.btn_deps, 5)
         self.btn_group.addButton(self.btn_labels, 6)
         self.btn_group.addButton(self.btn_integrations, 7)
-        self.btn_group.addButton(self.btn_models, 8)
-        self.btn_group.addButton(self.btn_console, 9)
+        self.btn_group.addButton(self.btn_system, 8)
+        self.btn_group.addButton(self.btn_models, 9)
+        self.btn_group.addButton(self.btn_console, 10)
 
         sidebar_layout.addWidget(self.btn_general)
         sidebar_layout.addWidget(self.btn_memory_cache)
@@ -88,6 +91,7 @@ class SettingsTab(QWidget):
         sidebar_layout.addWidget(self.btn_deps)
         sidebar_layout.addWidget(self.btn_labels)
         sidebar_layout.addWidget(self.btn_integrations)
+        sidebar_layout.addWidget(self.btn_system)
         sidebar_layout.addWidget(self.btn_models)
         sidebar_layout.addWidget(self.btn_console)
         sidebar_layout.addStretch()
@@ -119,19 +123,21 @@ class SettingsTab(QWidget):
         self.page_deps = DependenciesPage()
         self.page_labels = LabelsPage()
         self.page_integrations = IntegrationsPage()
+        self.page_system = SystemPage()
         self.page_placeholder_models = QWidget()  # Modelos
         self.page_placeholder_console = QWidget()  # Consola
 
-        self.stacked_widget.addWidget(self.page_general)       # 0
-        self.stacked_widget.addWidget(self.page_memory_cache)  # 1
-        self.stacked_widget.addWidget(self.page_network)       # 2
-        self.stacked_widget.addWidget(self.page_downloads)     # 3
-        self.stacked_widget.addWidget(self.page_cookies)       # 4
-        self.stacked_widget.addWidget(self.page_deps)          # 5
-        self.stacked_widget.addWidget(self.page_labels)        # 6
-        self.stacked_widget.addWidget(self.page_integrations)  # 7
-        self.stacked_widget.addWidget(self.page_placeholder_models)   # 8
-        self.stacked_widget.addWidget(self.page_placeholder_console)  # 9
+        self.stacked_widget.addWidget(self.page_general)            # 0
+        self.stacked_widget.addWidget(self.page_memory_cache)       # 1
+        self.stacked_widget.addWidget(self.page_network)            # 2
+        self.stacked_widget.addWidget(self.page_downloads)          # 3
+        self.stacked_widget.addWidget(self.page_cookies)            # 4
+        self.stacked_widget.addWidget(self.page_deps)               # 5
+        self.stacked_widget.addWidget(self.page_labels)             # 6
+        self.stacked_widget.addWidget(self.page_integrations)       # 7
+        self.stacked_widget.addWidget(self.page_system)             # 8
+        self.stacked_widget.addWidget(self.page_placeholder_models)  # 9
+        self.stacked_widget.addWidget(self.page_placeholder_console) # 10
 
         content_layout.addWidget(self.stacked_widget)
         self.main_layout.addWidget(self.content_area, 1)

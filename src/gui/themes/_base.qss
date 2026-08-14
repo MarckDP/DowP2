@@ -195,6 +195,17 @@ QTabBar::tab:selected {
     border-bottom: 3px solid {{acento_primario}};
 }
 
+/* Botones de scroll del tab bar: se ocultan visualmente (ancho 0) pero se
+   mantiene el modo scroll activo, así las pestañas conservan su tamaño
+   completo y el auto-scroll al hacer clic sigue funcionando. */
+QTabBar QToolButton {
+    width: 0px;
+    min-width: 0px;
+    max-width: 0px;
+    border: none;
+    background: transparent;
+}
+
 /* ═══════════════════════════════════════════
    COMBOBOX — Menú Desplegable
    ═══════════════════════════════════════════ */
@@ -242,6 +253,46 @@ QComboBox QAbstractItemView::item:hover,
 QComboBox QAbstractItemView::item:selected {
     background-color: {{seleccion_fondo}};
     color: {{seleccion_texto}};
+}
+
+/* ═══════════════════════════════════════════
+   MENÚS DESPLEGABLES — QMenu y Menús Contextuales
+   ═══════════════════════════════════════════ */
+
+QMenu {
+    background-color: {{fondo_secundario}};
+    border: 1px solid {{borde_normal}};
+    border-radius: 8px;
+    padding: 4px;
+    color: {{texto_principal}};
+}
+
+QMenu::item {
+    background-color: transparent;
+    padding: 5px 16px 5px 24px;
+    border-radius: 4px;
+    color: {{texto_principal}};
+    font-size: 12px;
+}
+
+QMenu::icon {
+    padding-left: 6px;
+}
+
+QMenu::item:selected {
+    background-color: {{seleccion_fondo}};
+    color: {{seleccion_texto}};
+}
+
+QMenu::item:disabled {
+    color: {{texto_deshabilitado}};
+    background-color: transparent;
+}
+
+QMenu::separator {
+    height: 1px;
+    background-color: {{borde_normal}};
+    margin: 4px 6px;
 }
 
 /* ═══════════════════════════════════════════

@@ -2,7 +2,6 @@
 import os
 from PySide6.QtWidgets import (
     QCheckBox,
-    QComboBox,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -19,6 +18,7 @@ from gui.styles import get_theme_token, apply_cut_button_style
 from gui.tabs.advanced_process.output_options import OutputOptionsWidget
 from gui.tabs.advanced_process.video_details_components import RichComboBox, RichTextDelegate
 from gui.widgets.animated_button import AnimatedButton
+from gui.widgets.combo_box import AutoPopupComboBox
 
 from gui.tabs.quick_mode.activity_panel import ActivityPanel
 from gui.tabs.quick_mode.download_controller import QuickDownloadController
@@ -132,7 +132,7 @@ class QuickModeTab(QWidget):
         layout.setSpacing(12)
 
         layout.addWidget(QLabel(self.tr("Modo:")))
-        self.mode_combo = QComboBox()
+        self.mode_combo = AutoPopupComboBox()
         self.mode_combo.addItem(self.tr("Video + Audio"), "video+audio")
         self.mode_combo.addItem(self.tr("Solo Audio"), "audio_only")
         self.mode_combo.addItem(self.tr("Solo Video"), "video_only")

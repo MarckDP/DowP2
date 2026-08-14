@@ -14,6 +14,7 @@ from core.ytdlp_logic.analyzer import strip_ansi_codes
 from gui.widgets.url_bar import URLBar
 from gui.tabs.advanced_process.video_details import VideoDetailsWidget
 from gui.tabs.advanced_process.video_details_components import RichComboBox, RichTextDelegate
+from gui.widgets.combo_box import AutoPopupComboBox
 from gui.tabs.advanced_process.subtitle_options import SubtitleOptionsWidget
 from gui.tabs.advanced_process.output_options import OutputOptionsWidget
 from gui.widgets.queue_panel import QueuePanel
@@ -206,7 +207,7 @@ class AdvancedProcessTab(QWidget):
         self.lbl_global.setStyleSheet("font-weight: bold;")
         layout.addWidget(self.lbl_global)
 
-        self.combo_global_mode = QComboBox()
+        self.combo_global_mode = AutoPopupComboBox()
         self.combo_global_mode.setSizeAdjustPolicy(QComboBox.AdjustToContents)
         self.combo_global_mode.addItem(self.tr("Manual"), "manual")
         self.combo_global_mode.addItem(self.tr("Video + Audio"), "video+audio")

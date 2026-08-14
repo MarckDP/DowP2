@@ -32,7 +32,7 @@ class VideoToolsTab(QWidget):
     Pestaña de Herramientas Multimedia / Recodificador (Diseño de 2 Columnas Unificadas).
     Organiza la interfaz en 2 paneles principales:
       - Columna Izquierda: Vista Previa Multimedia (arriba) + Cola de Medios Importados (abajo).
-      - Columna Derecha: Panel de Opciones con Pestañas (Preajustes/Avanzados/Herramientas) + Cubo de Salida e Iniciar.
+      - Columna Derecha: Panel de Opciones con Pestañas (Preajustes/Comprimir/Convertir/Proxies/Avanzado) + Cubo de Salida e Iniciar.
     """
     def __init__(self, parent=None):
         super().__init__(parent)

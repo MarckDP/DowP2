@@ -858,10 +858,13 @@ class TreeListMixin:
                 border-radius: 6px;
             }}
             QMenu::item {{
-                padding: 6px 20px 6px 20px;
+                padding: 5px 12px 5px 24px;
                 border-radius: 4px;
                 color: {get_theme_token('texto_principal', '#cdd6f4')};
                 font-size: 11px;
+            }}
+            QMenu::icon {{
+                padding-left: 6px;
             }}
             QMenu::item:selected {{
                 background-color: {get_theme_token('acento_primario', '#B9E640')};

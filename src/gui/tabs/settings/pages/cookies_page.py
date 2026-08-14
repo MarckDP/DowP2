@@ -1,10 +1,11 @@
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QFrame, QSpacerItem, QSizePolicy, QPushButton, QLineEdit, QFileDialog
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QSpacerItem, QSizePolicy, QPushButton, QLineEdit, QFileDialog
 from PySide6.QtCore import Qt, QUrl, QThread, Signal, QSize
 from PySide6.QtGui import QDesktopServices, QIcon
 from core.utils.i18n import logger
 from core.utils.config_manager import get_config, save_config
 from core.setup.ytdlp_setup import get_ytdlp_path
 from core.setup.setup_manager import get_ytdlp_base_args
+from gui.widgets.combo_box import AutoPopupComboBox
 import sys
 import subprocess
 import os
@@ -107,7 +108,7 @@ class CookiesPage(QWidget):
         self.combo_row.setSpacing(10)
         self.combo_row.setAlignment(Qt.AlignVCenter)
         
-        self.mode_combo = QComboBox()
+        self.mode_combo = AutoPopupComboBox()
         self.mode_combo.addItem(self.tr("No usar"), "none")
         self.mode_combo.addItem(self.tr("Desde el navegador..."), "browser")
         self.mode_combo.addItem(self.tr("Archivo Manual..."), "file")
@@ -161,7 +162,7 @@ class CookiesPage(QWidget):
         
         self.browser_label = QLabel(self.tr("Navegador:"))
         
-        self.browser_combo = QComboBox()
+        self.browser_combo = AutoPopupComboBox()
         self.browser_combo.addItems(["brave", "chrome", "chromium", "edge", "firefox", "opera", "safari", "vivaldi"])
         self.browser_combo.setFixedWidth(150)
         

@@ -48,6 +48,30 @@ def get_waveform_cache_dir() -> str:
     os.makedirs(wf_dir, exist_ok=True)
     return wf_dir
 
+def get_local_app_data_dir() -> str:
+    r"""
+    Retorna un directorio de datos NO itinerante (no roaming) para archivos grandes que no
+    tiene sentido sincronizar entre equipos en entornos con perfiles de Windows en red:
+    - Windows: %LOCALAPPDATA%/DowP2 (a diferencia de get_app_data_dir(), que usa %APPDATA%)
+    - macOS/Linux: coincide con get_app_data_dir() (no existe la distinción roaming/local ahí)
+    """
+    system = platform.system()
+    if system == "Windows":
+        base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~/AppData/Local")
+        app_dir = os.path.join(base, "DowP2")
+        os.makedirs(app_dir, exist_ok=True)
+        return app_dir
+    return get_app_data_dir()
+
+def get_proxy_cache_dir() -> str:
+    """Retorna el directorio de caché para los proxies de previsualización (video de baja
+    resolución generado para hacer scrubbing fluido de medios pesados/RAW). A diferencia del
+    resto de cachés (thumbnails, waveforms, metadatos), vive en el perfil LOCAL (no roaming)
+    porque estos archivos pueden pesar cientos de MB o varios GB por sesión de trabajo."""
+    proxy_dir = os.path.join(get_local_app_data_dir(), "cache", "proxies")
+    os.makedirs(proxy_dir, exist_ok=True)
+    return proxy_dir
+
 def get_subclips_dir() -> str:
     """Retorna el directorio para guardar subclips rápidos de medios cuando no hay editores conectados."""
     from core.utils.config_manager import get_default_subclip_dir

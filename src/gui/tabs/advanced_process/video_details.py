@@ -22,6 +22,7 @@ from gui.tabs.advanced_process.video_details_components import (
     ResponsiveThumbnail,
     RichComboBox
 )
+from gui.widgets.combo_box import AutoPopupComboBox
 
 class VideoDetailsWidget(QFrame):
     video_ready = Signal()  # Emitida cuando hay un video válido cargado
@@ -102,9 +103,8 @@ class VideoDetailsWidget(QFrame):
         self.title_input.setPlaceholderText(self.tr("El título aparecerá aquí"))
         self.title_input.setLayoutDirection(Qt.LeftToRight)
         
-        self.combo_tags = QComboBox()
+        self.combo_tags = AutoPopupComboBox()
         self.combo_tags.setObjectName("tagsComboBox")
-        self.combo_tags.setFixedWidth(110)
         self.combo_tags.setPlaceholderText(self.tr("Etiqueta"))
         
         title_layout.addWidget(self.title_input, 1)

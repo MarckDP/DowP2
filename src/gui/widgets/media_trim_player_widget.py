@@ -7,8 +7,8 @@ from PySide6.QtWidgets import (
     QFrame, QSizePolicy, QScrollArea, QSlider, QGraphicsView, QGraphicsScene,
     QToolButton, QMenu
 )
-from PySide6.QtCore import Qt, QUrl, QSize, QSizeF, QTimer, Signal, QEvent, QRectF
-from PySide6.QtGui import QPainter, QColor, QPen, QPainterPath
+from PySide6.QtCore import Qt, QUrl, QSize, QSizeF, QPointF, QTimer, Signal, QEvent, QRectF
+from PySide6.QtGui import QPainter, QColor, QPen, QPainterPath, QPixmap, QImage
 from PySide6.QtMultimedia import (
     QMediaPlayer, QAudioOutput, QMediaMetaData, QAudioBufferOutput, QAudioFormat
 )
@@ -19,8 +19,21 @@ from gui.tabs.editing_media.editing_media_icons import get_svg_icon
 from gui.widgets.timeline_ruler import TimelineRulerWidget
 from gui.widgets.audio_meter import MultiChannelMeterWidget
 from gui.widgets.volume_control import VolumeControlWidget
+from gui.widgets.combo_box import AutoPopupComboBox
 from core.tabs.editing_media.waveform_cache_manager import WaveformCacheManager
+from core.tabs.video_tools.proxy_cache_manager import ProxyCacheManager
 from core.logger.logger_manager import logger
+
+# Opciones del selector de calidad de previsualización: (etiqueta, modo, divisor).
+# modo "auto" recalcula el divisor según la resolución nativa real del video (ver
+# _compute_auto_divisor); modo "manual" fuerza el divisor elegido por el usuario.
+_QUALITY_OPTIONS = [
+    ("Auto", "auto", None),
+    ("Completa", "manual", 1),
+    ("1/2", "manual", 2),
+    ("1/4", "manual", 4),
+    ("1/8", "manual", 8),
+]
 
 # (typecode, bytes_per_sample, offset, scale) para convertir muestras PCM crudas a -1.0..1.0
 # según el QAudioFormat.SampleFormat que entregue el backend de Qt Multimedia en cada buffer.
@@ -371,6 +384,11 @@ class TrimWaveformWidget(QWidget):
         if self._hires_peaks and not self._display_peaks:
             self._resample_to_width()
 
+        if self._display_peaks and self.is_loading:
+            self.is_loading = False
+            if hasattr(self, "loading_timer") and self.loading_timer.isActive():
+                self.loading_timer.stop()
+
         # Fondo oscuro
         painter.fillRect(0, 0, w, h, QColor("#0d0d0d"))
 
@@ -623,6 +641,17 @@ class MediaTrimPlayerWidget(QWidget):
         self._first_frame_rendered = False
         self._card_style = card_style
         self._active_audio_track = 0
+        self._pending_waveform_track = 0
+
+        # Calidad de previsualización (proxies para scrubbing fluido de medios pesados/RAW).
+        self._proxy_mode = "auto"    # "auto" | "manual"
+        self._proxy_divisor = 1      # divisor que se está reproduciendo ahora mismo (1 = original)
+        self._pending_proxy_divisor = None  # divisor en curso de generación, si hay uno
+        self._manual_divisor = 1     # último divisor elegido manualmente (persiste entre archivos)
+        self._native_size_known = False
+        self._native_size = None
+        self._proxy_signal_connected = False
+        self._pending_source_restore = None  # (pos_ms, was_playing) pendiente de aplicar tras un swap de fuente
 
         self.setFocusPolicy(Qt.StrongFocus)
 
@@ -722,6 +751,25 @@ class MediaTrimPlayerWidget(QWidget):
         zoom_bar.addWidget(self.slider_zoom_y)
 
         zoom_bar.addStretch()
+
+        # Calidad de previsualización: Auto / Completa / 1/2 / 1/4 / 1/8. "Auto" decide el
+        # divisor según la resolución nativa real del video (útil para RAW/footage pesado).
+        lbl_quality = QLabel(self.tr("Calidad:"))
+        lbl_quality.setStyleSheet("color: #888; font-size: 11px; font-weight: bold;")
+        zoom_bar.addWidget(lbl_quality)
+
+        self.combo_quality = AutoPopupComboBox()
+        for label, _mode, _divisor in _QUALITY_OPTIONS:
+            self.combo_quality.addItem(self.tr(label))
+        self.combo_quality.setToolTip(self.tr("Resolución de previsualización (no afecta la exportación final)"))
+        self.combo_quality.currentIndexChanged.connect(self._on_quality_option_changed)
+        zoom_bar.addWidget(self.combo_quality)
+
+        self.lbl_quality_status = QLabel("")
+        self.lbl_quality_status.setStyleSheet("color: #666; font-size: 10px; font-style: italic;")
+        self.lbl_quality_status.setFixedWidth(90)
+        zoom_bar.addWidget(self.lbl_quality_status)
+
         left_layout.addLayout(zoom_bar)
 
         # Regla de tiempo (Timeline Ruler)
@@ -927,12 +975,21 @@ class MediaTrimPlayerWidget(QWidget):
         self.btn_audio_track.setVisible(False)
         self.audio_track_menu.clear()
 
+        # Calidad de previsualización: se reinicia por archivo, pero el modo elegido por el
+        # usuario (Auto o una resolución manual) se mantiene entre archivos.
+        self._proxy_divisor = 1
+        self._pending_proxy_divisor = None
+        self._native_size_known = False
+        self._native_size = None
+        self.lbl_quality_status.setText("")
+
         is_video = self.media_type in ("video", "video+audio", "imagen")
         self.video_widget.setVisible(is_video)
         self.lbl_audio_art.setVisible(not is_video)
         if not is_video:
             filename = os.path.basename(self.media_path)
             self.lbl_audio_art.setText(f"{self.tr('Pista de Audio')}: {filename}" if filename else self.tr("Vista Previa de Audio"))
+        self.combo_quality.setEnabled(is_video)
 
         self.timeline_ruler.media_type = self.media_type
         self.timeline_ruler.is_video = is_video
@@ -945,6 +1002,11 @@ class MediaTrimPlayerWidget(QWidget):
             self.media_player.setSource(QUrl.fromLocalFile(self.media_path))
             if is_video:
                 QTimer.singleShot(50, self._render_initial_frame)
+                # Si el usuario ya había elegido una resolución manual, se re-aplica al nuevo
+                # archivo. El modo Auto se evalúa aparte, en cuanto se conozca la resolución
+                # real del video (_on_video_native_size_changed).
+                if self._proxy_mode == "manual" and self._manual_divisor > 1:
+                    self._apply_proxy_divisor(self._manual_divisor)
 
         self._update_waveform_range()
         self._update_time_label()
@@ -1012,6 +1074,7 @@ class MediaTrimPlayerWidget(QWidget):
 
     def cleanup(self, stop_only: bool = False):
         """Desconecta señales del caché global de waveform y detiene reproducción/timers."""
+        self._pending_source_restore = None
         if not stop_only and self._hires_signal_connected:
             try:
                 mgr = WaveformCacheManager.get_instance()
@@ -1039,20 +1102,160 @@ class MediaTrimPlayerWidget(QWidget):
         proporción de aspecto real (vertical, cuadrado u horizontal)."""
         self.video_widget.refit()
 
+        # Ojo: este mismo evento se vuelve a disparar (con una resolución MENOR) en cuanto se
+        # cambia a un proxy. Por eso solo se usa para decidir la calidad "Auto" la primera vez
+        # que se conoce el tamaño real del archivo ORIGINAL — si no, entraría en bucle
+        # (proxy pequeño -> Auto decide "completa" -> vuelve al original -> Auto decide proxy
+        # otra vez -> ...).
+        if not self._native_size_known and not size.isEmpty():
+            self._native_size_known = True
+            self._native_size = (size.width(), size.height())
+            if self._proxy_mode == "auto":
+                self._apply_proxy_divisor(self._compute_auto_divisor(size.width(), size.height()))
+
+    # ------------------------------------------------------------------
+    # Calidad de previsualización (proxies para medios pesados/RAW)
+    # ------------------------------------------------------------------
+    def _compute_auto_divisor(self, width: float, height: float) -> int:
+        """Heurística simple para el modo Auto: cuanto más pesado (grande) es el video nativo,
+        más se reduce la previsualización. No mira el códec, solo la resolución."""
+        long_side = max(width, height)
+        if long_side >= 3840:   # 4K y superiores
+            return 4
+        if long_side >= 2560:   # ~1440p/2K
+            return 2
+        return 1                # 1080p o menos: no hace falta proxy
+
+    def _on_quality_option_changed(self, index: int):
+        if index < 0 or index >= len(_QUALITY_OPTIONS):
+            return
+        _label, mode, divisor = _QUALITY_OPTIONS[index]
+        self._proxy_mode = mode
+        if mode == "manual":
+            self._manual_divisor = divisor
+            self._apply_proxy_divisor(divisor)
+        elif self._native_size_known:
+            w, h = self._native_size
+            self._apply_proxy_divisor(self._compute_auto_divisor(w, h))
+
+    def _apply_proxy_divisor(self, divisor: int):
+        """Cambia (o solicita) la resolución de previsualización activa. No reemplaza nunca el
+        archivo original: solo afecta qué decodifica el reproductor mientras se previsualiza."""
+        divisor = divisor or 1
+        if not self.media_path or divisor == self._proxy_divisor:
+            return
+
+        if divisor <= 1:
+            self._proxy_divisor = 1
+            self._pending_proxy_divisor = None
+            self.lbl_quality_status.setText("")
+            self._swap_playback_source(self.media_path)
+            return
+
+        mgr = ProxyCacheManager.get_instance()
+        cached = mgr.get_cached_proxy_path(self.media_path, divisor, self._active_audio_track)
+        if cached:
+            self._proxy_divisor = divisor
+            self._pending_proxy_divisor = None
+            self.lbl_quality_status.setText("")
+            self._swap_playback_source(cached)
+            return
+
+        # Aún no existe en caché: se pide en segundo plano y se sigue reproduciendo lo que
+        # esté activo ahora mismo (no se interrumpe la vista previa) hasta que esté listo.
+        if not self._proxy_signal_connected:
+            mgr.proxy_ready.connect(self._on_proxy_ready)
+            mgr.proxy_failed.connect(self._on_proxy_failed)
+            self._proxy_signal_connected = True
+        self._pending_proxy_divisor = divisor
+        mgr.request_proxy(self.media_path, divisor, self._active_audio_track)
+        self.lbl_quality_status.setText(self.tr("generando…"))
+
+    def _on_proxy_ready(self, file_path: str, divisor: int, audio_track: int, proxy_path: str):
+        if (file_path == self.media_path and audio_track == self._active_audio_track
+                and divisor == self._pending_proxy_divisor):
+            self._proxy_divisor = divisor
+            self._pending_proxy_divisor = None
+            self.lbl_quality_status.setText("")
+            self._swap_playback_source(proxy_path)
+
+    def _on_proxy_failed(self, file_path: str, divisor: int, audio_track: int):
+        if (file_path == self.media_path and audio_track == self._active_audio_track
+                and divisor == self._pending_proxy_divisor):
+            self._pending_proxy_divisor = None
+            self.lbl_quality_status.setText(self.tr("no disponible"))
+
+    def _swap_playback_source(self, path: str):
+        """Cambia la fuente del reproductor manteniendo posición y estado de reproducción.
+        La waveform, el medidor y la selección de pista de audio no se ven afectados: siguen
+        operando sobre self.media_path (el archivo original), no sobre el proxy."""
+        if not path or not os.path.exists(path):
+            return
+        was_playing = self.media_player.playbackState() == QMediaPlayer.PlayingState
+        pos_ms = self.media_player.position()
+        # No alcanza con llamar setPosition()/play() justo después de setSource(): QMediaPlayer
+        # carga la nueva fuente de forma asíncrona y, al terminar, resetea la posición a 0 por su
+        # cuenta — pisando silenciosamente el setPosition() hecho antes de tiempo. Por eso cambiar
+        # de calidad "reiniciaba" la reproducción. Se guarda el estado a restaurar y se aplica
+        # recién en _on_media_status_changed, cuando el nuevo origen ya terminó de cargar.
+        self._pending_source_restore = (pos_ms, was_playing)
+        self.media_player.setSource(QUrl.fromLocalFile(path))
+
     def _render_initial_frame(self):
         """Forzar al reproductor de video a decodificar y presentar el primer fotograma en QVideoWidget."""
         if self.media_type == "video" and self.media_player:
             state = self.media_player.playbackState()
             if state == QMediaPlayer.PlaybackState.StoppedState:
-                pos_ms = int(self.in_sec * 1000) if self.in_sec > 0 else 0
+                pos_ms = self._clamp_seek_ms(self.in_sec) if self.in_sec > 0 else 0
                 self.media_player.pause()
                 self.media_player.setPosition(pos_ms)
 
     def _on_media_status_changed(self, status):
-        if self.media_type == "video" and status in (QMediaPlayer.MediaStatus.LoadedMedia, QMediaPlayer.MediaStatus.BufferedMedia):
-            if not self._first_frame_rendered:
+        if status in (QMediaPlayer.MediaStatus.LoadedMedia, QMediaPlayer.MediaStatus.BufferedMedia):
+            if self._pending_source_restore is not None:
+                pending = self._pending_source_restore
+                self._pending_source_restore = None
+                # setPosition() justo acá a veces no alcanza: el backend FFmpeg de Qt Multimedia
+                # reporta LoadedMedia/BufferedMedia un instante antes de terminar su propia
+                # inicialización interna (tabla de seek, primer frame), y puede pisar nuestro
+                # setPosition() con su propio arranque en 0. Un pequeño delay le da tiempo a
+                # asentarse antes de imponer la posición real.
+                QTimer.singleShot(60, lambda p=pending: self._apply_source_restore(p))
+            if self.media_type == "video" and not self._first_frame_rendered:
                 self._first_frame_rendered = True
                 self._render_initial_frame()
+        elif status == QMediaPlayer.MediaStatus.EndOfMedia:
+            self._on_end_of_media()
+
+    def _on_end_of_media(self):
+        """Al terminar la reproducción, el backend pasa a StoppedState y el video sink deja
+        de presentar frames: el QGraphicsVideoItem queda vacío y, como el view es transparente,
+        se ve la cuadrícula de fondo ("el video desaparece"). Se re-presenta el último frame
+        decodificable y se restaura el estado visual de los controles."""
+        self.btn_play.setIcon(get_svg_icon("play_arrow.svg"))
+        self.audio_meter.reset_levels()
+        self.playing_changed.emit(False)
+
+        if self.media_type == "video" and self.media_path:
+            # El mismo truco de _apply_source_restore: el backend resetea la posición de forma
+            # asíncrona justo al terminar, así que el seek se impone con un pequeño delay.
+            QTimer.singleShot(60, self._restore_last_frame)
+
+    def _restore_last_frame(self):
+        """Seek al último frame decodificable (con el colchón de _clamp_seek_ms) para que la
+        vista previa muestre el final del video en vez de quedarse sin imagen."""
+        if self.media_player.playbackState() == QMediaPlayer.PlayingState:
+            # El usuario ya retomó la reproducción por su cuenta; no interrumpirla.
+            return
+        # Mismo orden que _render_initial_frame: pause() primero, setPosition() después.
+        self.media_player.pause()
+        self.media_player.setPosition(self._clamp_seek_ms(self.duration_sec))
+
+    def _apply_source_restore(self, pending):
+        pos_ms, was_playing = pending
+        self.media_player.setPosition(pos_ms)
+        if was_playing:
+            self.media_player.play()
 
     # ------------------------------------------------------------------
     # Selección de pista de audio (medios multipista)
@@ -1077,11 +1280,21 @@ class MediaTrimPlayerWidget(QWidget):
             action.setChecked(i == active)
             action.triggered.connect(lambda checked=False, idx=i: self._on_audio_track_selected(idx))
 
+        track_changed = active != self._active_audio_track
         self._active_audio_track = active
         self.btn_audio_track.setText(f"{self.tr('Pista')} {active + 1} ▾")
         self.btn_audio_track.adjustSize()
         self.btn_audio_track.setVisible(True)
         self.btn_audio_track.raise_()
+        if track_changed:
+            # QMediaPlayer tarda en detectar las pistas del medio (tracksChanged es
+            # asíncrono), así que load_waveform() ya pudo haber pedido la extracción para la
+            # pista 0 asumida por defecto antes de saber que la realmente activa es otra. Se
+            # vuelve a pedir para la pista correcta, igual que al cambiarla manualmente
+            # (_on_audio_track_selected) — si no, esa primera extracción llega etiquetada con
+            # la pista vieja, ya no coincide, y se descarta dejando la waveform pegada en la
+            # animación de carga para siempre.
+            self.load_waveform()
 
     def _describe_audio_track(self, index: int, meta: QMediaMetaData) -> str:
         title = str(meta.stringValue(QMediaMetaData.Key.Title) or "").strip()
@@ -1109,6 +1322,8 @@ class MediaTrimPlayerWidget(QWidget):
         self.load_waveform()
 
     def eventFilter(self, obj, event):
+        if not hasattr(self, "scroll_area") or self.scroll_area is None:
+            return super().eventFilter(obj, event)
         if obj == self.scroll_area.viewport() and event.type() == QEvent.Type.Wheel:
             modifiers = event.modifiers()
             # Scroll normal -> Zoom X
@@ -1201,8 +1416,19 @@ class MediaTrimPlayerWidget(QWidget):
             return
         self.waveform_widget.set_audio_path(self.media_path)
         mgr = WaveformCacheManager.get_instance()
-        # Intentar cargar alta resolución primero (de la pista de audio activa)
-        hires = mgr.get_cached_hires_peaks(self.media_path, self._active_audio_track)
+        # Se fija en una variable aparte la pista con la que se pide esta extracción en
+        # concreto: `self._active_audio_track` puede cambiar por su cuenta poco después (ver
+        # _rebuild_audio_track_menu, que se dispara de forma asíncrona en cuanto QMediaPlayer
+        # termina de detectar las pistas del archivo). Si el filtro de _on_hires_waveform_loaded
+        # comparara contra el valor "en vivo" de _active_audio_track en vez de este snapshot,
+        # una extracción en curso pedida como pista 0 llegaría después con ese cambio ya hecho,
+        # no coincidiría, y sus picos se descartarían en silencio — dejando la waveform pegada
+        # en la animación de carga para siempre (solo "arreglable" cambiando de ítem o
+        # reabriendo el diálogo, porque ahí sí entra por el camino de caché ya resuelta).
+        requested_track = self._active_audio_track
+        self._pending_waveform_track = requested_track
+        # Intentar cargar alta resolución primero (de la pista de audio solicitada)
+        hires = mgr.get_cached_hires_peaks(self.media_path, requested_track)
         if hires is not None:
             self.waveform_widget.set_hires_peaks(hires)
         else:
@@ -1213,12 +1439,23 @@ class MediaTrimPlayerWidget(QWidget):
                     self._hires_signal_connected = True
                 except Exception:
                     pass
-            mgr.request_hires_waveform(self.media_path, audio_track=self._active_audio_track)
+            mgr.request_hires_waveform(self.media_path, audio_track=requested_track)
+
+    def _same_path(self, p1: str, p2: str) -> bool:
+        if not p1 or not p2:
+            return False
+        try:
+            return os.path.normpath(os.path.abspath(p1)).lower() == os.path.normpath(os.path.abspath(p2)).lower()
+        except Exception:
+            return p1 == p2
 
     def _on_hires_waveform_loaded(self, path: str, peaks: list, audio_track: int = 0):
         # Descarta resultados de una pista que el usuario ya dejó de tener seleccionada
-        # (p.ej. si cambió de pista mientras la anterior todavía se estaba extrayendo).
-        if path == self.media_path and audio_track == self._active_audio_track:
+        # (p.ej. si cambió de pista mientras la anterior todavía se estaba extrayendo). Se
+        # compara contra la pista que efectivamente se pidió (_pending_waveform_track), no
+        # contra self._active_audio_track: ese último puede haber cambiado solo, de forma
+        # asíncrona, después de pedir la extracción (ver load_waveform).
+        if self._same_path(path, self.media_path) and audio_track == self._pending_waveform_track:
             self.waveform_widget.set_hires_peaks(peaks)
             QTimer.singleShot(0, self._sync_ruler)
 
@@ -1248,11 +1485,23 @@ class MediaTrimPlayerWidget(QWidget):
             self.btn_play.setIcon(get_svg_icon("pause.svg"))
         self.playing_changed.emit(self.media_player.playbackState() == QMediaPlayer.PlayingState)
 
+    def _clamp_seek_ms(self, sec: float) -> int:
+        """Convierte segundos a milisegundos para setPosition() dejando siempre un colchón de
+        al menos un fotograma antes del final real del medio. Seekear justo al último
+        milisegundo de duration_sec (p.ej. ratio=1.0 al arrastrar hasta el borde de la
+        waveform, o un rango que termina exactamente en la duración total) suele caer más
+        allá del último frame decodificable — el reproductor se queda sin imagen en vez de
+        mostrar el último fotograma. Restar la duración de un frame evita pisar ese borde."""
+        frame_ms = 1000.0 / self.fps if self.fps and self.fps > 0 else 33.0
+        max_ms = max(0, int(self.duration_sec * 1000) - int(frame_ms))
+        ms = int(sec * 1000)
+        return max(0, min(ms, max_ms))
+
     def preview_range(self, in_sec: float, out_sec: float):
         """Reproduce en bucle dentro de un rango dado hasta que el usuario mueva el cabezal
         manualmente fuera de él o use el play/pause normal."""
         self._preview_loop_range = (in_sec, out_sec)
-        self.media_player.setPosition(int(in_sec * 1000))
+        self.media_player.setPosition(self._clamp_seek_ms(in_sec))
         self.media_player.play()
         self.btn_play.setIcon(get_svg_icon("pause.svg"))
 
@@ -1289,7 +1538,7 @@ class MediaTrimPlayerWidget(QWidget):
                 lo, hi = self._preview_loop_range
                 if pos_sec < lo or pos_sec > hi:
                     self._preview_loop_range = None
-            self.media_player.setPosition(int(pos_sec * 1000))
+            self.media_player.setPosition(self._clamp_seek_ms(pos_sec))
 
     def _on_waveform_range_changed(self, in_r: float, out_r: float):
         if self.duration_sec > 0:
@@ -1302,11 +1551,16 @@ class MediaTrimPlayerWidget(QWidget):
         pos_sec = pos_ms / 1000.0
 
         # Previsualización en bucle de un rango guardado: al llegar al final del rango,
-        # volver al inicio en vez de seguir reproduciendo más allá de él.
+        # volver al inicio en vez de seguir reproduciendo más allá de él. Si "hi" está en la
+        # duración total (o muy cerca), la posición real nunca llega a reportar exactamente
+        # "hi" (el último frame decodificable queda un poco antes) — comparar con un pequeño
+        # margen asegura que el bucle salte antes de que el reproductor llegue solo al final
+        # y se quede sin imagen esperando el siguiente frame que ya no existe.
         if self._preview_loop_range is not None:
             lo, hi = self._preview_loop_range
-            if pos_sec >= hi:
-                self.media_player.setPosition(int(lo * 1000))
+            frame_sec = (1000.0 / self.fps if self.fps and self.fps > 0 else 33.0) / 1000.0
+            if pos_sec >= hi - frame_sec:
+                self.media_player.setPosition(self._clamp_seek_ms(lo))
                 return
 
         if self.duration_sec > 0:

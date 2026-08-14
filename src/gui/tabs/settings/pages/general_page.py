@@ -1,8 +1,9 @@
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QFrame, QSpacerItem, QSizePolicy, QStyledItemDelegate, QScrollArea, QPushButton, QMessageBox
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QSpacerItem, QSizePolicy, QStyledItemDelegate, QScrollArea, QPushButton, QMessageBox
 from PySide6.QtCore import Signal, Qt
 from core.utils.i18n import logger
 from core.utils.config_manager import get_config, save_config
 from gui.widgets.toggle_switch import ToggleSwitch
+from gui.widgets.combo_box import AutoPopupComboBox
 
 class PaddingDelegate(QStyledItemDelegate):
     """Adds padding to QComboBox items for a modern feel."""
@@ -66,7 +67,7 @@ class GeneralPage(QWidget):
         self.lang_label = QLabel(self.tr("Idioma de la aplicación"))
         self.lang_label.setObjectName("settingsLabel")
         
-        self.lang_combo = QComboBox()
+        self.lang_combo = AutoPopupComboBox()
         self.lang_combo.setFixedWidth(180) # Smaller
         self.lang_combo.setItemDelegate(PaddingDelegate())
         self.lang_combo.addItem("Español", "es")
@@ -82,7 +83,7 @@ class GeneralPage(QWidget):
         self.theme_label = QLabel(self.tr("Tema visual"))
         self.theme_label.setObjectName("settingsLabel")
         
-        self.theme_combo = QComboBox()
+        self.theme_combo = AutoPopupComboBox()
         self.theme_combo.setFixedWidth(180) # Smaller
         self.theme_combo.setItemDelegate(PaddingDelegate())
         self.theme_combo.addItem(self.tr("Modo Oscuro"), "dark")

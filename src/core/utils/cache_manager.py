@@ -272,6 +272,47 @@ class WaveformCacheProvider(BaseCacheProvider):
         }
 
 
+class ProxyCacheProvider(BaseCacheProvider):
+    """Proveedor de caché para los proxies de previsualización (video de baja resolución para
+    scrubbing fluido de medios pesados/RAW en Herramientas Multimedia)."""
+
+    @property
+    def key(self) -> str:
+        return "video_proxies"
+
+    @property
+    def name(self) -> str:
+        return "Caché de Proxies de Previsualización"
+
+    @property
+    def description(self) -> str:
+        return "Copias de video en baja resolución generadas para reproducir fluido medios pesados/RAW. Con límite de tamaño automático."
+
+    def get_stats(self) -> Dict[str, Any]:
+        from core.tabs.video_tools.proxy_cache_manager import ProxyCacheManager
+        stats = ProxyCacheManager.get_instance().get_stats()
+        file_count = stats.get("file_count", 0)
+        total_size = stats.get("size_bytes", 0)
+
+        return {
+            "key": self.key,
+            "name": self.name,
+            "description": self.description,
+            "file_count": file_count,
+            "size_bytes": total_size,
+            "formatted_size": format_bytes(total_size)
+        }
+
+    def clear(self) -> Dict[str, Any]:
+        stats_before = self.get_stats()
+        from core.tabs.video_tools.proxy_cache_manager import ProxyCacheManager
+        deleted_count = ProxyCacheManager.get_instance().clear_cache()
+        return {
+            "files_removed": deleted_count,
+            "bytes_freed": stats_before["size_bytes"]
+        }
+
+
 class CacheManager:
     """Servicio centralizado que administra todos los proveedores de caché de la aplicación."""
 
@@ -293,6 +334,7 @@ class CacheManager:
         self.register_provider(IndexingMetadataCacheProvider())
         self.register_provider(FreesoundPreviewCacheProvider())
         self.register_provider(WaveformCacheProvider())
+        self.register_provider(ProxyCacheProvider())
 
 
     def register_provider(self, provider: BaseCacheProvider):

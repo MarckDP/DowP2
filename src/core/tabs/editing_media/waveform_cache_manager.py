@@ -4,6 +4,7 @@ import hashlib
 import json
 import subprocess
 import struct
+import array
 from PySide6.QtCore import QObject, Signal, QRunnable, QThreadPool, Qt, QSize
 from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor
 
@@ -138,8 +139,8 @@ class WaveformRunnable(QRunnable):
 
 
 class HiResWaveformWorkerSignals(QObject):
-    finished = Signal(str, list)  # (file_path, minmax_peaks)
-    failed = Signal(str)
+    finished = Signal(str, list, int)  # (file_path, minmax_peaks, audio_track)
+    failed = Signal(str, int)          # (file_path, audio_track)
 
 class HiResWaveformRunnable(QRunnable):
     """Extrae forma de onda de alta resolución con pares (min, max) para renderizado profesional.
@@ -167,12 +168,12 @@ class HiResWaveformRunnable(QRunnable):
                     self.manager._save_peaks_to_cache(self.file_path, lowres)
                     self.manager._peaks_cache[self.file_path] = lowres
 
-                self.signals.finished.emit(self.file_path, peaks)
+                self.signals.finished.emit(self.file_path, peaks, self.audio_track)
             else:
-                self.signals.failed.emit(self.file_path)
+                self.signals.failed.emit(self.file_path, self.audio_track)
         except Exception as e:
             logger.error(f"HiResWaveformRunnable: Error {self.file_path}: {e}")
-            self.signals.failed.emit(self.file_path)
+            self.signals.failed.emit(self.file_path, self.audio_track)
         finally:
             self.manager._hires_task_finished(self.file_path, self.audio_track)
 
@@ -203,8 +204,8 @@ class HiResWaveformRunnable(QRunnable):
         info = get_platform_info()
         ffmpeg_exe = os.path.join(get_ffmpeg_dir(), info["binary_name"])
 
-        # Alta resolución: 22050 Hz mono para capturar detalle real
-        sample_rate = 22050
+        # Alta resolución optimizada: 8000 Hz mono para velocidad ultra rápida y alta precisión visual
+        sample_rate = 8000
         cmd = [ffmpeg_exe, "-y", "-probesize", "32768", "-analyzeduration", "0", "-i", self.file_path]
         if self.audio_track:
             # Pista de audio específica (medios multipista), 0-based igual que QMediaPlayer.audioTracks().
@@ -230,27 +231,25 @@ class HiResWaveformRunnable(QRunnable):
         if num_samples == 0:
             return []
 
-        samples = struct.unpack(f"{num_samples}h", raw_data)
-        
-        # Encontrar el pico absoluto global para normalizar
-        global_max = 1
-        for s in samples:
-            a = abs(s)
-            if a > global_max:
-                global_max = a
-        
-        # Dividir en bloques y extraer min/max real (con signo) por bloque
-        target_num_peaks = max(10000, min(num_samples // 10, 50000))
+        samples = array.array('h')
+        samples.frombytes(raw_data)
+
+        # Encontrar el pico absoluto global a velocidad C nativa
+        min_s = min(samples)
+        max_s = max(samples)
+        global_max = max(abs(min_s), abs(max_s), 1)
+        inv_gmax = 1.0 / global_max
+
+        # Extraer min/max por bloque (hasta 4000 picos de alta resolución)
+        target_num_peaks = max(500, min(num_samples // 4, 4000))
         minmax_peaks = []
-        block_size = max(1, num_samples / target_num_peaks)
+        block_size = num_samples / target_num_peaks
         for i in range(target_num_peaks):
             start_idx = int(i * block_size)
             end_idx = max(start_idx + 1, int((i + 1) * block_size))
             block = samples[start_idx:end_idx]
             if block:
-                block_min = min(block) / global_max  # Negativo (abajo)
-                block_max = max(block) / global_max  # Positivo (arriba)
-                minmax_peaks.append((block_min, block_max))
+                minmax_peaks.append((min(block) * inv_gmax, max(block) * inv_gmax))
             else:
                 minmax_peaks.append((0.0, 0.0))
 
@@ -277,6 +276,12 @@ class WaveformCacheManager(QObject):
         self._hash_cache: dict[str, str] = {}
         self._pending_files = set()
         self._failed_files = set()
+        # Referencias fuertes a los workers en curso: sin esto, nada en el lado Python los
+        # mantiene vivos una vez que request_waveform()/request_hires_waveform() retorna (el
+        # QThreadPool los posee en C++, pero el wrapper de PySide6 puede recolectarse antes de
+        # que el evento de la señal en cola termine de entregarse en el hilo principal). Se
+        # limpian en _task_finished()/_hires_task_finished(), cuando el worker ya terminó.
+        self._active_workers = {}
 
     def _get_hash_key(self, file_path: str, audio_track: int = 0) -> str:
         # La pista 0 (la inmensa mayoría de los medios) conserva exactamente el mismo hash de
@@ -341,8 +346,9 @@ class WaveformCacheManager(QObject):
 
         self._pending_files.add(file_path)
         worker = WaveformRunnable(file_path, self, num_peaks)
-        worker.signals.finished.connect(self._on_worker_finished)
-        worker.signals.failed.connect(self._on_worker_failed)
+        self._active_workers[file_path] = worker
+        worker.signals.finished.connect(self._on_worker_finished, Qt.ConnectionType.QueuedConnection)
+        worker.signals.failed.connect(self._on_worker_failed, Qt.ConnectionType.QueuedConnection)
         self.thread_pool.start(worker)
 
     def _save_peaks_to_cache(self, file_path: str, peaks: list):
@@ -391,16 +397,23 @@ class WaveformCacheManager(QObject):
         if cache_key in self._peaks_cache:
             self.hires_waveform_loaded.emit(file_path, self._peaks_cache[cache_key], audio_track)
             return
-        if cache_key in self._pending_files:
-            return
         cached = self.get_cached_hires_peaks(file_path, audio_track)
         if cached is not None:
             self.hires_waveform_loaded.emit(file_path, cached, audio_track)
             return
+        if cache_key in self._pending_files:
+            return
         self._pending_files.add(cache_key)
         worker = HiResWaveformRunnable(file_path, self, num_peaks, audio_track)
-        worker.signals.finished.connect(lambda fp, peaks, at=audio_track: self._on_hires_worker_finished(fp, peaks, at))
-        worker.signals.failed.connect(lambda fp, at=audio_track: self._on_hires_worker_failed(fp, at))
+        self._active_workers[cache_key] = worker
+        # Conexión directa a métodos vinculados (en vez de lambdas) con QueuedConnection
+        # explícita: al conectar a un lambda "suelto" (no vinculado a un QObject), PySide6 no
+        # siempre puede determinar la afinidad de hilo del receptor para decidir si encolar la
+        # entrega, lo que puede terminar invocando el slot directamente en el hilo del worker en
+        # vez de en el hilo principal — causa muy probable del crash nativo (0xc0000005 en
+        # Qt6Core.dll) que se veía al cargar un archivo sin cachear.
+        worker.signals.finished.connect(self._on_hires_worker_finished, Qt.ConnectionType.QueuedConnection)
+        worker.signals.failed.connect(self._on_hires_worker_failed, Qt.ConnectionType.QueuedConnection)
         self.thread_pool.start(worker)
 
     def _on_hires_worker_finished(self, file_path: str, peaks: list, audio_track: int = 0):
@@ -415,6 +428,7 @@ class WaveformCacheManager(QObject):
     def _hires_task_finished(self, file_path: str, audio_track: int = 0):
         cache_key = self._hires_cache_key(file_path, audio_track)
         self._pending_files.discard(cache_key)
+        self._active_workers.pop(cache_key, None)
 
     def _on_worker_finished(self, file_path: str, peaks: list):
         self._peaks_cache[file_path] = peaks
@@ -425,6 +439,7 @@ class WaveformCacheManager(QObject):
 
     def _task_finished(self, file_path: str):
         self._pending_files.discard(file_path)
+        self._active_workers.pop(file_path, None)
         
     def clear_cache(self) -> int:
         count = 0

@@ -9,6 +9,7 @@ from PySide6.QtGui import QPixmap, QImage, QIcon, QPainter, QColor, QFontMetrics
 from PySide6.QtSvg import QSvgRenderer
 from gui.styles import get_theme_token, apply_cut_button_style
 from gui.tabs.editing_media.editing_media_icons import get_colored_svg_icon
+from gui.widgets.combo_box import AutoPopupComboBox
 
 class ThumbnailLoaderThread(QThread):
     finished = Signal(bytes, str) # content, error
@@ -229,7 +230,7 @@ class ResponsiveThumbnail(QWidget):
     def sizeHint(self):
         return QSize(320, 180)
 
-class RichComboBox(QComboBox):
+class RichComboBox(AutoPopupComboBox):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.tag_colors = {
@@ -252,19 +253,6 @@ class RichComboBox(QComboBox):
         painter.fillRect(pixmap.rect(), QColor(color_hex))
         painter.end()
         return pixmap
-
-    def showPopup(self):
-        fm = self.fontMetrics()
-        max_width = 0
-        for i in range(self.count()):
-            item_text = self.itemText(i)
-            item_width = fm.horizontalAdvance(item_text) + 60
-            if item_width > max_width:
-                max_width = item_width
-        
-        popup_width = max(self.width(), max_width)
-        self.view().setMinimumWidth(popup_width)
-        super().showPopup()
 
     def paintEvent(self, event):
         painter = QPainter(self)

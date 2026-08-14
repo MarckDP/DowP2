@@ -6,7 +6,6 @@ import time
 from PySide6.QtCore import Qt, QThread, Signal, QTimer
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
-    QComboBox,
     QDialog,
     QFrame,
     QHBoxLayout,
@@ -18,6 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 from gui.widgets.toggle_switch import ToggleSwitch
+from gui.widgets.combo_box import AutoPopupComboBox
 from gui.widgets.title_bar import CustomTitleBar
 from gui.tabs.advanced_process.video_details_components import RichComboBox, RichTextDelegate
 
@@ -282,7 +282,7 @@ class PlaylistSelectionDialog(QDialog):
         controls.addStretch()
 
         controls.addWidget(QLabel(self.tr("Modo")))
-        self.mode_combo = QComboBox()
+        self.mode_combo = AutoPopupComboBox()
         for label, value in PLAYLIST_MODE_OPTIONS:
             self.mode_combo.addItem(self.tr(label), value)
         self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)

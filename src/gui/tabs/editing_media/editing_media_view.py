@@ -15,7 +15,6 @@ from PySide6.QtWidgets import (
     QFrame,
     QLineEdit,
     QPushButton,
-    QComboBox,
     QSlider,
     QScrollArea,
     QApplication,
@@ -45,6 +44,7 @@ from core.tabs.editing_media.editing_media_logic import EditingMediaController
 from gui.tabs.editing_media.waveform_widget import AudioWaveformWidget
 from gui.tabs.editing_media.preview_panel import PreviewContainerWidget
 from gui.widgets.volume_control import VolumeControlWidget
+from gui.widgets.combo_box import AutoPopupComboBox
 from gui.tabs.editing_media.editing_media_icons import (
     get_colored_svg_icon,
     get_colored_folder_icon,
@@ -423,8 +423,7 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         lbl_copyright.setToolTip(self.tr("Filtro de Licencia (Freesound)"))
         lic_layout.addWidget(lbl_copyright)
 
-        self.freesound_license_combo = QComboBox()
-        self.freesound_license_combo.setMaximumWidth(135)
+        self.freesound_license_combo = AutoPopupComboBox()
         self.freesound_license_combo.addItem(self.tr("Cualquiera"), "Cualquiera")
         self.freesound_license_combo.addItem(self.tr("CC0 (Sin Copyright)"), "CC0")
         self.freesound_license_combo.addItem(self.tr("CC-BY (Atribución)"), "Attribution")
@@ -1030,7 +1029,7 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         buttons_layout.addWidget(self.btn_send_editor, 2)
 
         # QComboBox de selección de etiquetas (estilo nativo de la app para medios web)
-        self.combo_tags = QComboBox()
+        self.combo_tags = AutoPopupComboBox()
         self.combo_tags.setObjectName("tagsComboBox")
         self.combo_tags.setFixedHeight(34)
         self.combo_tags.setVisible(False)

@@ -12,6 +12,7 @@
         "fondo_elemento": "#1a1a1a",
         "texto_principal": "#e0e0e0",
         "texto_secundario": "#666666",
+        "texto_deshabilitado": "#555555",
         "texto_activo": "#ffffff",
         "acento_primario": "#B9E640",
         "acento_secundario": "#1DC038",

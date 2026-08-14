@@ -93,6 +93,36 @@ QLineEdit#titleInput {
 }
 
 /* ═══════════════════════════════════════════
+   BOTONES BASE Y SECUNDARIOS
+   ═══════════════════════════════════════════ */
+
+QPushButton {
+    background-color: {{panel_fondo}};
+    color: {{texto_principal}};
+    border: 1px solid {{borde_sutil}};
+    border-radius: 6px;
+    padding: 6px 14px;
+    font-size: 12px;
+}
+
+QPushButton:hover {
+    background-color: {{fondo_elemento}};
+    border-color: {{acento_primario}};
+    color: {{texto_activo}};
+}
+
+QPushButton:pressed {
+    background-color: {{fondo_terciario}};
+    border-color: {{acento_secundario}};
+}
+
+QPushButton:disabled {
+    background-color: {{fondo_secundario}};
+    color: {{texto_deshabilitado}};
+    border-color: {{borde_normal}};
+}
+
+/* ═══════════════════════════════════════════
    BOTÓN PRINCIPAL — Analizar
    ═══════════════════════════════════════════ */
 
@@ -253,6 +283,125 @@ QComboBox QAbstractItemView::item:hover,
 QComboBox QAbstractItemView::item:selected {
     background-color: {{seleccion_fondo}};
     color: {{seleccion_texto}};
+}
+
+/* ═══════════════════════════════════════════
+   RADIO BUTTONS
+   ═══════════════════════════════════════════ */
+
+QRadioButton {
+    color: {{texto_principal}};
+    font-size: 13px;
+    spacing: 8px;
+    background: transparent;
+}
+
+QRadioButton:hover {
+    color: {{texto_activo}};
+}
+
+QRadioButton:checked {
+    color: {{texto_activo}};
+}
+
+QRadioButton:disabled {
+    color: {{texto_deshabilitado}};
+}
+
+QRadioButton::indicator {
+    width: 16px;
+    height: 16px;
+    border-radius: 9px;
+    border: 2px solid {{checkbox_borde}};
+    background-color: {{checkbox_fondo}};
+}
+
+QRadioButton::indicator:hover {
+    border-color: {{acento_primario}};
+    background-color: {{fondo_elemento}};
+}
+
+QRadioButton::indicator:checked {
+    border: 2px solid {{acento_primario}};
+    background-color: {{checkbox_fondo}};
+    image: url({{icono_radio_checked}});
+}
+
+QRadioButton::indicator:checked:hover {
+    border-color: {{acento_primario}};
+    background-color: {{fondo_elemento}};
+    image: url({{icono_radio_checked}});
+}
+
+QRadioButton::indicator:disabled {
+    border-color: {{borde_normal}};
+    background-color: {{fondo_secundario}};
+}
+
+/* ═══════════════════════════════════════════
+   CHECKBOXES
+   ═══════════════════════════════════════════ */
+
+QCheckBox {
+    color: {{texto_principal}};
+    font-size: 12px;
+    spacing: 8px;
+    background: transparent;
+}
+
+QCheckBox:hover {
+    color: {{texto_activo}};
+}
+
+QCheckBox:checked {
+    color: {{texto_activo}};
+}
+
+QCheckBox:disabled {
+    color: {{texto_deshabilitado}};
+}
+
+QCheckBox::indicator {
+    width: 16px;
+    height: 16px;
+    border-radius: 4px;
+    border: 1.5px solid {{checkbox_borde}};
+    background-color: {{checkbox_fondo}};
+}
+
+QCheckBox::indicator:hover {
+    border-color: {{acento_primario}};
+    background-color: {{fondo_elemento}};
+}
+
+QCheckBox::indicator:checked {
+    border: 1.5px solid {{acento_primario}};
+    background-color: {{fondo_elemento}};
+    image: url({{icono_checkbox_checked}});
+}
+
+QCheckBox::indicator:checked:hover {
+    border-color: {{acento_primario}};
+    background-color: {{fondo_elemento}};
+    image: url({{icono_checkbox_checked}});
+}
+
+QCheckBox::indicator:disabled {
+    border-color: {{borde_normal}};
+    background-color: {{fondo_secundario}};
+}
+
+/* ═══════════════════════════════════════════
+   TARJETAS DE DEPENDENCIAS
+   ═══════════════════════════════════════════ */
+
+QFrame#ffmpegOptionsPanel,
+QFrame#ytdlpPotPanel,
+QFrame#denoCardPanel {
+    background-color: rgba(255, 255, 255, 0.035);
+    border: 1px solid {{borde_sutil}};
+    border-radius: 8px;
+    padding: 4px;
 }
 
 /* ═══════════════════════════════════════════

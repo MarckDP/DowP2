@@ -86,6 +86,52 @@ def _generate_spinbox_symbol_svg(symbol: str, color: str) -> str:
     return svg_path.replace("\\", "/")
 
 
+def _generate_radio_checked_svg(color: str) -> str:
+    """
+    Genera un archivo SVG con un punto central para QRadioButton::indicator:checked.
+    """
+    safe_color = color.replace("#", "").replace(" ", "")
+    svg_path = os.path.join(_TEMP_DIR, f"radio_checked_{safe_color}.svg")
+
+    if not os.path.exists(svg_path):
+        svg_content = f'''<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16">
+  <circle cx="8" cy="8" r="4.5" fill="{color}"/>
+</svg>'''
+        try:
+            with open(svg_path, "w", encoding="utf-8") as f:
+                f.write(svg_content)
+            logger.debug(f"Temas: SVG radio checked generado: {svg_path}")
+        except Exception as e:
+            logger.error(f"Temas: Error generando SVG radio checked: {e}")
+            return ""
+
+    return svg_path.replace("\\", "/")
+
+
+def _generate_checkbox_checked_svg(color: str) -> str:
+    """
+    Genera un archivo SVG con marca check para QCheckBox::indicator:checked.
+    """
+    safe_color = color.replace("#", "").replace(" ", "")
+    svg_path = os.path.join(_TEMP_DIR, f"checkbox_checked_{safe_color}.svg")
+
+    if not os.path.exists(svg_path):
+        svg_content = f'''<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16">
+  <polyline points="3.5,8.5 6.5,11.5 12.5,4.5" fill="none" stroke="{color}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>'''
+        try:
+            with open(svg_path, "w", encoding="utf-8") as f:
+                f.write(svg_content)
+            logger.debug(f"Temas: SVG checkbox checked generado: {svg_path}")
+        except Exception as e:
+            logger.error(f"Temas: Error generando SVG checkbox checked: {e}")
+            return ""
+
+    return svg_path.replace("\\", "/")
+
+
 def _load_theme_tokens(theme_name: str) -> dict:
     """
     Carga los tokens de color desde el archivo JSON del tema con cache.
@@ -156,7 +202,7 @@ def load_stylesheet(theme_name: str = "dark") -> str:
     
     1. Lee _base.qss (template con {{variables}})
     2. Lee {theme_name}.json (definición de colores)
-    3. Genera el SVG del triángulo con el color de acento
+    3. Genera los SVGs dinámicos con el color de acento
     4. Reemplaza todas las {{variables}} por sus valores
     5. Retorna el QSS listo para aplicar
     """
@@ -172,12 +218,14 @@ def load_stylesheet(theme_name: str = "dark") -> str:
         logger.warning(f"Temas: No se pudieron cargar tokens para '{theme_name}'")
         return ""
     
-    # 3. Generar SVG del triángulo con el color de acento primario
+    # 3. Generar SVGs dinámicos con el color de acento primario
     triangle_color = tokens.get("acento_primario", "#B9E640")
     triangle_path = _generate_triangle_svg(triangle_color)
     tokens["icono_triangulo"] = triangle_path
     tokens["icono_spinbox_plus"] = _generate_spinbox_symbol_svg("plus", triangle_color)
     tokens["icono_spinbox_minus"] = _generate_spinbox_symbol_svg("minus", triangle_color)
+    tokens["icono_radio_checked"] = _generate_radio_checked_svg(triangle_color)
+    tokens["icono_checkbox_checked"] = _generate_checkbox_checked_svg(triangle_color)
     
     # 4. Reemplazar todas las {{variables}}
     result = template

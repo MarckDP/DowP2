@@ -48,6 +48,11 @@ def get_config():
         },
         "pot_provider": "bgutil",       # "bgutil" | "wpc" | "none"
         "pot_wpc_browser_path": "",     # ruta al ejecutable Chromium; vacío = auto-detect
+        "ffmpeg_mode": "managed",       # "managed" | "custom"
+        "ffmpeg_variant": "essentials", # "essentials" | "full"
+        "ffmpeg_channel": "recommended",# "recommended" | "latest" | "nightly"
+        "ffmpeg_keep_ffplay": False,    # False = eliminar ffplay, True = conservar
+        "ffmpeg_custom_path": "",       # Ruta personalizada a ffmpeg.exe o carpeta
         "max_concurrent_downloads": 3,  # Número máximo de descargas simultáneas (1 a 10)
         "hardware_info": {},            # Información del sistema y GPU detectada
     }

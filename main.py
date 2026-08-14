@@ -24,12 +24,12 @@ from core.utils.config_manager import get_config
 __version__ = "2.0.0"
 
 from PySide6.QtCore import QObject, QEvent, Qt
-from PySide6.QtWidgets import QPushButton, QCheckBox, QComboBox, QTabBar, QStyledItemDelegate
+from PySide6.QtWidgets import QPushButton, QCheckBox, QRadioButton, QComboBox, QTabBar, QStyledItemDelegate
 
 class HandCursorInstaller(QObject):
     """Instala cursor pointer en widgets interactivos y garantiza QStyledItemDelegate
     en QComboBoxes para soporte de hover y selección visual vía QSS."""
-    _TARGET_TYPES = (QPushButton, QCheckBox, QComboBox, QTabBar)
+    _TARGET_TYPES = (QPushButton, QCheckBox, QRadioButton, QComboBox, QTabBar)
     
     def eventFilter(self, obj, event):
         if event.type() == QEvent.Type.ChildAdded:

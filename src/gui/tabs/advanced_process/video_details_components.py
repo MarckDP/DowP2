@@ -158,17 +158,18 @@ class ResponsiveThumbnail(QWidget):
         self.duration_label.setObjectName("durationLabel")
         self.duration_label.hide()
 
-        # Botón circular SVG de recorte
+        # Botón overlay flotante sobre la miniatura del video — circular, como el
+        # badge de "play" que ya usa esta misma convención en fragment_dialog.py.
         self.btn_cut = QPushButton(self)
         self.btn_cut.setFixedSize(40, 40)
         self.btn_cut.setToolTip(self.tr("Recortar fragmento"))
         self.btn_cut.hide()
         self.btn_cut.clicked.connect(self.clicked_cut)
         self.btn_cut.setIconSize(QSize(22, 22))
-        apply_cut_button_style(self.btn_cut, "normal", icon_size=22)
+        apply_cut_button_style(self.btn_cut, "normal", icon_size=22, shape="circular")
 
     def set_cut_status(self, status):
-        apply_cut_button_style(self.btn_cut, status, icon_size=22)
+        apply_cut_button_style(self.btn_cut, status, icon_size=22, shape="circular")
 
     def set_duration(self, text):
         if text:
@@ -303,11 +304,16 @@ class RichComboBox(AutoPopupComboBox):
                 font.setBold(False)
                 painter.setFont(font)
                 
-            if current_x < rect.right():
-                painter.drawText(current_x, rect.top(), rect.right() - current_x, rect.height(), 
-                                 Qt.AlignmentFlag.AlignVCenter, part)
-                             
             fm = QFontMetrics(font)
+            if current_x < rect.right():
+                available = rect.right() - current_x
+                # Red de seguridad: si la palabra no entra entera, elidir con "…" en vez de
+                # dejar que setClipRect() la corte a mitad de carácter sin aviso visual.
+                draw_part = part if fm.horizontalAdvance(part) <= available else \
+                    fm.elidedText(part, Qt.TextElideMode.ElideRight, available)
+                painter.drawText(current_x, rect.top(), available, rect.height(),
+                                 Qt.AlignmentFlag.AlignVCenter, draw_part)
+
             current_x += fm.horizontalAdvance(part + " ")
             
         painter.restore()

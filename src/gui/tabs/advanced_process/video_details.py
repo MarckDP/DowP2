@@ -166,7 +166,7 @@ class VideoDetailsWidget(QFrame):
         self.combo_audio_source.setSizeAdjustPolicy(QComboBox.AdjustToContents)
         col_source_layout.addWidget(self.lbl_audio_source)
         col_source_layout.addWidget(self.combo_audio_source)
-        
+
         audio_cols_layout.addLayout(col_audio, 2)
         audio_cols_layout.addWidget(self.col_audio_source, 1)
         self.col_audio_source.hide()

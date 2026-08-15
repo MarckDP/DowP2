@@ -293,15 +293,23 @@ def apply_folder_open_button_style(btn, tooltip=None, icon_size=18):
         btn.setToolTip(tooltip)
 
 
-def apply_cut_button_style(btn, status="normal", icon_size=18):
+def apply_cut_button_style(btn, status="normal", icon_size=18, shape="circular"):
     """
     Aplica el estilo unificado del botón de recorte de fragmentos
     basado en los tokens del tema actual.
-    
+
     Status:
       - 'normal': gris elegante (#2d2d2d / fondo_elemento) con hover claro
       - 'saved': verde (#1DC038 / acento_secundario)
       - 'unsaved': amarillo (#ffc107 / estado_aviso)
+
+    Shape:
+      - 'circular': círculo perfecto (radio = mitad de la altura). Para el botón
+        overlay flotante sobre la miniatura del video, donde sigue la convención
+        habitual de un badge circular sobre un preview.
+      - 'square': el radio de 6px estándar de la app (igual que QPushButton en
+        _base.qss / apply_player_play_button_style). Para el botón inline en la
+        barra de Quick Mode, donde va codo a codo con controles rectangulares.
     """
     from gui.tabs.editing_media.editing_media_icons import get_colored_svg_icon
     
@@ -329,13 +337,17 @@ def apply_cut_button_style(btn, status="normal", icon_size=18):
     cfg = colors.get(status, colors["normal"])
     btn.setIcon(get_colored_svg_icon("content_cut.svg", cfg["icon"], size=icon_size))
     
-    # Calcular radio del borde redondeado para botón circular perfecto
-    radius = 17
-    if hasattr(btn, 'height') and btn.height() > 0:
-        radius = btn.height() // 2
-    elif hasattr(btn, 'fixedSize') and btn.fixedSize().height() > 0:
-        radius = btn.fixedSize().height() // 2
-        
+    if shape == "square":
+        radius = 6
+    else:
+        # Círculo perfecto: radio = mitad de la altura del botón
+        radius = 17
+        if hasattr(btn, 'height') and btn.height() > 0:
+            radius = btn.height() // 2
+        elif hasattr(btn, 'fixedSize') and btn.fixedSize().height() > 0:
+            radius = btn.fixedSize().height() // 2
+
+
     btn.setStyleSheet(f"""
         QPushButton {{
             background-color: {cfg['bg']};

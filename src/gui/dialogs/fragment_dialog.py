@@ -396,9 +396,22 @@ class FragmentDialog(QDialog):
         self.mode_group.setExclusive(True)
         
         self.rb_precise = DeSelectableRadioButton(self.tr("Corte preciso"))
+        self.rb_precise.setToolTip(self.tr(
+            "Corta al fotograma exacto, evitando errores al inicio o al final del "
+            "fragmento. Consume CPU o GPU (según el sistema) y demora bastante más "
+            "que una descarga de fragmento normal."
+        ))
         self.rb_download = DeSelectableRadioButton(self.tr("Descargar para cortar"))
+        self.rb_download.setToolTip(self.tr(
+            "Descarga el medio completo, lo corta en disco y luego borra el medio "
+            "completo, dejando solo el fragmento."
+        ))
         self.rb_keep = DeSelectableRadioButton(self.tr("Conservar completo"))
-        
+        self.rb_keep.setToolTip(self.tr(
+            "Igual que \"Descargar para cortar\" (descarga el medio completo y "
+            "corta en disco), pero conserva el medio completo en vez de borrarlo."
+        ))
+
         for rb, mode_id in [
             (self.rb_precise, FragmentState.PRECISE),
             (self.rb_download, FragmentState.DOWNLOAD_THEN_CUT),
@@ -406,29 +419,8 @@ class FragmentDialog(QDialog):
         ]:
             rb.setObjectName("fragmentRadioButton")
             rb.setCursor(Qt.PointingHandCursor)
-            rb.setStyleSheet("""
-                QRadioButton {
-                    color: #aaa;
-                    font-size: 12px;
-                    spacing: 8px;
-                }
-                QRadioButton::indicator {
-                    width: 18px;
-                    height: 18px;
-                    border-radius: 9px;
-                    border: 2px solid #333;
-                }
-                QRadioButton::indicator:checked {
-                    background-color: #1dc038;
-                    border: 2px solid #B9E640;
-                }
-                QRadioButton:checked {
-                    color: #B9E640;
-                }
-                QRadioButton:hover {
-                    color: #fff;
-                }
-            """)
+            # Sin stylesheet propio: hereda el QRadioButton global de _base.qss (mismo
+            # aspecto y tokens de tema que el resto de radio buttons de la app).
             self.mode_group.addButton(rb)
             sw_row.addWidget(rb)
             

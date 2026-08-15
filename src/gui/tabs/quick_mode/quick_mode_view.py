@@ -103,15 +103,16 @@ class QuickModeTab(QWidget):
         monitor.register(self.url_input)
         monitor.url_detected.connect(self._on_clipboard_url_detected)
 
-        # Botón circular conmutable para activar el recorte de fragmentos
+        # Botón conmutable para activar el recorte de fragmentos, inline junto a la URL
+        # y "Descargar" — forma cuadrada estándar para integrarse con esos controles.
         self.btn_cut = QPushButton()
         self.btn_cut.setCheckable(True)
         self.btn_cut.setFixedSize(32, 32)
         self.btn_cut.setToolTip(self.tr("Activar recorte de fragmento"))
-        
+
         self.btn_cut.setIconSize(QSize(18, 18))
         self.btn_cut.toggled.connect(self._on_cut_toggled)
-        apply_cut_button_style(self.btn_cut, "normal", icon_size=18)
+        apply_cut_button_style(self.btn_cut, "normal", icon_size=18, shape="square")
 
         self.btn_download = AnimatedButton(self.tr("Descargar"))
         self.btn_download.setObjectName("analyzeButton")
@@ -322,4 +323,4 @@ class QuickModeTab(QWidget):
 
     def _on_cut_toggled(self, checked: bool):
         status = "saved" if checked else "normal"
-        apply_cut_button_style(self.btn_cut, status, icon_size=18)
+        apply_cut_button_style(self.btn_cut, status, icon_size=18, shape="square")

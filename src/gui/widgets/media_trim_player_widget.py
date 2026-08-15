@@ -860,7 +860,6 @@ class MediaTrimPlayerWidget(QWidget):
         # Botón Play/Pause
         self.btn_play = QPushButton()
         self.btn_play.setFixedSize(32, 32)
-        self.btn_play.setIcon(get_svg_icon("play_arrow.svg"))
         self.btn_play.setIconSize(QSize(18, 18))
         self.btn_play.clicked.connect(self.toggle_play_pause)
         apply_player_play_button_style(self.btn_play, is_playing=False, icon_size=18)
@@ -1092,6 +1091,7 @@ class MediaTrimPlayerWidget(QWidget):
         except Exception:
             pass
 
+        apply_player_play_button_style(self.btn_play, is_playing=False, icon_size=18)
         self.audio_meter.reset_levels()
 
     # ------------------------------------------------------------------
@@ -1233,7 +1233,7 @@ class MediaTrimPlayerWidget(QWidget):
         de presentar frames: el QGraphicsVideoItem queda vacío y, como el view es transparente,
         se ve la cuadrícula de fondo ("el video desaparece"). Se re-presenta el último frame
         decodificable y se restaura el estado visual de los controles."""
-        self.btn_play.setIcon(get_svg_icon("play_arrow.svg"))
+        apply_player_play_button_style(self.btn_play, is_playing=False, icon_size=18)
         self.audio_meter.reset_levels()
         self.playing_changed.emit(False)
 
@@ -1479,11 +1479,11 @@ class MediaTrimPlayerWidget(QWidget):
             return
         if self.media_player.playbackState() == QMediaPlayer.PlayingState:
             self.media_player.pause()
-            self.btn_play.setIcon(get_svg_icon("play_arrow.svg"))
+            apply_player_play_button_style(self.btn_play, is_playing=False, icon_size=18)
             self.audio_meter.reset_levels()
         else:
             self.media_player.play()
-            self.btn_play.setIcon(get_svg_icon("pause.svg"))
+            apply_player_play_button_style(self.btn_play, is_playing=True, icon_size=18)
         self.playing_changed.emit(self.media_player.playbackState() == QMediaPlayer.PlayingState)
 
     def _clamp_seek_ms(self, sec: float) -> int:
@@ -1504,7 +1504,7 @@ class MediaTrimPlayerWidget(QWidget):
         self._preview_loop_range = (in_sec, out_sec)
         self.media_player.setPosition(self._clamp_seek_ms(in_sec))
         self.media_player.play()
-        self.btn_play.setIcon(get_svg_icon("pause.svg"))
+        apply_player_play_button_style(self.btn_play, is_playing=True, icon_size=18)
 
     def set_in_point(self):
         pos_sec = self.media_player.position() / 1000.0

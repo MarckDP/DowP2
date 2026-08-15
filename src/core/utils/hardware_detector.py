@@ -185,13 +185,13 @@ def _get_ram_info() -> str:
 
 def _generate_ffmpeg_log_files(supported_encoders: list, preferred_encoder: str) -> tuple[str, str]:
     """
-    Genera el log legible en texto plano (ffmpeg_encoders_log.txt)
-    y el informe estructurado en JSON (ffmpeg_capabilities.json) en AppData.
+    Genera el log de capacidades en formato JSON (ffmpeg_encoders_log.json)
+    y el informe estructurado básico en JSON (ffmpeg_capabilities.json) en AppData.
     """
     import json
     from core.utils.paths import get_app_data_dir
     app_data = get_app_data_dir()
-    txt_path = os.path.join(app_data, "ffmpeg_encoders_log.txt")
+    log_json_path = os.path.join(app_data, "ffmpeg_encoders_log.json")
     json_path = os.path.join(app_data, "ffmpeg_capabilities.json")
     env = get_dependency_env()
 
@@ -219,40 +219,47 @@ def _generate_ffmpeg_log_files(supported_encoders: list, preferred_encoder: str)
     except Exception as e:
         logger.error(f"HardwareDetector: No se pudo escribir ffmpeg_capabilities.json: {e}")
 
-    # 2. Generar TXT legible por humanos
-    lines = []
-    lines.append("=" * 80)
-    lines.append(f" DowP 2.0 - Informe de Capacidades de FFmpeg")
-    lines.append(f" Fecha de diagnóstico: {time.strftime('%Y-%m-%d %H:%M:%S')}")
-    lines.append(f" Codificador Preferido Detectado: {preferred_encoder}")
-    lines.append(f" Codificadores Soportados: {', '.join(supported_encoders)}")
-    lines.append(f" Archivo JSON de capacidades: {json_path}")
-    lines.append("=" * 80 + "\n")
+    # 2. Generar JSON completo de capacidades
+    full_log_data = {
+        "app_info": "DowP 2.0 - Informe Completo de Capacidades de FFmpeg",
+        "diagnostic_date": time.strftime('%Y-%m-%d %H:%M:%S'),
+        "detected_preferred_encoder": preferred_encoder,
+        "supported_encoders_summary": supported_encoders,
+        "capabilities": {}
+    }
 
-    sections = [
-        ("VERSION Y CONFIGURACION DE FFMPEG", ["ffmpeg", "-version"]),
-        ("CODIFICADORES DE VIDEO / AUDIO DISPONIBLES", ["ffmpeg", "-encoders"]),
-        ("DECODIFICADORES DISPONIBLES", ["ffmpeg", "-decoders"]),
-        ("FORMATOS Y CONTENEDORES DISPONIBLES", ["ffmpeg", "-formats"]),
-    ]
+    sections = {
+        "version": ["ffmpeg", "-version"],
+        "encoders": ["ffmpeg", "-encoders"],
+        "decoders": ["ffmpeg", "-decoders"],
+        "formats": ["ffmpeg", "-formats"],
+        "filters": ["ffmpeg", "-filters"],
+        "muxers": ["ffmpeg", "-muxers"],
+        "demuxers": ["ffmpeg", "-demuxers"],
+        "codecs": ["ffmpeg", "-codecs"],
+        "hwaccels": ["ffmpeg", "-hwaccels"],
+        "protocols": ["ffmpeg", "-protocols"],
+        "bsfs": ["ffmpeg", "-bsfs"],
+        "layouts": ["ffmpeg", "-layouts"],
+        "colors": ["ffmpeg", "-colors"]
+    }
 
-    for title, cmd in sections:
-        lines.append(f"--- {title} ---")
+    for key, cmd in sections.items():
         try:
             res = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=5)
-            lines.append(res.stdout or res.stderr or "Sin salida")
+            output = res.stdout or res.stderr or ""
+            full_log_data["capabilities"][key] = [line for line in output.split("\n") if line.strip()]
         except Exception as e:
-            lines.append(f"Error al ejecutar {' '.join(cmd)}: {e}")
-        lines.append("\n" + "-" * 80 + "\n")
+            full_log_data["capabilities"][key] = [f"Error al ejecutar {' '.join(cmd)}: {e}"]
 
     try:
-        with open(txt_path, "w", encoding="utf-8") as f:
-            f.write("\n".join(lines))
-        logger.info(f"HardwareDetector: Log de capacidades de FFmpeg generado en: {txt_path}")
+        with open(log_json_path, "w", encoding="utf-8") as f:
+            json.dump(full_log_data, f, indent=2, ensure_ascii=False)
+        logger.info(f"HardwareDetector: Log de capacidades de FFmpeg generado en: {log_json_path}")
     except Exception as e:
-        logger.error(f"HardwareDetector: No se pudo escribir ffmpeg_encoders_log.txt: {e}")
+        logger.error(f"HardwareDetector: No se pudo escribir ffmpeg_encoders_log.json: {e}")
 
-    return txt_path, json_path
+    return log_json_path, json_path
 
 
 def detect_hardware(force_refresh: bool = False) -> dict:
@@ -263,7 +270,7 @@ def detect_hardware(force_refresh: bool = False) -> dict:
     config = get_config()
     cached_info = config.get("hardware_info", {})
     from core.utils.paths import get_app_data_dir
-    log_path = os.path.join(get_app_data_dir(), "ffmpeg_encoders_log.txt")
+    log_path = os.path.join(get_app_data_dir(), "ffmpeg_encoders_log.json")
 
     if not force_refresh and cached_info and cached_info.get("cpu_name") and cached_info.get("ram_size") and os.path.exists(log_path):
         return cached_info

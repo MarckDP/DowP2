@@ -152,7 +152,7 @@ class SystemPage(QWidget):
         self.btn_open_log.setFixedHeight(28)
         self.btn_open_log.setCursor(Qt.PointingHandCursor)
         self.btn_open_log.setStyleSheet(btn_style)
-        self.btn_open_log.setToolTip(self.tr("Abre el archivo ffmpeg_encoders_log.txt con el informe completo"))
+        self.btn_open_log.setToolTip(self.tr("Abre el archivo ffmpeg_encoders_log.json con el informe completo"))
         self.btn_open_log.clicked.connect(self.on_open_log_clicked)
 
         self.lbl_status = QLabel("")
@@ -204,13 +204,13 @@ class SystemPage(QWidget):
         self._update_encoder_badges(info.get("supported_encoders", []))
 
     def on_open_log_clicked(self):
-        """Abre el archivo ffmpeg_encoders_log.txt en el visor predeterminado del SO."""
+        """Abre el archivo ffmpeg_encoders_log.json en el visor predeterminado del SO."""
         import os
         from PySide6.QtGui import QDesktopServices
         from PySide6.QtCore import QUrl
         from core.utils.paths import get_app_data_dir
 
-        log_path = os.path.join(get_app_data_dir(), "ffmpeg_encoders_log.txt")
+        log_path = os.path.join(get_app_data_dir(), "ffmpeg_encoders_log.json")
         if not os.path.exists(log_path):
             from core.utils.hardware_detector import detect_hardware
             info = detect_hardware(force_refresh=True)

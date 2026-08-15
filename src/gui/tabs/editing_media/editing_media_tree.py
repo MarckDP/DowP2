@@ -1107,7 +1107,7 @@ class TreeListMixin:
                     QFrame#mediaListFrame {{
                         background-color: {fondo_secundario};
                         border: 2px dashed {color};
-                        border-radius: 12px;
+                        border-radius: 6px;
                     }}
                 """)
 

@@ -530,7 +530,7 @@ class _CheckerboardFrame(QFrame):
     COLOR_A = QColor(42, 42, 42)
     COLOR_B = QColor(30, 30, 30)
 
-    def __init__(self, border_color: str, radius: int = 8, parent=None):
+    def __init__(self, border_color: str, radius: int = 6, parent=None):
         super().__init__(parent)
         self._border_color = QColor(border_color)
         self._radius = radius
@@ -674,7 +674,7 @@ class MediaTrimPlayerWidget(QWidget):
                 QWidget#mediaTrimPlayerWidget {{
                     background-color: {bg_color};
                     border: 1px solid {border_color};
-                    border-radius: 8px;
+                    border-radius: 6px;
                 }}
             """)
             left_layout.setContentsMargins(8, 8, 8, 8)
@@ -684,7 +684,7 @@ class MediaTrimPlayerWidget(QWidget):
 
         # Área de Video / Vista Previa
         borde_norm = get_theme_token('borde_normal', '#2d2d2d')
-        self.preview_container = _CheckerboardFrame(borde_norm, radius=8)
+        self.preview_container = _CheckerboardFrame(borde_norm, radius=6)
         prev_layout = QVBoxLayout(self.preview_container)
         prev_layout.setContentsMargins(0, 0, 0, 0)
 
@@ -825,7 +825,7 @@ class MediaTrimPlayerWidget(QWidget):
             QToolButton {
                 background-color: rgba(20, 20, 20, 200);
                 border: 1px solid #444;
-                border-radius: 5px;
+                border-radius: 6px;
                 color: #cdd6f4;
                 font-size: 10px;
                 font-weight: bold;
@@ -854,11 +854,12 @@ class MediaTrimPlayerWidget(QWidget):
 
         # Barra de Controles e Información de Tiempos
         self.ctrl_bar = QHBoxLayout()
+        self.ctrl_bar.setContentsMargins(0, 4, 0, 0)
         self.ctrl_bar.setSpacing(6)
 
         # Botón Play/Pause
         self.btn_play = QPushButton()
-        self.btn_play.setFixedSize(34, 34)
+        self.btn_play.setFixedSize(32, 32)
         self.btn_play.setIcon(get_svg_icon("play_arrow.svg"))
         self.btn_play.setIconSize(QSize(18, 18))
         self.btn_play.clicked.connect(self.toggle_play_pause)
@@ -878,7 +879,7 @@ class MediaTrimPlayerWidget(QWidget):
         self.btn_set_in = QPushButton()
         self.btn_set_in.setIcon(get_svg_icon("arrow_menu_open.svg"))
         self.btn_set_in.setIconSize(QSize(20, 20))
-        self.btn_set_in.setFixedSize(32, 28)
+        self.btn_set_in.setFixedSize(32, 32)
         self.btn_set_in.setToolTip(self.tr("Establecer punto de entrada (Tecla I)"))
         self.btn_set_in.setStyleSheet("""
             QPushButton {
@@ -891,9 +892,9 @@ class MediaTrimPlayerWidget(QWidget):
         self.btn_set_in.clicked.connect(self.set_in_point)
         self.ctrl_bar.addWidget(self.btn_set_in)
 
-        _time_style = "font-size: 12px; padding: 2px 4px; border-radius: 6px; background: #1e1e1e; border: 1px solid #333;"
+        _time_style = f"font-size: 12px; padding: 4px 6px; border-radius: 6px; background: {get_theme_token('fondo_elemento', '#1a1a1a')}; border: 1px solid {get_theme_token('borde_normal', '#222222')}; color: {get_theme_token('texto_activo', '#ffffff')};"
         self.input_time_start = QLineEdit(self._format_seconds_ms(self.in_sec))
-        self.input_time_start.setFixedSize(90, 28)
+        self.input_time_start.setFixedSize(90, 32)
         self.input_time_start.setAlignment(Qt.AlignCenter)
         self.input_time_start.setStyleSheet(_time_style)
         self.input_time_start.editingFinished.connect(self._on_time_input_changed)
@@ -905,7 +906,7 @@ class MediaTrimPlayerWidget(QWidget):
         self.ctrl_bar.addWidget(sep)
 
         self.input_time_end = QLineEdit(self._format_seconds_ms(self.out_sec))
-        self.input_time_end.setFixedSize(90, 28)
+        self.input_time_end.setFixedSize(90, 32)
         self.input_time_end.setAlignment(Qt.AlignCenter)
         self.input_time_end.setStyleSheet(_time_style)
         self.input_time_end.editingFinished.connect(self._on_time_input_changed)
@@ -914,7 +915,7 @@ class MediaTrimPlayerWidget(QWidget):
         self.btn_set_out = QPushButton()
         self.btn_set_out.setIcon(get_svg_icon("arrow_menu_close.svg"))
         self.btn_set_out.setIconSize(QSize(20, 20))
-        self.btn_set_out.setFixedSize(32, 28)
+        self.btn_set_out.setFixedSize(32, 32)
         self.btn_set_out.setToolTip(self.tr("Establecer punto de salida (Tecla O)"))
         self.btn_set_out.setStyleSheet("""
             QPushButton {

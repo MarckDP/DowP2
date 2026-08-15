@@ -58,7 +58,7 @@ class SystemPage(QWidget):
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setFrameShape(QFrame.NoFrame)
-        self.scroll_area.setStyleSheet("background-color: transparent; border: none;")
+        self.scroll_area.setStyleSheet("QScrollArea { background-color: transparent; border: none; }")
 
         self.scroll_content = QWidget()
         self.scroll_content.setObjectName("settingsScrollContent")

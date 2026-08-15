@@ -13,6 +13,7 @@ from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtSvg import QSvgRenderer
 
+from gui.styles import get_theme_token
 from gui.widgets.range_slider import RangeSlider
 from gui.widgets.volume_control import VolumeControlWidget
 from core.tabs.advanced_process.fragment_logic import FragmentManager, FragmentState
@@ -78,19 +79,19 @@ class _FragmentItem(QWidget):
         
         self.suffix_input = QLineEdit(suffix)
         self.suffix_input.setPlaceholderText("sufijo...")
-        self.suffix_input.setStyleSheet("""
-            QLineEdit {
-                background: #222;
-                color: #B9E640;
-                border: 1px solid #333;
-                border-radius: 4px;
+        self.suffix_input.setStyleSheet(f"""
+            QLineEdit {{
+                background: {get_theme_token('fondo_secundario', '#121212')};
+                color: {get_theme_token('acento_primario', '#B9E640')};
+                border: 1px solid {get_theme_token('borde_sutil', '#333')};
+                border-radius: 6px;
                 padding: 1px 4px;
                 font-size: 11px;
                 font-weight: bold;
-            }
-            QLineEdit:focus {
-                border: 1px solid #B9E640;
-            }
+            }}
+            QLineEdit:focus {{
+                border: 1px solid {get_theme_token('acento_primario', '#B9E640')};
+            }}
         """)
         self.suffix_input.setFixedHeight(20)
         self.suffix_input.textChanged.connect(lambda t, idx=index: on_suffix_changed(idx, t))
@@ -102,7 +103,7 @@ class _FragmentItem(QWidget):
         btn_del.setFixedSize(22, 22)
         btn_del.setToolTip("Eliminar fragmento")
         btn_del.setStyleSheet("""
-            QPushButton { background: transparent; border: none; border-radius: 4px; }
+            QPushButton { background: transparent; border: none; border-radius: 6px; }
             QPushButton:hover { background: rgba(229,57,53,160); }
         """)
         btn_del.clicked.connect(on_delete)
@@ -164,18 +165,25 @@ class FragmentDialog(QDialog):
         tb_layout = QHBoxLayout(title_bar)
         tb_layout.setContentsMargins(15, 0, 15, 0)
 
-        btn_close = QPushButton("✕")
+        btn_close = QPushButton()
+        btn_close.setObjectName("titleBarClose")
+        btn_close.setIcon(_icon("close.svg"))
+        btn_close.setIconSize(QSize(14, 14))
         btn_close.setFixedSize(28, 28)
+        btn_close.setToolTip(self.tr("Cerrar"))
         btn_close.setStyleSheet("""
-            QPushButton {
-                background-color: #c62828;
-                color: white;
-                font-size: 13px;
-                font-weight: bold;
+            QPushButton#titleBarClose {
+                background-color: transparent;
                 border: none;
-                border-radius: 14px;
+                border-radius: 6px;
+                padding: 0px;
             }
-            QPushButton:hover { background-color: #e53935; }
+            QPushButton#titleBarClose:hover {
+                background-color: #c62828;
+            }
+            QPushButton#titleBarClose:pressed {
+                background-color: #8e0000;
+            }
         """)
         btn_close.clicked.connect(self.reject)
 
@@ -307,14 +315,10 @@ class FragmentDialog(QDialog):
         ctrl_row = QHBoxLayout()
         ctrl_row.setSpacing(6)
 
-        # Play / Pause (green circles, left)
-        _btn_style = """
-            QPushButton {{ background-color: {c}; border: none; border-radius: {r}px; }}
-            QPushButton:hover {{ background-color: #B9E640; }}
-        """
+        # Play / Pause
         self.btn_play_ctrl = QPushButton()
         self.btn_play_ctrl.setIconSize(QSize(18, 18))
-        self.btn_play_ctrl.setFixedSize(34, 34)
+        self.btn_play_ctrl.setFixedSize(32, 32)
         self.btn_play_ctrl.setToolTip(self.tr("Reproducir"))
         from gui.styles import apply_player_play_button_style
         apply_player_play_button_style(self.btn_play_ctrl, is_playing=False, icon_size=18)
@@ -331,10 +335,10 @@ class FragmentDialog(QDialog):
         ctrl_row.addStretch()
 
         # Time in/out + add button (centered group)
-        _time_style = "font-size: 12px; padding: 2px 4px; border-radius: 6px;"
+        _time_style = f"font-size: 12px; padding: 4px 6px; border-radius: 6px; background: {get_theme_token('fondo_elemento', '#1a1a1a')}; border: 1px solid {get_theme_token('borde_normal', '#222222')}; color: {get_theme_token('texto_activo', '#ffffff')};"
 
         self.input_time_start = QLineEdit(FragmentManager.format_time(0))
-        self.input_time_start.setFixedSize(100, 28)
+        self.input_time_start.setFixedSize(100, 32)
         self.input_time_start.setAlignment(Qt.AlignCenter)
         self.input_time_start.setObjectName("timeLabel")
         self.input_time_start.setStyleSheet(_time_style)
@@ -345,7 +349,7 @@ class FragmentDialog(QDialog):
         sep.setStyleSheet("color: #666; font-size: 15px;")
 
         self.input_time_end = QLineEdit(FragmentManager.format_time(self.duration_ms))
-        self.input_time_end.setFixedSize(100, 28)
+        self.input_time_end.setFixedSize(100, 32)
         self.input_time_end.setAlignment(Qt.AlignCenter)
         self.input_time_end.setObjectName("timeLabel")
         self.input_time_end.setStyleSheet(_time_style)
@@ -354,9 +358,18 @@ class FragmentDialog(QDialog):
         self.btn_add_ctrl = QPushButton()
         self.btn_add_ctrl.setIcon(_icon("add.svg", "#000000", 18))
         self.btn_add_ctrl.setIconSize(QSize(18, 18))
-        self.btn_add_ctrl.setFixedSize(34, 34)
+        self.btn_add_ctrl.setFixedSize(32, 32)
         self.btn_add_ctrl.setToolTip(self.tr("Añadir fragmento"))
-        self.btn_add_ctrl.setStyleSheet(_btn_style.format(c="#1DC038", r=17))
+        self.btn_add_ctrl.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {get_theme_token('acento_secundario', '#1DC038')};
+                border: none;
+                border-radius: 6px;
+            }}
+            QPushButton:hover {{
+                background-color: {get_theme_token('acento_primario', '#B9E640')};
+            }}
+        """)
         self.btn_add_ctrl.clicked.connect(self.add_fragment)
 
         ctrl_row.addWidget(self.input_time_start)
@@ -437,12 +450,12 @@ class FragmentDialog(QDialog):
         list_container = QFrame()
         list_container.setObjectName("fragmentList")
         list_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        list_container.setStyleSheet("""
-            QFrame#fragmentList {
-                background-color: #121212;
-                border: 1px solid #222;
-                border-radius: 12px;
-            }
+        list_container.setStyleSheet(f"""
+            QFrame#fragmentList {{
+                background-color: {get_theme_token('fondo_secundario', '#121212')};
+                border: 1px solid {get_theme_token('borde_normal', '#222')};
+                border-radius: 6px;
+            }}
         """)
         list_v = QVBoxLayout(list_container)
         list_v.setContentsMargins(0, 0, 0, 0)
@@ -451,10 +464,10 @@ class FragmentDialog(QDialog):
         # Header (looks like a table header, inside the rounded box)
         header_widget = QWidget()
         header_widget.setFixedHeight(36)
-        header_widget.setStyleSheet("""
-            background-color: #1a1a1a;
-            border-radius: 11px 11px 0 0;
-            border-bottom: 1px solid #2a2a2a;
+        header_widget.setStyleSheet(f"""
+            background-color: {get_theme_token('fondo_elemento', '#1a1a1a')};
+            border-radius: 5px 5px 0 0;
+            border-bottom: 1px solid {get_theme_token('borde_sutil', '#2a2a2a')};
         """)
         hh = QHBoxLayout(header_widget)
         hh.setContentsMargins(12, 0, 10, 0)
@@ -467,27 +480,27 @@ class FragmentDialog(QDialog):
         # The actual QListWidget inside the container
         self.list_fragments = QListWidget()
         self.list_fragments.setObjectName("innerFragmentList")
-        self.list_fragments.setStyleSheet("""
-            QListWidget {
+        self.list_fragments.setStyleSheet(f"""
+            QListWidget {{
                 background: transparent;
                 border: none;
                 outline: none;
-            }
-            QListWidget::item {
-                background-color: #1a1a1a;
-                border-bottom: 1px solid #222;
+            }}
+            QListWidget::item {{
+                background-color: {get_theme_token('fondo_elemento', '#1a1a1a')};
+                border-bottom: 1px solid {get_theme_token('borde_normal', '#222')};
                 border-radius: 0px;
                 padding: 0px;
                 margin: 0px;
-            }
-            QListWidget::item:selected {
+            }}
+            QListWidget::item:selected {{
                 background-color: #1b3b22;
                 border-bottom: 1px solid #224;
-            }
-            QListWidget::item:last-child {
+            }}
+            QListWidget::item:last-child {{
                 border-bottom: none;
-                border-radius: 0 0 11px 11px;
-            }
+                border-radius: 0 0 5px 5px;
+            }}
         """)
         self.list_fragments.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.list_fragments.installEventFilter(self)
@@ -501,12 +514,12 @@ class FragmentDialog(QDialog):
         bot.setSpacing(10)
 
         self.btn_cancel = QPushButton(self.tr("Cancelar"))
-        self.btn_cancel.setFixedHeight(35)
+        self.btn_cancel.setFixedHeight(32)
         self.btn_cancel.setStyleSheet("""
             QPushButton {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
                     stop:0 #b71c1c, stop:0.6 #e53935, stop:1 #ef5350);
-                color: #fff; border: none; font-weight: bold; border-radius: 12px;
+                color: #fff; border: none; font-weight: bold; border-radius: 6px;
             }
             QPushButton:hover {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
@@ -518,7 +531,7 @@ class FragmentDialog(QDialog):
         self.btn_save = QPushButton(self.tr("Guardar"))
         self.btn_save.setObjectName("analyzeButton")
         self.btn_save.setFixedWidth(110)
-        self.btn_save.setFixedHeight(35)
+        self.btn_save.setFixedHeight(32)
         self.btn_save.clicked.connect(self.accept)
 
         bot.addWidget(self.btn_cancel, 1)

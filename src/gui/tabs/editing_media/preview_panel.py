@@ -50,7 +50,7 @@ class PreviewContainerWidget(QFrame):
             QFrame#previewContainer {{
                 background-color: {get_theme_token('fondo_principal', '#0a0a0a')};
                 border: 1px solid {get_theme_token('borde_normal', '#2d2d2d')};
-                border-radius: 12px;
+                border-radius: 6px;
             }}
         """)
         

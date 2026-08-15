@@ -187,7 +187,7 @@ class QuickDownloadRow(QFrame):
             QPushButton {{
                 background-color: transparent;
                 border: none;
-                border-radius: 12px;
+                border-radius: 6px;
                 padding: 2px;
             }}
             QPushButton:hover {{
@@ -230,7 +230,7 @@ class QuickDownloadRow(QFrame):
             QFrame#queueItemCard {{
                 background-color: {get_theme_token('fondo_principal', '#121212')};
                 border: 1px solid {get_theme_token('borde', '#2d2d2d')};
-                border-radius: 8px;
+                border-radius: 6px;
             }}
             QLabel {{
                 color: {get_theme_token('texto_principal', '#dddddd')};

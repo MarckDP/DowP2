@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QThread, QUrl
 from PySide6.QtGui import QDesktopServices, QIcon
 from core.utils.i18n import logger
-from gui.styles import get_theme_token
+from gui.styles import get_theme_token, set_button_variant, apply_folder_browse_button_style, apply_folder_open_button_style
 from core.utils.config_manager import get_config, save_config
 
 from core.setup.ffmpeg_setup import (
@@ -323,24 +323,15 @@ class FFmpegOptionsPanel(QFrame):
         custom_input_row = QHBoxLayout()
         self._custom_field = QLineEdit()
         self._custom_field.setPlaceholderText(self.tr("Ej: C:/ffmpeg/bin/ffmpeg.exe o C:/ffmpeg/bin"))
-        self._custom_field.setStyleSheet(
-            "background: #1e1e1e; color: #DDD; border: 1px solid #444;"
-            " border-radius: 4px; padding: 4px 8px; font-size: 12px;"
-        )
         self._custom_field.textChanged.connect(self._on_custom_path_changed)
 
-        custom_browse_btn = QToolButton()
-        custom_browse_btn.setText("...")
-        custom_browse_btn.setFixedSize(28, 28)
+        custom_browse_btn = QPushButton()
+        custom_browse_btn.setFixedSize(32, 32)
         custom_browse_btn.setCursor(Qt.PointingHandCursor)
-        custom_browse_btn.setStyleSheet(
-            "QToolButton { background: #2e2e2e; border: 1px solid #555;"
-            " border-radius: 4px; color: #DDD; }"
-            " QToolButton:hover { background: #3e3e3e; }"
-        )
+        apply_folder_browse_button_style(custom_browse_btn, self.tr("Examinar ejecutable de FFmpeg"))
         custom_browse_btn.clicked.connect(self._pick_custom_path)
 
-        custom_input_row.addWidget(self._custom_field)
+        custom_input_row.addWidget(self._custom_field, 1)
         custom_input_row.addWidget(custom_browse_btn)
         custom_layout.addLayout(custom_input_row)
 
@@ -849,28 +840,18 @@ class YTDLPAndPOTPanel(QFrame):
         browser_path_row = QHBoxLayout()
         self._browser_field = QLineEdit()
         self._browser_field.setPlaceholderText(self.tr("Auto-detectado: deja vacío o elige un ejecutable"))
-        self._browser_field.setStyleSheet(
-            "background: #1e1e1e; color: #DDD; border: 1px solid #444;"
-            " border-radius: 4px; padding: 4px 8px; font-size: 12px;"
-        )
         self._browser_field.textChanged.connect(self._on_browser_path_changed)
 
         self._browser_detected_lbl = QLabel()
         self._browser_detected_lbl.setStyleSheet("color: #4CAF50; font-size: 11px;")
 
-        browse_btn = QToolButton()
-        browse_btn.setText("...")
-        browse_btn.setFixedSize(28, 28)
+        browse_btn = QPushButton()
+        browse_btn.setFixedSize(32, 32)
         browse_btn.setCursor(Qt.PointingHandCursor)
-        browse_btn.setToolTip(self.tr("Seleccionar ejecutable del navegador (chrome.exe, brave.exe, msedge.exe...)"))
-        browse_btn.setStyleSheet(
-            "QToolButton { background: #2e2e2e; border: 1px solid #555;"
-            " border-radius: 4px; color: #DDD; }"
-            " QToolButton:hover { background: #3e3e3e; }"
-        )
+        apply_folder_browse_button_style(browse_btn, self.tr("Seleccionar ejecutable del navegador (chrome.exe, brave.exe, msedge.exe...)"))
         browse_btn.clicked.connect(self._pick_browser)
 
-        browser_path_row.addWidget(self._browser_field)
+        browser_path_row.addWidget(self._browser_field, 1)
         browser_path_row.addWidget(browse_btn)
         root.addLayout(browser_path_row)
         root.addWidget(self._browser_detected_lbl)
@@ -995,14 +976,14 @@ class YTDLPAndPOTPanel(QFrame):
             self._bgutil_status.setStyleSheet("color: #4CAF50; font-size: 11px;")
             self._bgutil_btn.setText(self.tr("Actualizado"))
             self._bgutil_btn.setDisabled(True)
-            self._bgutil_btn.setStyleSheet("")
+            set_button_variant(self._bgutil_btn, "secondary")
             self._bgutil_btn.setVisible(True)
         else:
             self._bgutil_status.setText(self.tr("✗ No instalado"))
             self._bgutil_status.setStyleSheet("color: #F44336; font-size: 11px;")
             self._bgutil_btn.setText(self.tr("Instalar"))
             self._bgutil_btn.setDisabled(False)
-            self._bgutil_btn.setStyleSheet("background-color: #007BFF; color: white; border: none; font-weight: bold;")
+            set_button_variant(self._bgutil_btn, "accent-blue")
             self._bgutil_btn.setVisible(True)
 
         # WPC
@@ -1013,13 +994,13 @@ class YTDLPAndPOTPanel(QFrame):
             self._wpc_status.setStyleSheet("color: #4CAF50; font-size: 11px;")
             self._wpc_btn.setText(self.tr("Actualizado"))
             self._wpc_btn.setDisabled(True)
-            self._wpc_btn.setStyleSheet("")
+            set_button_variant(self._wpc_btn, "secondary")
         else:
             self._wpc_status.setText(self.tr("✗ No instalado"))
             self._wpc_status.setStyleSheet("color: #F44336; font-size: 11px;")
             self._wpc_btn.setText(self.tr("Instalar"))
             self._wpc_btn.setDisabled(False)
-            self._wpc_btn.setStyleSheet("")
+            set_button_variant(self._wpc_btn, "accent-blue")
 
     def _update_detected_label(self):
         configured = self._browser_field.text().strip()
@@ -1078,13 +1059,13 @@ class YTDLPAndPOTPanel(QFrame):
             self._bgutil_status.setStyleSheet("color: #FFC107; font-weight: bold; font-size: 11px;")
             self._bgutil_btn.setText(self.tr("Actualizar"))
             self._bgutil_btn.setDisabled(False)
-            self._bgutil_btn.setStyleSheet("background-color: #007BFF; color: white; border: none; font-weight: bold;")
+            set_button_variant(self._bgutil_btn, "accent-blue")
         else:
             self._bgutil_status.setText(f"✓ Instalado  v{local_ver}")
             self._bgutil_status.setStyleSheet("color: #4CAF50; font-size: 11px;")
             self._bgutil_btn.setText(self.tr("Actualizado"))
             self._bgutil_btn.setDisabled(True)
-            self._bgutil_btn.setStyleSheet("")
+            set_button_variant(self._bgutil_btn, "secondary")
 
     def _on_bgutil_action(self):
         self._bgutil_btn.setDisabled(True)
@@ -1129,13 +1110,13 @@ class YTDLPAndPOTPanel(QFrame):
             self._wpc_status.setStyleSheet("color: #FFC107; font-weight: bold; font-size: 11px;")
             self._wpc_btn.setText(self.tr("Actualizar"))
             self._wpc_btn.setDisabled(False)
-            self._wpc_btn.setStyleSheet("background-color: #007BFF; color: white; border: none; font-weight: bold;")
+            set_button_variant(self._wpc_btn, "accent-blue")
         else:
             self._wpc_status.setText(f"✓ Instalado  v{local_ver}")
             self._wpc_status.setStyleSheet("color: #4CAF50; font-size: 11px;")
             self._wpc_btn.setText(self.tr("Actualizado"))
             self._wpc_btn.setDisabled(True)
-            self._wpc_btn.setStyleSheet("")
+            set_button_variant(self._wpc_btn, "secondary")
 
     def _on_wpc_action(self):
         self._wpc_btn.setDisabled(True)
@@ -1375,9 +1356,11 @@ class DependenciesPage(QWidget):
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setFrameShape(QFrame.NoFrame)
-        scroll_area.setStyleSheet("background-color: transparent;")
+        scroll_area.setStyleSheet("QScrollArea { background-color: transparent; border: none; }")
 
         scroll_content = QWidget()
+        scroll_content.setObjectName("settingsScrollContent")
+        scroll_content.setStyleSheet("QWidget#settingsScrollContent { background-color: transparent; }")
         self.scroll_layout = QVBoxLayout(scroll_content)
         self.scroll_layout.setContentsMargins(0, 0, 10, 0)
         self.scroll_layout.setSpacing(12)
@@ -1407,46 +1390,13 @@ class DependenciesPage(QWidget):
         
         self.btn_open_folder = QPushButton(self.tr("Abrir Carpeta de Dependencias"))
         self.btn_open_folder.setCursor(Qt.PointingHandCursor)
-        self.btn_open_folder.setToolTip(self.tr("Abrir la carpeta donde se almacenan los binarios de las dependencias"))
-        self.btn_open_folder.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {get_theme_token('fondo_elemento', '#2d2d2d')};
-                color: {get_theme_token('texto_principal', '#ffffff')};
-                border: 1px solid {get_theme_token('borde_normal', '#444444')};
-                padding: 8px 18px;
-                font-weight: bold;
-                font-size: 12px;
-                border-radius: 6px;
-            }}
-            QPushButton:hover {{
-                background-color: {get_theme_token('seleccion_fondo', '#3d3d3d')};
-                border-color: {get_theme_token('acento_primario', '#B9E640')};
-            }}
-        """)
+        apply_folder_open_button_style(self.btn_open_folder, self.tr("Abrir la carpeta donde se almacenan los binarios de las dependencias"))
         self.btn_open_folder.clicked.connect(self.open_dependencies_folder)
         bottom_layout.addWidget(self.btn_open_folder)
 
         self.btn_check_updates = QPushButton(self.tr("Buscar Actualizaciones"))
         self.btn_check_updates.setCursor(Qt.PointingHandCursor)
-        self.btn_check_updates.setStyleSheet("""
-            QPushButton {
-                background-color: #FF8C00; 
-                color: #000000; 
-                padding: 8px 20px; 
-                font-weight: bold;
-                font-size: 12px;
-                border: none;
-                border-radius: 6px;
-            }
-            QPushButton:hover {
-                background-color: #FFA500;
-                color: #000000;
-            }
-            QPushButton:disabled {
-                background-color: #333333;
-                color: #777777;
-            }
-        """)
+        self.btn_check_updates.setProperty("variant", "accent-orange")
         self.btn_check_updates.clicked.connect(self.check_all_updates)
         bottom_layout.addWidget(self.btn_check_updates)
         

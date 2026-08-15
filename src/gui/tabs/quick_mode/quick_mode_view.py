@@ -71,7 +71,7 @@ class QuickModeTab(QWidget):
             QFrame#analysisOptionsBar {{
                 background-color: {fondo_color};
                 border: 1px solid {borde_color};
-                border-radius: 12px;
+                border-radius: 6px;
             }}
         """
         self.options_panel.setStyleSheet(box_style)
@@ -106,7 +106,7 @@ class QuickModeTab(QWidget):
         # Botón circular conmutable para activar el recorte de fragmentos
         self.btn_cut = QPushButton()
         self.btn_cut.setCheckable(True)
-        self.btn_cut.setFixedSize(34, 34)
+        self.btn_cut.setFixedSize(32, 32)
         self.btn_cut.setToolTip(self.tr("Activar recorte de fragmento"))
         
         self.btn_cut.setIconSize(QSize(18, 18))

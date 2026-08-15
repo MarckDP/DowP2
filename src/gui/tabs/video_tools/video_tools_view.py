@@ -18,6 +18,7 @@ from PySide6.QtGui import QIcon
 
 from gui.widgets.animated_button import AnimatedButton
 from gui.widgets.bouncing_progress_bar import BouncingProgressBar
+from gui.styles import apply_folder_browse_button_style
 from gui.widgets.media_trim_player_widget import MediaTrimPlayerWidget
 from gui.tabs.video_tools.media_queue_widget import MediaQueueWidget
 from gui.tabs.video_tools.encoding_options_widget import EncodingOptionsWidget
@@ -105,9 +106,10 @@ class VideoToolsTab(QWidget):
         self.txt_output_dir.setPlaceholderText(self.tr("Seleccionar carpeta de destino..."))
         grid_out.addWidget(self.txt_output_dir, 0, 1)
 
-        self.btn_browse_output = QPushButton(self.tr("Examinar"))
-        self.btn_browse_output.setObjectName("pathToolButton")
+        self.btn_browse_output = QPushButton()
+        self.btn_browse_output.setFixedSize(32, 32)
         self.btn_browse_output.setCursor(Qt.PointingHandCursor)
+        apply_folder_browse_button_style(self.btn_browse_output, self.tr("Seleccionar carpeta de salida"))
         self.btn_browse_output.clicked.connect(self._on_browse_output_clicked)
         grid_out.addWidget(self.btn_browse_output, 0, 2)
 
@@ -135,6 +137,7 @@ class VideoToolsTab(QWidget):
 
         # Botón Acción Principal Iniciar Recodificación
         self.btn_start = AnimatedButton(self.tr("Iniciar Recodificación"))
+        self.btn_start.setProperty("variant", "primary")
         self.btn_start.setObjectName("downloadButton")
         self.btn_start.setFixedHeight(36)
         self.btn_start.clicked.connect(self._on_start_recoding_clicked)

@@ -47,8 +47,8 @@ _SVG_DIR = os.path.normpath(os.path.join(
     os.path.dirname(__file__), "..", "..", "..", "assets", "icons", "svg"
 ))
 
-def get_colored_svg_icon(name: str, color_hex: str, size=16) -> QIcon:
-    """Carga y tintura un icono SVG con el color especificado sin tinte automático de selección."""
+def get_colored_svg_icon(name: str, color_hex: str, size=16, disabled_color_hex: str = "#666666") -> QIcon:
+    """Carga y tintura un icono SVG con el color especificado y soporte para estado deshabilitado."""
     path = os.path.join(_SVG_DIR, name)
     if not os.path.exists(path):
         return QIcon()
@@ -68,6 +68,18 @@ def get_colored_svg_icon(name: str, color_hex: str, size=16) -> QIcon:
     icon.addPixmap(pix, QIcon.Mode.Selected, QIcon.State.On)
     icon.addPixmap(pix, QIcon.Mode.Active, QIcon.State.Off)
     icon.addPixmap(pix, QIcon.Mode.Active, QIcon.State.On)
+
+    if disabled_color_hex:
+        pix_dis = QPixmap(path)
+        if not pix_dis.isNull():
+            pix_dis = pix_dis.scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            painter_dis = QPainter(pix_dis)
+            painter_dis.setCompositionMode(QPainter.CompositionMode_SourceIn)
+            painter_dis.fillRect(pix_dis.rect(), QColor(disabled_color_hex))
+            painter_dis.end()
+            icon.addPixmap(pix_dis, QIcon.Mode.Disabled, QIcon.State.Off)
+            icon.addPixmap(pix_dis, QIcon.Mode.Disabled, QIcon.State.On)
+
     return icon
 
 def get_colored_folder_icon(color_hex: str) -> QIcon:

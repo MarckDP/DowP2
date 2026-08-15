@@ -151,7 +151,7 @@ class AdvancedProcessTab(QWidget):
             QFrame#analysisOptionsBar {{
                 background-color: {fondo_color};
                 border: 1px solid {borde_color};
-                border-radius: 12px;
+                border-radius: 6px;
             }}
         """)
         layout = QHBoxLayout(bar)

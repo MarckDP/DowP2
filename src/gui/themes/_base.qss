@@ -27,9 +27,9 @@ QRadioButton:focus, QTabBar::tab:focus, QAbstractItemView:focus {
     outline: none;
 }
 
-/* Bordes Redondeados Globales 12px */
+/* Bordes Redondeados Globales 6px */
 QLineEdit, QPushButton, QFrame, QListWidget, QComboBox, QSpinBox, QDoubleSpinBox, QProgressBar, QAbstractItemView {
-    border-radius: 12px;
+    border-radius: 6px;
 }
 
 /* ═══════════════════════════════════════════
@@ -37,19 +37,41 @@ QLineEdit, QPushButton, QFrame, QListWidget, QComboBox, QSpinBox, QDoubleSpinBox
    ═══════════════════════════════════════════ */
 
 QLineEdit {
-    background-color: {{fondo_principal}}; /* Matches titleInput style for consistency */
-    border: 1px solid {{borde_normal}};
-    padding: 2px 10px;
+    background-color: {{fondo_elemento}};
+    border: 1px solid {{borde_sutil}};
+    border-radius: 6px;
+    padding: 6px 10px;
+    color: {{texto_principal}};
+    min-height: 18px;
+    font-size: 12px;
+    selection-background-color: {{seleccion_fondo}};
+    selection-color: {{seleccion_texto}};
+}
+
+QLineEdit:focus {
+    background-color: {{fondo_elemento}};
+    border: 1px solid {{acento_primario}};
     color: {{texto_activo}};
-    min-height: 28px;
+}
+
+QLineEdit:read-only {
+    background-color: {{fondo_elemento}};
+    color: {{texto_principal}};
+    border: 1px solid {{borde_sutil}};
+}
+
+QLineEdit:disabled {
+    background-color: {{fondo_secundario}};
+    color: {{texto_deshabilitado}};
+    border: 1px solid {{borde_normal}};
 }
 
 QSpinBox, QDoubleSpinBox {
     background-color: {{fondo_secundario}};
     border: 1px solid {{borde_normal}};
-    padding: 4px 8px;
+    padding: 6px 8px;
     color: {{texto_activo}};
-    min-height: 22px;
+    min-height: 18px;
 }
 
 QSpinBox::up-button, QDoubleSpinBox::up-button,
@@ -60,11 +82,11 @@ QSpinBox::down-button, QDoubleSpinBox::down-button {
 }
 
 QSpinBox::up-button, QDoubleSpinBox::up-button {
-    border-top-right-radius: 10px;
+    border-top-right-radius: 6px;
 }
 
 QSpinBox::down-button, QDoubleSpinBox::down-button {
-    border-bottom-right-radius: 10px;
+    border-bottom-right-radius: 6px;
 }
 
 QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover,
@@ -85,7 +107,7 @@ QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {
 }
 
 QLineEdit#titleInput {
-    background-color: {{fondo_principal}};
+    background-color: {{fondo_elemento}};
     font-size: 13px;
     font-weight: normal;
     padding: 7px 10px;
@@ -93,48 +115,169 @@ QLineEdit#titleInput {
 }
 
 /* ═══════════════════════════════════════════
-   BOTONES BASE Y SECUNDARIOS
+   SISTEMA DE BOTONES CENTRALIZADO (DOWP 2.0)
    ═══════════════════════════════════════════ */
 
-QPushButton {
+/* 1. Base / Secundario Estándar */
+QPushButton,
+QPushButton[variant="secondary"] {
     background-color: {{panel_fondo}};
     color: {{texto_principal}};
     border: 1px solid {{borde_sutil}};
     border-radius: 6px;
     padding: 6px 14px;
     font-size: 12px;
+    min-height: 18px;
 }
 
-QPushButton:hover {
+QPushButton[variant="secondary"]:hover {
     background-color: {{fondo_elemento}};
     border-color: {{acento_primario}};
     color: {{texto_activo}};
 }
 
-QPushButton:pressed {
+QPushButton[variant="secondary"]:pressed {
     background-color: {{fondo_terciario}};
     border-color: {{acento_secundario}};
 }
 
-QPushButton:disabled {
+QPushButton[variant="secondary"]:disabled {
     background-color: {{fondo_secundario}};
     color: {{texto_deshabilitado}};
     border-color: {{borde_normal}};
 }
 
-/* ═══════════════════════════════════════════
-   BOTÓN PRINCIPAL — Analizar
-   ═══════════════════════════════════════════ */
-
+/* 2. Primario de Acción (Gradiente Verde) */
+QPushButton[variant="primary"],
 QPushButton#analyzeButton {
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
         stop:0 {{boton_fondo_inicio}}, stop:1 {{boton_fondo_fin}});
     color: {{boton_texto}};
     border: none;
-    padding: 10px 20px;
+    border-radius: 6px;
+    padding: 7px 18px;
+    font-weight: bold;
+    min-height: 18px;
+}
+
+QPushButton[variant="primary"]:hover,
+QPushButton#analyzeButton:hover {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 {{boton_fondo_fin}}, stop:1 {{boton_fondo_inicio}});
+}
+
+QPushButton[variant="primary"]:disabled,
+QPushButton#analyzeButton:disabled {
+    background: none;
+    background-color: {{fondo_terciario}};
+    color: {{texto_secundario}};
+}
+
+/* 3. Acento Sólido Verde Plano (Carpeta, Play, Loop, etc.) */
+QPushButton[variant="accent-solid"],
+QPushButton#pathToolButton,
+#pathToolButton {
+    background-color: {{acento_secundario}};
+    color: #000000;
+    border: none;
+    border-radius: 6px;
+    padding: 2px;
     font-weight: bold;
 }
 
+QPushButton[variant="accent-solid"]:hover,
+QPushButton#pathToolButton:hover,
+#pathToolButton:hover {
+    background-color: {{acento_primario}};
+    border: none;
+    color: #000000;
+}
+
+QPushButton[variant="accent-solid"]:pressed,
+QPushButton#pathToolButton:pressed,
+#pathToolButton:pressed {
+    background-color: {{acento_secundario}};
+    border: none;
+    color: #000000;
+}
+
+QPushButton[variant="accent-solid"]:disabled,
+QPushButton#pathToolButton:disabled,
+#pathToolButton:disabled {
+    background-color: {{fondo_secundario}};
+    color: {{texto_deshabilitado}};
+    border: 1px solid {{borde_sutil}};
+}
+
+/* 4. Modo / Toggle Azul (SOLO, Actualizaciones) */
+QPushButton[variant="accent-blue"] {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 {{boton_solo_inicio}}, stop:1 {{boton_solo_fin}});
+    color: {{boton_solo_texto}};
+    border: none;
+    border-radius: 6px;
+    padding: 6px 14px;
+    font-weight: bold;
+}
+
+QPushButton[variant="accent-blue"]:hover {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 {{boton_solo_fin}}, stop:1 {{boton_solo_inicio}});
+}
+
+QPushButton[variant="accent-blue"]:disabled {
+    background: none;
+    background-color: {{fondo_terciario}};
+    color: {{texto_secundario}};
+}
+
+/* 5. Especial / Naranja (Fragmentos, Buscar Updates) */
+QPushButton[variant="accent-orange"],
+QPushButton#btnFragments {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:1, 
+        stop:0 {{boton_fragmentos_inicio}}, stop:1 {{boton_fragmentos_fin}});
+    color: {{boton_fragmentos_texto}};
+    border: none;
+    border-radius: 6px;
+    padding: 6px 16px;
+    font-weight: bold;
+}
+
+QPushButton[variant="accent-orange"]:hover,
+QPushButton#btnFragments:hover {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:1, 
+        stop:0 {{boton_fragmentos_fin}}, stop:1 {{boton_fragmentos_inicio}});
+}
+
+QPushButton[variant="accent-orange"]:disabled,
+QPushButton#btnFragments:disabled {
+    background: none;
+    background-color: {{fondo_terciario}};
+    color: {{texto_secundario}};
+}
+
+/* 6. Destructivo / Peligro (Rojo) */
+QPushButton[variant="danger"] {
+    background-color: rgba(255, 107, 95, 0.12);
+    border: 1px solid {{estado_error}};
+    color: {{estado_error}};
+    border-radius: 6px;
+    padding: 6px 14px;
+    font-weight: bold;
+}
+
+QPushButton[variant="danger"]:hover {
+    background-color: {{estado_error}};
+    color: #ffffff;
+}
+
+QPushButton[variant="danger"]:disabled {
+    background-color: {{fondo_secundario}};
+    border-color: {{borde_normal}};
+    color: {{texto_deshabilitado}};
+}
+
+/* Otros botones especiales */
 QPushButton#importButton {
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
         stop:0 {{boton_importar_inicio}}, stop:1 {{boton_importar_fin}});
@@ -167,7 +310,7 @@ QPushButton#downloadButton[state="error"],
 QPushButton#downloadButton[state="cancelling"] {
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
         stop:0 {{boton_descarga_error_inicio}}, stop:1 {{boton_descarga_error_fin}});
-    color: #ffffff; /* Asegurar contraste en rojo */
+    color: #ffffff;
 }
 
 QPushButton#downloadButton[state="paused"] {
@@ -180,28 +323,6 @@ QPushButton#downloadButton:disabled {
     background: none;
     background-color: {{fondo_terciario}};
     color: {{texto_secundario}};
-}
-
-/* Botón Fragmentos con degradado rojo-naranja */
-QPushButton#btnFragments {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:1, 
-        stop:0 {{boton_fragmentos_inicio}}, stop:1 {{boton_fragmentos_fin}});
-    color: {{boton_fragmentos_texto}};
-    border: none;
-    padding: 6px 20px;
-    font-weight: bold;
-}
-
-QPushButton#btnFragments:hover {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:1, 
-        stop:0 {{boton_fragmentos_fin}}, stop:1 {{boton_fragmentos_inicio}});
-}
-
-QPushButton#btnFragments:disabled {
-    background: none;
-    background-color: {{fondo_terciario}};
-    color: {{texto_secundario}};
-    border: none;
 }
 
 /* ═══════════════════════════════════════════
@@ -243,28 +364,34 @@ QTabBar QToolButton {
 QComboBox {
     background-color: {{fondo_terciario}}; /* Solid background to avoid transparency */
     border: 1px solid {{borde_normal}};
-    padding: 2px 30px 2px 10px;
-    min-height: 28px;
+    padding: 6px 30px 6px 10px;
+    min-height: 18px;
 }
 
 QComboBox::drop-down {
     border-left: 1px solid {{borde_normal}};
     background-color: rgba(0, 0, 0, 0.4); /* Clearly darker section */
     width: 25px;
-    border-top-right-radius: 12px;
-    border-bottom-right-radius: 12px;
+    border-top-right-radius: 6px;
+    border-bottom-right-radius: 6px;
 }
-
 QComboBox::down-arrow {
     image: url({{icono_triangulo}});
     width: 10px;
     height: 6px;
 }
 
+QComboBoxPrivateContainer {
+    background-color: transparent;
+    border: none;
+    margin: 0px;
+    padding: 0px;
+}
+
 QComboBox QAbstractItemView {
     background-color: {{fondo_terciario}};
     border: 1px solid {{acento_primario}}; /* Highlight border for the popup */
-    border-radius: 10px;
+    border-radius: 6px;
     selection-background-color: {{seleccion_fondo}};
     selection-color: {{seleccion_texto}};
     outline: none;
@@ -275,7 +402,7 @@ QComboBox QAbstractItemView {
 
 QComboBox QAbstractItemView::item {
     padding: 4px 8px;
-    border-radius: 4px;
+    border-radius: 6px;
     min-height: 22px;
 }
 
@@ -392,15 +519,19 @@ QCheckBox::indicator:disabled {
 }
 
 /* ═══════════════════════════════════════════
-   TARJETAS DE DEPENDENCIAS
+   TARJETAS Y PANELES DE AJUSTES
    ═══════════════════════════════════════════ */
 
+QFrame#settingsCard,
 QFrame#ffmpegOptionsPanel,
 QFrame#ytdlpPotPanel,
-QFrame#denoCardPanel {
+QFrame#denoCardPanel,
+QFrame#adobeCard,
+QFrame#davinciCard,
+QFrame[variant="card"] {
     background-color: rgba(255, 255, 255, 0.035);
     border: 1px solid {{borde_sutil}};
-    border-radius: 8px;
+    border-radius: 6px;
     padding: 4px;
 }
 
@@ -411,7 +542,7 @@ QFrame#denoCardPanel {
 QMenu {
     background-color: {{fondo_secundario}};
     border: 1px solid {{borde_normal}};
-    border-radius: 8px;
+    border-radius: 6px;
     padding: 4px;
     color: {{texto_principal}};
 }
@@ -419,7 +550,7 @@ QMenu {
 QMenu::item {
     background-color: transparent;
     padding: 5px 16px 5px 24px;
-    border-radius: 4px;
+    border-radius: 6px;
     color: {{texto_principal}};
     font-size: 12px;
 }
@@ -520,7 +651,7 @@ QListWidget {
 
 QListWidget::item {
     background-color: {{fondo_elemento}};
-    border-radius: 10px;
+    border-radius: 6px;
     margin: 4px 8px;
     padding: 10px;
     border: 1px solid {{borde_normal}};
@@ -625,9 +756,9 @@ QPushButton#soloButton {
     background-color: {{fondo_secundario}};
     border: 1px solid {{borde_normal}};
     color: {{texto_secundario}};
-    padding: 2px 10px;
+    padding: 6px 10px;
     font-weight: bold;
-    min-height: 28px;
+    min-height: 18px;
 }
 
 QPushButton#soloButton:hover {
@@ -638,32 +769,6 @@ QPushButton#soloButton:hover {
 QPushButton#soloButton:checked {
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
         stop:0 {{boton_solo_inicio}}, stop:1 {{boton_solo_fin}});
-    color: {{boton_solo_texto}};
-    border: none;
-}
-
-QPushButton:disabled {
-    background-color: {{fondo_principal}};
-    color: {{texto_secundario}};
-    border: 1px solid {{borde_normal}};
-}
-
-QPushButton#pathToolButton {
-    background-color: {{boton_secundario_fondo}};
-    color: {{boton_secundario_texto}};
-    border: none;
-    padding: 5px;
-    font-weight: bold;
-}
-
-QPushButton#pathToolButton:disabled {
-    background-color: {{fondo_principal}};
-    color: {{texto_secundario}};
-    border: 1px solid {{borde_normal}};
-}
-
-QPushButton#pathToolButton:hover {
-    background-color: {{boton_secundario_hover}};
 }
 
 /* ═══════════════════════════════════════════
@@ -673,7 +778,7 @@ QPushButton#pathToolButton:hover {
 QDialog#fragmentDialog {
     background-color: {{fondo_principal}};
     border: 1px solid {{borde_normal}};
-    border-radius: 12px;
+    border-radius: 6px;
 }
 
 QWidget#fragmentMainContainer {
@@ -683,13 +788,13 @@ QWidget#fragmentMainContainer {
 QWidget#fragmentVideoContainer {
     background-color: #000000;
     border: 1px solid {{borde_normal}};
-    border-radius: 15px;
+    border-radius: 6px;
 }
 
 QListWidget#fragmentList {
     background-color: {{fondo_secundario}};
     border: 1px solid {{borde_normal}};
-    border-radius: 12px;
+    border-radius: 6px;
     outline: none;
 }
 
@@ -699,7 +804,7 @@ QPushButton#redButton {
     border: none;
     padding: 8px 15px;
     font-weight: bold;
-    border-radius: 8px;
+    border-radius: 6px;
 }
 
 QPushButton#redButton:hover {
@@ -712,7 +817,7 @@ QPushButton#addFragmentButton {
     color: {{acento_primario}};
     padding: 8px 15px;
     font-weight: bold;
-    border-radius: 8px;
+    border-radius: 6px;
 }
 
 QPushButton#addFragmentButton:hover {
@@ -775,13 +880,13 @@ QProgressBar#downloadProgressBar[status="done"] {
 QProgressBar#downloadProgressBar::chunk {
     background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
         stop:0 {{progreso_inicio}}, stop:1 {{progreso_fin}});
-    border-radius: 10px;
+    border-radius: 6px;
 }
 
 QProgressBar#downloadProgressBar[status="running"]::chunk {
     background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
         stop:0 {{progreso_inicio}}, stop:1 {{progreso_fin}});
-    border-radius: 10px;
+    border-radius: 6px;
 }
 
 /* ═══════════════════════════════════════════
@@ -815,12 +920,12 @@ QCheckBox::indicator:checked {
 QFrame#modeSelectorContainer {
     background-color: {{fondo_secundario}};
     border: 1px solid {{borde_normal}};
-    border-radius: 12px;
+    border-radius: 6px;
 }
 
 QFrame#modeIndicator {
     background-color: {{boton_secundario_fondo}};
-    border-radius: 10px;
+    border-radius: 6px;
 }
 
 QPushButton#modeButton {
@@ -879,7 +984,7 @@ QPushButton#sidebarButton {
     text-align: left;
     padding-left: 20px;
     border: none;
-    border-radius: 4px;
+    border-radius: 6px;
     background-color: transparent;
     color: {{texto_secundario}};
     font-weight: bold;
@@ -897,20 +1002,21 @@ QPushButton#sidebarButton:checked {
 }
 
 QFrame#settingsContentArea {
-    background-color: {{fondo_secundario}};
+    background-color: transparent;
+    border: none;
     border-radius: 0px;
 }
 
 QFrame#infoCard {
     background-color: {{boton_secundario_fondo}};
-    border-radius: 8px;
+    border-radius: 6px;
     border: 1px solid {{boton_secundario_hover}};
 }
 
 QPushButton#githubButton {
     background-color: {{acento_secundario}};
     border: none;
-    border-radius: 4px;
+    border-radius: 6px;
     padding: 6px 12px;
     color: #111400;
     font-weight: bold;

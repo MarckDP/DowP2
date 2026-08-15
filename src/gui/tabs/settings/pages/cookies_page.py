@@ -6,6 +6,7 @@ from core.utils.config_manager import get_config, save_config
 from core.setup.ytdlp_setup import get_ytdlp_path
 from core.setup.setup_manager import get_ytdlp_base_args
 from gui.widgets.combo_box import AutoPopupComboBox
+from gui.styles import apply_folder_browse_button_style
 import sys
 import subprocess
 import os
@@ -143,9 +144,10 @@ class CookiesPage(QWidget):
         self.file_input = QLineEdit()
         self.file_input.setPlaceholderText(self.tr("Ruta del archivo cookies.txt"))
         
-        self.browse_btn = QPushButton(self.tr("Examinar..."))
-        self.browse_btn.setObjectName("secondaryButton")
-        self.browse_btn.setFixedWidth(120)
+        self.browse_btn = QPushButton()
+        self.browse_btn.setFixedSize(32, 32)
+        self.browse_btn.setCursor(Qt.PointingHandCursor)
+        apply_folder_browse_button_style(self.browse_btn, self.tr("Examinar archivo de cookies (*.txt)"))
         
         self.file_row.addWidget(self.file_input)
         self.file_row.addWidget(self.browse_btn)

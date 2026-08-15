@@ -26,11 +26,32 @@ __version__ = "2.0.0"
 from PySide6.QtCore import QObject, QEvent, Qt
 from PySide6.QtWidgets import QPushButton, QCheckBox, QRadioButton, QComboBox, QTabBar, QStyledItemDelegate
 
+class _ComboPopupMaskFilter(QObject):
+    """Mantiene la máscara del contenedor del popup (QComboBoxPrivateContainer) sincronizada
+    con su tamaño en cada resize.
+
+    Qt solo pinta el panel nativo opaco de menú (QStyle::PE_PanelMenu, reservado para los
+    indicadores de scroll arriba/abajo) cuando `mask().isEmpty()` es verdadero — ver
+    QComboBoxPrivateContainer::paintEvent en qcombobox.cpp. Ese panel se dibuja directamente
+    con QPainter, así que ignora el `background: transparent` del QSS y WA_TranslucentBackground,
+    y aparece como una franja opaca sobre/bajo la lista. Asignarle cualquier máscara no vacía
+    (aquí, su propio rect) hace que Qt se salte ese dibujado por completo."""
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.Type.Resize:
+            obj.setMask(obj.rect())
+        return False
+
+
 class HandCursorInstaller(QObject):
     """Instala cursor pointer en widgets interactivos y garantiza QStyledItemDelegate
     en QComboBoxes para soporte de hover y selección visual vía QSS."""
     _TARGET_TYPES = (QPushButton, QCheckBox, QRadioButton, QComboBox, QTabBar)
-    
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._mask_filter = _ComboPopupMaskFilter(self)
+
     def eventFilter(self, obj, event):
         if event.type() == QEvent.Type.ChildAdded:
             child = event.child()
@@ -39,9 +60,14 @@ class HandCursorInstaller(QObject):
                 # para habilitar feedback visual de hover/selección en el menú desplegable QSS.
                 if child.itemDelegate().__class__ == QComboBox().itemDelegate().__class__:
                     child.setItemDelegate(QStyledItemDelegate(child))
-                # Transparencia en la ventana del menú desplegable para eliminar filos cuadrados detrás del border-radius QSS
+                # Transparencia y frameless en la ventana popup del menú desplegable
+                # para eliminar bordes y filos cuadrados nativos detrás del border-radius QSS
                 if child.view() and child.view().window():
-                    child.view().window().setAttribute(Qt.WA_TranslucentBackground)
+                    container = child.view().window()
+                    container.setAttribute(Qt.WA_TranslucentBackground, True)
+                    container.setWindowFlags(Qt.Popup | Qt.FramelessWindowHint | Qt.NoDropShadowWindowHint)
+                    container.installEventFilter(self._mask_filter)
+                    container.setMask(container.rect())
             if isinstance(child, self._TARGET_TYPES):
                 child.setCursor(Qt.PointingHandCursor)
         return False
@@ -50,7 +76,7 @@ def main():
     # 0. Setup App and Language
     app = QApplication(sys.argv)
     app.setStyle("Fusion")  # Estilo base multiplataforma que previene bugs de QComboBox en Windows
-    
+
     # Instalar cursor pointer en widgets interactivos (ChildAdded, no Enter — más eficiente)
     app.installEventFilter(HandCursorInstaller(app))
     

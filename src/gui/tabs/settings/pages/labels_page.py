@@ -131,9 +131,8 @@ class LabelsPage(QWidget):
         # Button Row to Add label + Feedback
         btn_layout = QHBoxLayout()
         self.add_btn = QPushButton(self.tr("Agregar Etiqueta"))
-        self.add_btn.setObjectName("secondaryButton")
+        self.add_btn.setProperty("variant", "secondary")
         self.add_btn.setFixedWidth(160)
-        self.add_btn.setStyleSheet(f"font-weight: bold; color: {get_theme_token('acento_primario', '#B9E640')};")
         self.add_btn.clicked.connect(self.open_add_dialog)
 
         self.feedback_lbl = QLabel("")
@@ -157,10 +156,11 @@ class LabelsPage(QWidget):
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(QFrame.NoFrame)
-        self.scroll.setStyleSheet("background: transparent; border: none;")
+        self.scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
         
         self.scroll_content = QWidget()
-        self.scroll_content.setStyleSheet("background: transparent;")
+        self.scroll_content.setObjectName("labelsScrollContent")
+        self.scroll_content.setStyleSheet("QWidget#labelsScrollContent { background: transparent; }")
         self.scroll_layout = QVBoxLayout(self.scroll_content)
         self.scroll_layout.setContentsMargins(0, 0, 5, 0)
         self.scroll_layout.setSpacing(8)

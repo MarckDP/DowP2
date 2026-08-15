@@ -30,7 +30,7 @@ class EncodingOptionsWidget(QFrame):
             QFrame#encodingOptionsWidget {{
                 background-color: {bg_color};
                 border: 1px solid {border_color};
-                border-radius: 8px;
+                border-radius: 6px;
             }}
         """)
 

@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 from core.utils.i18n import logger
 from core.utils.cache_manager import CacheManager, format_bytes
+from gui.styles import apply_folder_browse_button_style
 
 
 class CacheCard(QFrame):
@@ -20,15 +21,6 @@ class CacheCard(QFrame):
         self.on_clear_callback = on_clear_callback
 
         self.setObjectName("settingsCard")
-        self.setStyleSheet("""
-            QFrame#settingsCard {
-                background-color: #1e1e1e;
-                border: 1px solid #2d2d2d;
-                border-radius: 8px;
-                padding: 12px;
-            }
-        """)
-
         self.init_ui()
 
     def init_ui(self):
@@ -59,24 +51,7 @@ class CacheCard(QFrame):
         self.btn_clear.setFixedHeight(30)
         self.btn_clear.setFixedWidth(90)
         self.btn_clear.setCursor(Qt.PointingHandCursor)
-        self.btn_clear.setStyleSheet("""
-            QPushButton {
-                background-color: #2d2d2d;
-                color: #ffffff;
-                border: 1px solid #3d3d3d;
-                border-radius: 6px;
-                padding: 4px 12px;
-                font-size: 11px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #e74c3c;
-                border-color: #c0392b;
-            }
-            QPushButton:pressed {
-                background-color: #a93226;
-            }
-        """)
+        self.btn_clear.setProperty("variant", "danger")
         self.btn_clear.clicked.connect(lambda: self.on_clear_callback(self.key, self.name))
 
         layout.addLayout(info_vbox, 1)
@@ -97,7 +72,7 @@ class FutureCacheCard(QFrame):
             QFrame#futureCacheCard {
                 background-color: #181818;
                 border: 1px dashed #3a3a3a;
-                border-radius: 8px;
+                border-radius: 6px;
                 padding: 12px;
             }
         """)
@@ -149,7 +124,7 @@ class MemoryCachePage(QWidget):
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setFrameShape(QFrame.NoFrame)
-        self.scroll_area.setStyleSheet("background-color: transparent;")
+        self.scroll_area.setStyleSheet("QScrollArea { background-color: transparent; border: none; }")
 
         self.scroll_content = QWidget()
         self.scroll_content.setObjectName("settingsScrollContent")
@@ -167,7 +142,7 @@ class MemoryCachePage(QWidget):
             QFrame#totalCacheCard {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #25282a, stop:1 #1c1d1f);
                 border: 1px solid #383c40;
-                border-radius: 10px;
+                border-radius: 6px;
                 padding: 16px;
             }
         """)
@@ -215,24 +190,7 @@ class MemoryCachePage(QWidget):
         self.btn_clear_all = QPushButton(self.tr("Borrar toda la caché"))
         self.btn_clear_all.setFixedHeight(34)
         self.btn_clear_all.setCursor(Qt.PointingHandCursor)
-        self.btn_clear_all.setStyleSheet("""
-            QPushButton {
-                background-color: #e74c3c;
-                color: #ffffff;
-                border: 1px solid #c0392b;
-                border-radius: 6px;
-                padding: 6px 16px;
-                font-size: 12px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #ff4d4d;
-                border-color: #e74c3c;
-            }
-            QPushButton:pressed {
-                background-color: #962d22;
-            }
-        """)
+        self.btn_clear_all.setProperty("variant", "danger")
         self.btn_clear_all.clicked.connect(self.on_clear_all_clicked)
 
         action_hbox.addWidget(self.lbl_total_details)
@@ -306,15 +264,8 @@ class MemoryCachePage(QWidget):
 
         self.download_dir_card = QFrame()
         self.download_dir_card.setObjectName("settingsCard")
-        self.download_dir_card.setStyleSheet("""
-            QFrame#settingsCard {
-                background-color: #1e1e1e;
-                border: 1px solid #2d2d2d;
-                border-radius: 8px;
-                padding: 12px;
-            }
-        """)
         dl_layout = QVBoxLayout(self.download_dir_card)
+        dl_layout.setContentsMargins(12, 10, 12, 10)
         dl_layout.setSpacing(8)
 
         lbl_dl_title_row = QLabel(self.tr("Carpeta de descargas por defecto (medios web sin etiqueta)"))
@@ -333,47 +284,18 @@ class MemoryCachePage(QWidget):
         dl_path_hbox.setSpacing(8)
 
         self.download_dir_input = QLineEdit()
-        self.download_dir_input.setReadOnly(True)
-        self.download_dir_input.setStyleSheet("""
-            QLineEdit {
-                background-color: #121212;
-                color: #cccccc;
-                border: 1px solid #3d3d3d;
-                border-radius: 6px;
-                padding: 6px 8px;
-                font-size: 11px;
-            }
-        """)
+        self.download_dir_input.textChanged.connect(self._on_download_dir_text_changed)
 
-        browse_btn_style = """
-            QPushButton {
-                background-color: #2d2d2d;
-                color: #ffffff;
-                border: 1px solid #3d3d3d;
-                border-radius: 6px;
-                padding: 4px 12px;
-                font-size: 11px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #3d3d3d;
-                border-color: #4d4d4d;
-            }
-            QPushButton:pressed {
-                background-color: #1a1a1a;
-            }
-        """
-
-        self.btn_browse_download_dir = QPushButton(self.tr("Examinar..."))
-        self.btn_browse_download_dir.setFixedHeight(30)
+        self.btn_browse_download_dir = QPushButton()
+        self.btn_browse_download_dir.setFixedSize(32, 32)
         self.btn_browse_download_dir.setCursor(Qt.PointingHandCursor)
-        self.btn_browse_download_dir.setStyleSheet(browse_btn_style)
+        apply_folder_browse_button_style(self.btn_browse_download_dir, self.tr("Examinar carpeta de descargas"))
         self.btn_browse_download_dir.clicked.connect(self.on_browse_download_dir_clicked)
 
         self.btn_reset_download_dir = QPushButton(self.tr("Restablecer"))
         self.btn_reset_download_dir.setFixedHeight(30)
         self.btn_reset_download_dir.setCursor(Qt.PointingHandCursor)
-        self.btn_reset_download_dir.setStyleSheet(browse_btn_style)
+        self.btn_reset_download_dir.setProperty("variant", "secondary")
         self.btn_reset_download_dir.clicked.connect(self.on_reset_download_dir_clicked)
 
         dl_path_hbox.addWidget(self.download_dir_input, 1)
@@ -388,15 +310,8 @@ class MemoryCachePage(QWidget):
         # ---------------- CARPETA DE SUBCLIPS RÁPIDOS (sin editor conectado) ----------------
         self.subclip_dir_card = QFrame()
         self.subclip_dir_card.setObjectName("settingsCard")
-        self.subclip_dir_card.setStyleSheet("""
-            QFrame#settingsCard {
-                background-color: #1e1e1e;
-                border: 1px solid #2d2d2d;
-                border-radius: 8px;
-                padding: 12px;
-            }
-        """)
         sub_layout = QVBoxLayout(self.subclip_dir_card)
+        sub_layout.setContentsMargins(12, 10, 12, 10)
         sub_layout.setSpacing(8)
 
         lbl_sub_title_row = QLabel(self.tr("Carpeta de subclips rápidos (sin editor conectado)"))
@@ -415,28 +330,18 @@ class MemoryCachePage(QWidget):
         sub_path_hbox.setSpacing(8)
 
         self.subclip_dir_input = QLineEdit()
-        self.subclip_dir_input.setReadOnly(True)
-        self.subclip_dir_input.setStyleSheet("""
-            QLineEdit {
-                background-color: #121212;
-                color: #cccccc;
-                border: 1px solid #3d3d3d;
-                border-radius: 6px;
-                padding: 6px 8px;
-                font-size: 11px;
-            }
-        """)
+        self.subclip_dir_input.textChanged.connect(self._on_subclip_dir_text_changed)
 
-        self.btn_browse_subclip_dir = QPushButton(self.tr("Examinar..."))
-        self.btn_browse_subclip_dir.setFixedHeight(30)
+        self.btn_browse_subclip_dir = QPushButton()
+        self.btn_browse_subclip_dir.setFixedSize(32, 32)
         self.btn_browse_subclip_dir.setCursor(Qt.PointingHandCursor)
-        self.btn_browse_subclip_dir.setStyleSheet(browse_btn_style)
+        apply_folder_browse_button_style(self.btn_browse_subclip_dir, self.tr("Examinar carpeta de subclips"))
         self.btn_browse_subclip_dir.clicked.connect(self.on_browse_subclip_dir_clicked)
 
         self.btn_reset_subclip_dir = QPushButton(self.tr("Restablecer"))
         self.btn_reset_subclip_dir.setFixedHeight(30)
         self.btn_reset_subclip_dir.setCursor(Qt.PointingHandCursor)
-        self.btn_reset_subclip_dir.setStyleSheet(browse_btn_style)
+        self.btn_reset_subclip_dir.setProperty("variant", "secondary")
         self.btn_reset_subclip_dir.clicked.connect(self.on_reset_subclip_dir_clicked)
 
         sub_path_hbox.addWidget(self.subclip_dir_input, 1)
@@ -544,10 +449,16 @@ class MemoryCachePage(QWidget):
     def _refresh_download_dir_label(self):
         from core.utils.config_manager import get_config
         current_dir = get_config().get("default_web_download_dir", "")
-        if current_dir:
+        default_placeholder = os.path.expanduser("~/Downloads")
+        self.download_dir_input.setPlaceholderText(self.tr(f"(Por defecto: {default_placeholder})"))
+        if self.download_dir_input.text() != current_dir:
             self.download_dir_input.setText(current_dir)
-        else:
-            self.download_dir_input.setText(self.tr("(Downloads del sistema)"))
+
+    def _on_download_dir_text_changed(self, text: str):
+        from core.utils.config_manager import get_config, save_config
+        config = get_config()
+        config["default_web_download_dir"] = text.strip()
+        save_config(config)
 
     def on_browse_download_dir_clicked(self):
         from core.utils.config_manager import get_config, save_config
@@ -559,28 +470,25 @@ class MemoryCachePage(QWidget):
             current_dir
         )
         if folder:
-            config["default_web_download_dir"] = folder
-            save_config(config)
-            self._refresh_download_dir_label()
+            self.download_dir_input.setText(folder)
 
     def on_reset_download_dir_clicked(self):
-        from core.utils.config_manager import get_config, save_config
-        config = get_config()
-        if not config.get("default_web_download_dir"):
-            return
-        config["default_web_download_dir"] = ""
-        save_config(config)
-        self._refresh_download_dir_label()
+        self.download_dir_input.setText("")
 
     def _refresh_subclip_dir_label(self):
         from core.utils.config_manager import get_config
         from core.utils.paths import get_subclips_dir
         current_dir = get_config().get("default_subclip_dir", "")
-        if current_dir:
+        default_path = get_subclips_dir()
+        self.subclip_dir_input.setPlaceholderText(self.tr(f"(Por defecto: {default_path})"))
+        if self.subclip_dir_input.text() != current_dir:
             self.subclip_dir_input.setText(current_dir)
-        else:
-            default_path = get_subclips_dir()
-            self.subclip_dir_input.setText(self.tr(f"(Por defecto: {default_path})"))
+
+    def _on_subclip_dir_text_changed(self, text: str):
+        from core.utils.config_manager import get_config, save_config
+        config = get_config()
+        config["default_subclip_dir"] = text.strip()
+        save_config(config)
 
     def on_browse_subclip_dir_clicked(self):
         from core.utils.config_manager import get_config, save_config
@@ -593,15 +501,7 @@ class MemoryCachePage(QWidget):
             current_dir
         )
         if folder:
-            config["default_subclip_dir"] = folder
-            save_config(config)
-            self._refresh_subclip_dir_label()
+            self.subclip_dir_input.setText(folder)
 
     def on_reset_subclip_dir_clicked(self):
-        from core.utils.config_manager import get_config, save_config
-        config = get_config()
-        if not config.get("default_subclip_dir"):
-            return
-        config["default_subclip_dir"] = ""
-        save_config(config)
-        self._refresh_subclip_dir_label()
+        self.subclip_dir_input.setText("")

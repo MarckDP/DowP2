@@ -37,7 +37,7 @@ class DownloadsPage(QWidget):
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setFrameShape(QFrame.NoFrame)
-        self.scroll_area.setStyleSheet("background-color: transparent;")
+        self.scroll_area.setStyleSheet("QScrollArea { background-color: transparent; border: none; }")
 
         # Widget contenedor para el contenido del scroll
         self.scroll_content = QWidget()

@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QDesktopServices, QIcon
 from PySide6.QtCore import Qt, QUrl, QSize
 from gui.widgets.animated_button import AnimatedButton
+from gui.styles import apply_folder_browse_button_style, apply_folder_open_button_style
 
 
 _SPINBOX_SYMBOLS = getattr(QAbstractSpinBox, "ButtonSymbols", QAbstractSpinBox)
@@ -30,7 +31,7 @@ PLUS_MINUS_BUTTONS = getattr(
 
 
 class OutputOptionsWidget(QFrame):
-    TOOL_BUTTON_SIZE = 34
+    TOOL_BUTTON_SIZE = 32
     PANEL_HEIGHT = 210
 
     def __init__(self):
@@ -64,28 +65,14 @@ class OutputOptionsWidget(QFrame):
         self.output_path_input.setPlaceholderText(self.tr("Ruta de salida"))
         self.output_path_input.setText(default_path)
         
-        # Iconos SVG
-        _icon_dir = os.path.join(os.path.dirname(__file__), "..", "..", "..", "assets", "icons", "svg")
-        path_icon = os.path.normpath(os.path.join(_icon_dir, "folder_managed.svg"))
-        open_icon = os.path.normpath(os.path.join(_icon_dir, "folder_open.svg"))
-
         self.btn_select_output_path = QPushButton()
-        self.btn_select_output_path.setObjectName("pathToolButton")
         self.btn_select_output_path.setFixedSize(self.TOOL_BUTTON_SIZE, self.TOOL_BUTTON_SIZE)
-        if os.path.exists(path_icon):
-            self.btn_select_output_path.setIcon(QIcon(path_icon))
-            self.btn_select_output_path.setIconSize(QSize(20, 20))
-        else:
-            self.btn_select_output_path.setText("⋯")
+        apply_folder_browse_button_style(self.btn_select_output_path, self.tr("Seleccionar carpeta de salida"), icon_size=20)
 
         self.btn_open_output_path = QPushButton()
-        self.btn_open_output_path.setObjectName("pathToolButton")
         self.btn_open_output_path.setFixedSize(self.TOOL_BUTTON_SIZE, self.TOOL_BUTTON_SIZE)
-        if os.path.exists(open_icon):
-            self.btn_open_output_path.setIcon(QIcon(open_icon))
-            self.btn_open_output_path.setIconSize(QSize(20, 20))
-        else:
-            self.btn_open_output_path.setText("📂")
+        apply_folder_open_button_style(self.btn_open_output_path, self.tr("Abrir carpeta de salida"), icon_size=20)
+
         self.btn_select_output_path.clicked.connect(self.select_output_path)
         self.btn_open_output_path.clicked.connect(self.open_output_path)
 
@@ -125,7 +112,7 @@ class OutputOptionsWidget(QFrame):
         self.btn_start_download = AnimatedButton(self.tr("Iniciar descarga"))
         self.btn_start_download.setObjectName("downloadButton")
         self.btn_start_download.setFixedWidth(160)
-        self.btn_start_download.setFixedHeight(34)
+        self.btn_start_download.setFixedHeight(32)
         self.btn_start_download.setEnabled(False)
 
         controls_layout.addWidget(self.btn_start_download)

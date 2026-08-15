@@ -4,6 +4,7 @@ from PySide6.QtCore import Qt, QSize, Signal
 from PySide6.QtGui import QIcon, QPixmap
 from core.services.editor_integration_manager import EditorIntegrationManager
 from core.utils.config_manager import get_config, save_config
+from gui.styles import apply_folder_browse_button_style
 import os
 
 class IntegrationsPage(QWidget):
@@ -42,7 +43,7 @@ class IntegrationsPage(QWidget):
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setFrameShape(QFrame.NoFrame)
-        self.scroll_area.setStyleSheet("background-color: transparent;")
+        self.scroll_area.setStyleSheet("QScrollArea { background-color: transparent; border: none; }")
 
         # Widget contenedor para el contenido del scroll
         self.scroll_content = QWidget()
@@ -70,14 +71,6 @@ class IntegrationsPage(QWidget):
     def create_card_frame(self):
         card = QFrame()
         card.setObjectName("settingsCard")
-        # Reuse existing settingsCard stylesheet logic or provide a fallback
-        card.setStyleSheet("""
-            QFrame#settingsCard {
-                background-color: rgba(255, 255, 255, 0.05);
-                border-radius: 8px;
-                border: 1px solid rgba(255, 255, 255, 0.1);
-            }
-        """)
         return card
 
     def create_adobe_section(self):
@@ -274,11 +267,14 @@ class IntegrationsPage(QWidget):
             
         path_input.textChanged.connect(lambda text: self._save_integration_setting(app_id, "path", text))
         
-        btn_browse = QPushButton("Explorar...")
+        btn_browse = QPushButton()
+        btn_browse.setFixedSize(32, 32)
+        btn_browse.setCursor(Qt.PointingHandCursor)
+        apply_folder_browse_button_style(btn_browse, self.tr("Seleccionar ejecutable"))
         btn_browse.clicked.connect(lambda: self._browse_exe(app_id, path_input))
         
         path_row.addWidget(QLabel("Ruta:"))
-        path_row.addWidget(path_input)
+        path_row.addWidget(path_input, 1)
         path_row.addWidget(btn_browse)
         layout.addLayout(path_row)
         

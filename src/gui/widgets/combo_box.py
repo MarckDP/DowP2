@@ -72,6 +72,10 @@ class AutoPopupComboBox(QComboBox):
     def showPopup(self):
         popup_width = max(self.width(), self._widest_item_text_width() + _CHROME_WIDTH)
         self.view().setMinimumWidth(popup_width)
+        container = self.view().window()
+        if container:
+            container.setAttribute(Qt.WA_TranslucentBackground, True)
+            container.setWindowFlags(Qt.Popup | Qt.FramelessWindowHint | Qt.NoDropShadowWindowHint)
         super().showPopup()
 
     def paintEvent(self, event):

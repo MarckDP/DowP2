@@ -38,7 +38,7 @@ class SubclipItemWidget(QWidget):
             QPushButton {{
                 background-color: {get_theme_token('fondo_elemento', '#2d2d2d')};
                 border: 1px solid {get_theme_token('borde_sutil', '#333333')};
-                border-radius: 11px;
+                border-radius: 6px;
             }}
             QPushButton:hover {{
                 background-color: {get_theme_token('acento_primario', '#B9E640')};
@@ -48,19 +48,19 @@ class SubclipItemWidget(QWidget):
         top_row.addWidget(self.btn_play)
 
         self.txt_name = QLineEdit(name)
-        self.txt_name.setStyleSheet("""
-            QLineEdit {
-                background: #222;
-                color: #B9E640;
-                border: 1px solid #333;
-                border-radius: 4px;
+        self.txt_name.setStyleSheet(f"""
+            QLineEdit {{
+                background: {get_theme_token('fondo_secundario', '#121212')};
+                color: {get_theme_token('acento_primario', '#B9E640')};
+                border: 1px solid {get_theme_token('borde_sutil', '#333')};
+                border-radius: 6px;
                 padding: 1px 4px;
                 font-size: 11px;
                 font-weight: bold;
-            }
-            QLineEdit:focus {
-                border: 1px solid #B9E640;
-            }
+            }}
+            QLineEdit:focus {{
+                border: 1px solid {get_theme_token('acento_primario', '#B9E640')};
+            }}
         """)
         self.txt_name.setFixedHeight(20)
         self.txt_name.textChanged.connect(lambda t: on_rename(index, t))
@@ -72,7 +72,7 @@ class SubclipItemWidget(QWidget):
         btn_del.setFixedSize(22, 22)
         btn_del.setToolTip("Eliminar subclip")
         btn_del.setStyleSheet("""
-            QPushButton { background: transparent; border: none; border-radius: 4px; }
+            QPushButton { background: transparent; border: none; border-radius: 6px; }
             QPushButton:hover { background: rgba(229,57,53,160); }
         """)
         btn_del.clicked.connect(lambda: on_delete(index))
@@ -124,14 +124,15 @@ class SubclipEditorDialog(QDialog):
         self.setMinimumSize(800, 480)
         self.old_pos = None
 
-        borde_color = get_theme_token('borde_normal', '#3d3d3d')
+        bg_dialog = get_theme_token('fondo_principal', '#0a0a0a')
+        borde_color = get_theme_token('borde_normal', '#222222')
         self.setStyleSheet("""
             QDialog {
-                background-color: #141414;
+                background-color: %s;
                 border: 1px solid %s;
-                border-radius: 12px;
+                border-radius: 6px;
             }
-        """ % borde_color)
+        """ % (bg_dialog, borde_color))
 
         self.init_ui()
 
@@ -166,15 +167,16 @@ class SubclipEditorDialog(QDialog):
         title_bar = QWidget()
         title_bar.setObjectName("subclipTitleBar")
         title_bar.setFixedHeight(42)
-        borde_sutil = get_theme_token('borde_sutil', '#2d2d2d')
+        title_bg = get_theme_token('fondo_secundario', '#121212')
+        borde_sutil = get_theme_token('borde_sutil', '#222222')
         title_bar.setStyleSheet("""
             QWidget#subclipTitleBar {
-                background-color: #1e1e1e;
-                border-top-left-radius: 12px;
-                border-top-right-radius: 12px;
+                background-color: %s;
+                border-top-left-radius: 6px;
+                border-top-right-radius: 6px;
                 border-bottom: 1px solid %s;
             }
-        """ % borde_sutil)
+        """ % (title_bg, borde_sutil))
         tb_layout = QHBoxLayout(title_bar)
         tb_layout.setContentsMargins(14, 0, 14, 0)
 
@@ -183,18 +185,25 @@ class SubclipEditorDialog(QDialog):
         tb_layout.addWidget(self.title_lbl)
         tb_layout.addStretch()
 
-        btn_close = QPushButton("✕")
-        btn_close.setFixedSize(26, 26)
+        btn_close = QPushButton()
+        btn_close.setObjectName("titleBarClose")
+        btn_close.setIcon(get_svg_icon("close.svg"))
+        btn_close.setIconSize(QSize(14, 14))
+        btn_close.setFixedSize(28, 28)
+        btn_close.setToolTip(self.tr("Cerrar"))
         btn_close.setStyleSheet("""
-            QPushButton {
-                background-color: #c62828;
-                color: white;
-                font-size: 12px;
-                font-weight: bold;
+            QPushButton#titleBarClose {
+                background-color: transparent;
                 border: none;
-                border-radius: 13px;
+                border-radius: 6px;
+                padding: 0px;
             }
-            QPushButton:hover { background-color: #e53935; }
+            QPushButton#titleBarClose:hover {
+                background-color: #c62828;
+            }
+            QPushButton#titleBarClose:pressed {
+                background-color: #8e0000;
+            }
         """)
         btn_close.clicked.connect(self.reject)
         tb_layout.addWidget(btn_close)
@@ -207,7 +216,7 @@ class SubclipEditorDialog(QDialog):
         # ── Contenido Principal ────────────────────────────────────────────────
         content_widget = QWidget()
         content_layout = QHBoxLayout(content_widget)
-        content_layout.setContentsMargins(14, 14, 14, 14)
+        content_layout.setContentsMargins(14, 12, 14, 14)
         content_layout.setSpacing(12)
 
         # ── Columna Izquierda: Reproductor + Waveform + Controles In/Out ──────
@@ -221,11 +230,17 @@ class SubclipEditorDialog(QDialog):
         self.btn_add_subclip = QPushButton()
         self.btn_add_subclip.setIcon(get_svg_icon("add.svg"))
         self.btn_add_subclip.setIconSize(QSize(18, 18))
-        self.btn_add_subclip.setFixedSize(34, 34)
+        self.btn_add_subclip.setFixedSize(32, 32)
         self.btn_add_subclip.setToolTip(self.tr("Añadir subclip"))
-        self.btn_add_subclip.setStyleSheet("""
-            QPushButton { background-color: #1DC038; border: none; border-radius: 17px; }
-            QPushButton:hover { background-color: #B9E640; }
+        self.btn_add_subclip.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {get_theme_token('acento_secundario', '#1DC038')};
+                border: none;
+                border-radius: 6px;
+            }}
+            QPushButton:hover {{
+                background-color: {get_theme_token('acento_primario', '#B9E640')};
+            }}
         """)
         self.btn_add_subclip.clicked.connect(self._add_current_subclip)
         self.trim_player.ctrl_bar.insertSpacing(9, 8)
@@ -241,18 +256,22 @@ class SubclipEditorDialog(QDialog):
         lbl_list_title.setStyleSheet("font-weight: bold; font-size: 13px; color: white;")
         right_layout.addWidget(lbl_list_title)
 
-        borde_norm = get_theme_token('borde_normal', '#2d2d2d')
+        borde_norm = get_theme_token('borde_normal', '#222222')
+        bg_list = get_theme_token('fondo_secundario', '#121212')
+        bg_elem = get_theme_token('fondo_elemento', '#1a1a1a')
+        select_bg = get_theme_token('seleccion_fondo', '#222222')
+
         self.list_subclips = QListWidget()
         self.list_subclips.setStyleSheet("""
             QListWidget {
-                background-color: #121212;
+                background-color: %s;
                 border: 1px solid %s;
-                border-radius: 12px;
+                border-radius: 6px;
                 outline: none;
             }
             QListWidget::item {
-                background-color: #1a1a1a;
-                border-bottom: 1px solid #222;
+                background-color: %s;
+                border-bottom: 1px solid %s;
                 border-radius: 0px;
                 padding: 0px;
                 margin: 0px;
@@ -261,38 +280,35 @@ class SubclipEditorDialog(QDialog):
                 background-color: #1b3b22;
                 border-bottom: 1px solid #224;
             }
-        """ % borde_norm)
+        """ % (bg_list, borde_norm, bg_elem, borde_norm))
         right_layout.addWidget(self.list_subclips, 1)
 
         # Botón Split de Envío a Editores
         self.btn_send = QToolButton()
         self.btn_send.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         self.btn_send.setPopupMode(QToolButton.MenuButtonPopup)
-        self.btn_send.setFixedHeight(38)
+        self.btn_send.setFixedHeight(32)
         self.btn_send.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        # Send button
-        bg_elem = get_theme_token('fondo_elemento', '#2d2d2d')
-        select_bg = get_theme_token('seleccion_fondo', '#3d3d3d')
 
         self.btn_send.setStyleSheet("""
             QToolButton {
                 background-color: %s;
-                border: 1px solid #444444;
-                border-radius: 8px;
+                border: 1px solid %s;
+                border-radius: 6px;
                 color: #ffffff;
                 font-weight: bold;
                 padding-left: 10px;
             }
             QToolButton::menu-button {
-                border-left: 1px solid #444444;
+                border-left: 1px solid %s;
                 width: 22px;
-                border-top-right-radius: 8px;
-                border-bottom-right-radius: 8px;
+                border-top-right-radius: 6px;
+                border-bottom-right-radius: 6px;
             }
             QToolButton:hover {
                 background-color: %s;
             }
-        """ % (bg_elem, select_bg))
+        """ % (bg_elem, borde_norm, borde_norm, select_bg))
 
         self.send_menu = QMenu(self.btn_send)
         self.action_send_single = self.send_menu.addAction(self.tr("Enviar solo subclip actual"))

@@ -5,6 +5,7 @@ from PySide6.QtCore import Qt, Signal, QPoint
 from PySide6.QtGui import QColor, QImage, QPainter, QPen, QLinearGradient
 import os
 from core.logger.logger_manager import logger
+from gui.styles import apply_folder_browse_button_style
 
 def _apply_dialog_styles(msg_box):
     """
@@ -20,7 +21,7 @@ def _apply_dialog_styles(msg_box):
                 background-color: {bg_color};
                 color: {fg_color};
                 border: none;
-                border-radius: 10px;
+                border-radius: 6px;
                 padding: 5px 12px;
                 font-weight: bold;
                 min-width: 50px;
@@ -109,7 +110,7 @@ class AddLabelDialog(QDialog):
             QFrame#AddLabelDialogContainer {{
                 background-color: {get_theme_token("fondo_secundario", "#1e1e1e")};
                 border: 1px solid {get_theme_token("borde", "#2d2d2d")};
-                border-radius: 12px;
+                border-radius: 6px;
             }}
             QLabel {{
                 color: {get_theme_token("texto_principal", "#ffffff")};
@@ -128,7 +129,7 @@ class AddLabelDialog(QDialog):
                 background-color: {get_theme_token("boton_secundario_fondo", "#1b3b22")};
                 color: {get_theme_token("boton_secundario_texto", "#B9E640")};
                 border: none;
-                border-radius: 8px;
+                border-radius: 6px;
                 padding: 6px 12px;
                 font-weight: bold;
             }}
@@ -139,7 +140,7 @@ class AddLabelDialog(QDialog):
                 background-color: transparent;
                 color: #e74c3c;
                 border: 1px solid #e74c3c;
-                border-radius: 8px;
+                border-radius: 6px;
                 padding: 6px 12px;
                 font-weight: bold;
             }}
@@ -223,9 +224,10 @@ class AddLabelDialog(QDialog):
         self.path_input = QLineEdit()
         self.path_input.setPlaceholderText(self.tr("Selecciona una carpeta"))
         
-        self.btn_browse = QPushButton(self.tr("Examinar..."))
-        self.btn_browse.setObjectName("dialogButton")
-        self.btn_browse.setFixedWidth(100)
+        self.btn_browse = QPushButton()
+        self.btn_browse.setFixedSize(30, 30)
+        self.btn_browse.setCursor(Qt.PointingHandCursor)
+        apply_folder_browse_button_style(self.btn_browse, self.tr("Seleccionar carpeta para la etiqueta"))
         self.btn_browse.clicked.connect(self.browse_path)
         
         path_layout.addWidget(self.path_input, 1)
@@ -437,7 +439,7 @@ class AdobeColorPickerDialog(QDialog):
             QFrame#ColorPickerDialogContainer {{
                 background-color: {get_theme_token("fondo_secundario", "#1e1e1e")};
                 border: 1px solid {get_theme_token("borde", "#2d2d2d")};
-                border-radius: 12px;
+                border-radius: 6px;
             }}
             QLabel {{
                 color: {get_theme_token("texto_principal", "#ffffff")};
@@ -449,7 +451,7 @@ class AdobeColorPickerDialog(QDialog):
                 background-color: {get_theme_token("fondo_principal", "#121212")};
                 color: {get_theme_token("texto_principal", "#ffffff")};
                 border: 1px solid {get_theme_token("borde", "#2d2d2d")};
-                border-radius: 4px;
+                border-radius: 6px;
                 padding: 4px;
                 font-size: 11px;
             }}

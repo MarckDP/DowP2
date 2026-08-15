@@ -245,6 +245,54 @@ def load_stylesheet(theme_name: str = "dark") -> str:
     return result
 
 
+def set_button_variant(btn, variant: str):
+    """
+    Asigna una variante semántica al botón y reaplica el estilo en vivo si es necesario.
+    Variantes: 'primary', 'accent-solid', 'secondary', 'accent-blue', 'accent-orange', 'danger'
+    """
+    btn.setProperty("variant", variant)
+    if btn.style():
+        btn.style().unpolish(btn)
+        btn.style().polish(btn)
+    btn.update()
+
+
+def apply_folder_browse_button_style(btn, tooltip=None, icon_size=18):
+    """
+    Aplica el estilo unificado al botón de examinar/configurar carpeta o ruta.
+    - Icono: folder_managed.svg en negro (#000000) habilitado y gris (#777777) deshabilitado.
+    - Variante: 'accent-solid' (verde plano reactivo).
+    """
+    from gui.tabs.editing_media.editing_media_icons import get_colored_svg_icon
+    from PySide6.QtCore import QSize
+    dis_color = get_theme_token("texto_deshabilitado", "#777777")
+    btn.setIcon(get_colored_svg_icon("folder_managed.svg", "#000000", size=icon_size, disabled_color_hex=dis_color))
+    btn.setIconSize(QSize(icon_size, icon_size))
+    if not btn.objectName():
+        btn.setObjectName("pathToolButton")
+    set_button_variant(btn, "accent-solid")
+    if tooltip:
+        btn.setToolTip(tooltip)
+
+
+def apply_folder_open_button_style(btn, tooltip=None, icon_size=18):
+    """
+    Aplica el estilo unificado al botón de abrir carpeta en el explorador.
+    - Icono: folder_open.svg en negro (#000000) habilitado y gris (#777777) deshabilitado.
+    - Variante: 'accent-solid' (verde plano reactivo).
+    """
+    from gui.tabs.editing_media.editing_media_icons import get_colored_svg_icon
+    from PySide6.QtCore import QSize
+    dis_color = get_theme_token("texto_deshabilitado", "#777777")
+    btn.setIcon(get_colored_svg_icon("folder_open.svg", "#000000", size=icon_size, disabled_color_hex=dis_color))
+    btn.setIconSize(QSize(icon_size, icon_size))
+    if not btn.objectName():
+        btn.setObjectName("pathToolButton")
+    set_button_variant(btn, "accent-solid")
+    if tooltip:
+        btn.setToolTip(tooltip)
+
+
 def apply_cut_button_style(btn, status="normal", icon_size=18):
     """
     Aplica el estilo unificado del botón de recorte de fragmentos
@@ -314,18 +362,12 @@ def apply_player_play_button_style(btn, is_playing: bool = False, icon_size: int
     
     icon_name = "pause.svg" if is_playing else "play_arrow.svg"
     btn.setIcon(get_colored_svg_icon(icon_name, "#000000", size=icon_size))
-    
-    radius = 13
-    if hasattr(btn, 'height') and btn.height() > 0:
-        radius = btn.height() // 2
-    elif hasattr(btn, 'fixedSize') and btn.fixedSize().height() > 0:
-        radius = btn.fixedSize().height() // 2
         
     btn.setStyleSheet(f"""
         QPushButton {{
             background-color: {get_theme_token('acento_secundario', '#1DC038')};
             border: none;
-            border-radius: {radius}px;
+            border-radius: 6px;
             padding: 0px;
         }}
         QPushButton:hover {{
@@ -344,12 +386,6 @@ def apply_player_loop_button_style(btn, is_active: bool = False, icon_size: int 
     - is_active=False: Fondo gris (#2d2d2d), border (#2d2d2d), hover (#3d3d3d), icono repeat.svg en #6c7086.
     """
     from gui.tabs.editing_media.editing_media_icons import get_colored_svg_icon
-    
-    radius = 13
-    if hasattr(btn, 'height') and btn.height() > 0:
-        radius = btn.height() // 2
-    elif hasattr(btn, 'fixedSize') and btn.fixedSize().height() > 0:
-        radius = btn.fixedSize().height() // 2
         
     if is_active:
         btn.setIcon(get_colored_svg_icon("repeat.svg", "#000000", size=icon_size))
@@ -358,7 +394,7 @@ def apply_player_loop_button_style(btn, is_active: bool = False, icon_size: int 
             QPushButton {{
                 background-color: {get_theme_token('acento_secundario', '#1DC038')};
                 border: none;
-                border-radius: {radius}px;
+                border-radius: 6px;
                 padding: 0px;
             }}
             QPushButton:hover {{
@@ -375,7 +411,7 @@ def apply_player_loop_button_style(btn, is_active: bool = False, icon_size: int 
             QPushButton {{
                 background-color: {get_theme_token('fondo_elemento', '#2d2d2d')};
                 border: 1px solid {get_theme_token('borde_normal', '#2d2d2d')};
-                border-radius: {radius}px;
+                border-radius: 6px;
                 padding: 0px;
             }}
             QPushButton:hover {{
@@ -390,19 +426,10 @@ def apply_player_loop_button_style(btn, is_active: bool = False, icon_size: int 
 def apply_edit_subclip_button_style(btn, has_subclips: bool = False, icon_size: int = 14):
     """
     Aplica el estilo unificado al botón de Editar/Recortar Subclips de los reproductores.
-    - has_subclips=True ("encendido"): fondo verde acento, ícono en negro (buen contraste
-      tanto en reposo como en hover, ya que el fondo siempre es un verde claro/oscuro).
-    - has_subclips=False ("apagado"): fondo gris neutro, ícono gris apagado; el hover es un
-      gris sutil (nunca el verde brillante), evitando el problema de ícono claro sobre fondo
-      claro que ocurría antes al usar siempre el mismo ícono con hover en acento_primario.
+    - has_subclips=True ("encendido"): fondo verde acento, ícono en negro.
+    - has_subclips=False ("apagado"): fondo gris neutro, ícono gris apagado.
     """
     from gui.tabs.editing_media.editing_media_icons import get_colored_svg_icon
-
-    radius = 13
-    if hasattr(btn, 'height') and btn.height() > 0:
-        radius = btn.height() // 2
-    elif hasattr(btn, 'fixedSize') and btn.fixedSize().height() > 0:
-        radius = btn.fixedSize().height() // 2
 
     if has_subclips:
         btn.setIcon(get_colored_svg_icon("edit.svg", "#000000", size=icon_size))
@@ -411,7 +438,7 @@ def apply_edit_subclip_button_style(btn, has_subclips: bool = False, icon_size: 
             QPushButton {{
                 background-color: {get_theme_token('acento_secundario', '#1DC038')};
                 border: none;
-                border-radius: {radius}px;
+                border-radius: 6px;
                 padding: 0px;
             }}
             QPushButton:hover {{
@@ -428,7 +455,7 @@ def apply_edit_subclip_button_style(btn, has_subclips: bool = False, icon_size: 
             QPushButton {{
                 background-color: {get_theme_token('fondo_elemento', '#2d2d2d')};
                 border: 1px solid {get_theme_token('borde_normal', '#2d2d2d')};
-                border-radius: {radius}px;
+                border-radius: 6px;
                 padding: 0px;
             }}
             QPushButton:hover {{

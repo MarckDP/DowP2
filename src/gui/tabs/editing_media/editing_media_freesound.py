@@ -1,6 +1,6 @@
 # src/gui/tabs/editing_media/editing_media_freesound.py
 import os
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import Qt, QThread, Signal, QSize
 from PySide6.QtWidgets import QMessageBox
 from core.logger.logger_manager import logger
 from gui.tabs.editing_media.editing_media_icons import get_svg_icon
@@ -239,6 +239,7 @@ class FreesoundMixin:
         """Actualiza el icono y tooltip del botón de login de Freesound según el estado de autenticación."""
         if not hasattr(self, "btn_freesound_login"):
             return
+        self.btn_freesound_login.setIconSize(QSize(18, 18))
         if self.controller.is_freesound_authenticated:
             username = self.controller.freesound_username or "usuario"
             self.btn_freesound_login.setIcon(get_svg_icon("person.svg"))

@@ -296,7 +296,7 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
             QFrame#licensePanel {{
                 background-color: {get_theme_token('fondo_elemento', '#1e1e1e')};
                 border: 1px solid {color_hex};
-                border-radius: 8px;
+                border-radius: 6px;
             }}
         """)
 
@@ -307,7 +307,7 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
                 QPushButton {{
                     background-color: transparent;
                     border: 1px solid {get_theme_token('borde_normal', '#444444')};
-                    border-radius: 4px;
+                    border-radius: 6px;
                     color: {get_theme_token('texto_principal', '#ffffff')};
                     padding: 4px 10px;
                 }}
@@ -395,10 +395,12 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
 
         # Buscador
         search_layout = QHBoxLayout()
+        search_layout.setContentsMargins(0, 0, 0, 0)
         search_layout.setSpacing(6)
 
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText(self.tr("Buscar medios..."))
+        self.search_input.setFixedHeight(32)
         self.search_input.setStyleSheet("QLineEdit { padding-right: 28px; }")
 
         # Integrar spinner de carga animado a la derecha de search_input
@@ -416,14 +418,16 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         self.license_container.setVisible(False)
         lic_layout = QHBoxLayout(self.license_container)
         lic_layout.setContentsMargins(0, 0, 0, 0)
-        lic_layout.setSpacing(4)
+        lic_layout.setSpacing(6)
         
         lbl_copyright = QLabel()
         lbl_copyright.setPixmap(get_svg_icon("copyright.svg").pixmap(16, 16))
         lbl_copyright.setToolTip(self.tr("Filtro de Licencia (Freesound)"))
+        lbl_copyright.setAlignment(Qt.AlignCenter)
         lic_layout.addWidget(lbl_copyright)
 
         self.freesound_license_combo = AutoPopupComboBox()
+        self.freesound_license_combo.setFixedHeight(32)
         self.freesound_license_combo.addItem(self.tr("Cualquiera"), "Cualquiera")
         self.freesound_license_combo.addItem(self.tr("CC0 (Sin Copyright)"), "CC0")
         self.freesound_license_combo.addItem(self.tr("CC-BY (Atribución)"), "Attribution")
@@ -435,12 +439,14 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         search_layout.addWidget(self.license_container)
 
         self.btn_freesound_login = QPushButton()
-        self.btn_freesound_login.setFixedSize(26, 26)
+        self.btn_freesound_login.setFixedSize(32, 32)
+        self.btn_freesound_login.setIconSize(QSize(18, 18))
         self.btn_freesound_login.setStyleSheet(f"""
             QPushButton {{
                 background-color: {get_theme_token('fondo_elemento', '#2d2d2d')};
                 border: 1px solid {get_theme_token('borde_normal', '#2d2d2d')};
                 border-radius: 6px;
+                padding: 0px;
             }}
             QPushButton:hover {{
                 background-color: {get_theme_token('seleccion_fondo', '#3d3d3d')};
@@ -488,6 +494,8 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
                 background-color: {get_theme_token('fondo_elemento', '#2d2d2d')};
                 border: 1px solid {get_theme_token('borde_normal', '#2d2d2d')};
                 border-radius: 6px;
+                padding: 0px;
+                min-height: 0px;
             }}
             QPushButton:hover {{
                 background-color: {get_theme_token('seleccion_fondo', '#3d3d3d')};
@@ -499,21 +507,21 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         """
 
         self.btn_view_list = QPushButton()
-        self.btn_view_list.setFixedSize(26, 26)
+        self.btn_view_list.setFixedSize(28, 28)
         self.btn_view_list.setCheckable(True)
         self.btn_view_list.setToolTip(self.tr("Vista de Lista"))
-        self.btn_view_list.setIcon(get_colored_svg_icon("view_list.svg", "#FFFFFF", size=14))
-        self.btn_view_list.setIconSize(QSize(14, 14))
+        self.btn_view_list.setIcon(get_colored_svg_icon("view_list.svg", "#FFFFFF", size=16))
+        self.btn_view_list.setIconSize(QSize(16, 16))
         self.btn_view_list.setStyleSheet(btn_mode_style)
         self.btn_view_list.clicked.connect(lambda: self.set_view_mode("list"))
         btn_bar.addWidget(self.btn_view_list)
 
         self.btn_view_grid = QPushButton()
-        self.btn_view_grid.setFixedSize(26, 26)
+        self.btn_view_grid.setFixedSize(28, 28)
         self.btn_view_grid.setCheckable(True)
         self.btn_view_grid.setToolTip(self.tr("Vista de Cuadrícula"))
-        self.btn_view_grid.setIcon(get_colored_svg_icon("grid_view.svg", "#000000", size=14))
-        self.btn_view_grid.setIconSize(QSize(14, 14))
+        self.btn_view_grid.setIcon(get_colored_svg_icon("grid_view.svg", "#000000", size=16))
+        self.btn_view_grid.setIconSize(QSize(16, 16))
         self.btn_view_grid.setStyleSheet(btn_mode_style)
         self.btn_view_grid.clicked.connect(lambda: self.set_view_mode("grid"))
         self.btn_view_grid.installEventFilter(self)
@@ -835,7 +843,7 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
             QFrame#licensePanel {{
                 background-color: {get_theme_token('fondo_elemento', '#1e1e1e')};
                 border: 1px solid {get_theme_token('acento_primario', '#B9E640')};
-                border-radius: 8px;
+                border-radius: 6px;
             }}
         """)
         license_layout = QVBoxLayout(self.license_panel)
@@ -1075,7 +1083,7 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
             QFrame#sidebarFrame, QFrame#mediaListFrame, QFrame#previewFrame {{
                 background-color: {fondo_secundario};
                 border: 1px solid {borde_color};
-                border-radius: 12px;
+                border-radius: 6px;
             }}
             QLabel {{
                 border: none;
@@ -1105,7 +1113,7 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
             QFrame#audioSpectrumPanel {{
                 background-color: {get_theme_token('fondo_principal', '#0a0a0a')};
                 border: 1px solid {get_theme_token('borde_normal', '#2d2d2d')};
-                border-radius: 8px;
+                border-radius: 6px;
             }}
         """)
 

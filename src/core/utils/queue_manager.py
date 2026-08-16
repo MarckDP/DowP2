@@ -59,6 +59,8 @@ class SingleJobWorker(QThread):
                 self.queue_worker._execute_download(self.job, self.cancellation_event, self)
             elif self.job.job_type == "PLAYLIST":
                 self.queue_worker._execute_playlist(self.job, self.cancellation_event, self)
+            elif self.job.job_type == "RECODE":
+                self.queue_worker._execute_recode(self.job, self.cancellation_event, self)
         except Exception as e:
             import traceback
             logger.error(f"SingleJobWorker: Error inesperado en job {self.job.job_id}: {traceback.format_exc()}")
@@ -106,9 +108,10 @@ class QueueWorker(QThread):
             
             with QMutexLocker(self._workers_mutex):
                 active_count = len(self._active_workers)
+                active_recodes = sum(1 for w in self._active_workers.values() if w.job.job_type == "RECODE")
 
             if active_count < max_concurrent:
-                job = self.manager._get_next_pending_job()
+                job = self.manager._get_next_runnable_job(active_recodes)
                 if job:
                     job.status = JobStatus.RUNNING
                     self.job_status_changed.emit(job.job_id, JobStatus.RUNNING)
@@ -496,6 +499,143 @@ class QueueWorker(QThread):
         from core.ytdlp_logic.format_selectors import playlist_format_selector
         return playlist_format_selector(mode, quality)
 
+    def _execute_recode(self, job, cancellation_event=None, worker_ref=None):
+        import subprocess
+        from core.setup.ffmpeg_setup import get_ffmpeg_dir
+        
+        if cancellation_event is None:
+            cancellation_event = self._cancellation_event
+
+        job.status = JobStatus.RUNNING
+        job.progress = 0.0
+        self.job_status_changed.emit(job.job_id, JobStatus.RUNNING)
+        self.job_progress_changed.emit(job.job_id, 0.0, "Iniciando FFmpeg...", "")
+
+        config = job.config
+        input_file = config.get("input_path")
+        output_file = config.get("output_path")
+        settings = config.get("settings", {})
+        duration_sec = config.get("duration_sec", 0.0)
+        
+        ffmpeg_exe = os.path.join(get_ffmpeg_dir(), "ffmpeg.exe" if os.name == 'nt' else "ffmpeg")
+        if not os.path.exists(ffmpeg_exe):
+            job.status = JobStatus.FAILED
+            job.error_message = "No se encontró ffmpeg."
+            self.job_status_changed.emit(job.job_id, JobStatus.FAILED)
+            return
+
+        # Construir comando FFmpeg
+        cmd = [ffmpeg_exe, "-y", "-i", input_file]
+        
+        # Opciones de Video
+        video_mode = settings.get("video_mode", "recode")
+        if video_mode == "copy":
+            cmd.extend(["-c:v", "copy"])
+        else:
+            v_args = settings.get("video_args", [])
+            if v_args:
+                cmd.extend(v_args)
+            else:
+                cmd.extend(["-c:v", "libx264", "-crf", "23"])
+
+        # Opciones de Audio
+        audio_mode = settings.get("audio_mode", "recode")
+        if audio_mode == "copy":
+            cmd.extend(["-c:a", "copy"])
+        else:
+            a_args = settings.get("audio_args", [])
+            if a_args:
+                cmd.extend(a_args)
+            else:
+                cmd.extend(["-c:a", "aac", "-b:a", "192k"])
+                
+        cmd.append(output_file)
+        
+        logger.info(f"QueueWorker: Iniciando RECODE con comando: {' '.join(cmd)}")
+        
+        startupinfo = None
+        if os.name == 'nt':
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                text=True,
+                startupinfo=startupinfo,
+                encoding="utf-8",
+                errors="replace"
+            )
+            
+            # Guardamos la referencia para poder cancelarlo
+            if worker_ref:
+                worker_ref.downloader = proc # Usamos downloader para guardar el Popen, sobrecargando su uso temporalmente
+                # Override cancel
+                def _cancel_proc():
+                    proc.terminate()
+                worker_ref.cancel = _cancel_proc
+
+            time_regex = re.compile(r"time=\s*(\d+):(\d+):(\d+\.\d+|\d+)")
+            speed_regex = re.compile(r"speed=\s*([\d\.]+)x")
+            
+            for line in proc.stderr:
+                if cancellation_event.is_set():
+                    proc.terminate()
+                    break
+                    
+                time_match = time_regex.search(line)
+                speed_match = speed_regex.search(line)
+                
+                if time_match and duration_sec > 0:
+                    h, m, s = float(time_match.group(1)), float(time_match.group(2)), float(time_match.group(3))
+                    current_sec = h * 3600 + m * 60 + s
+                    percent = min((current_sec / duration_sec) * 100.0, 100.0)
+                    
+                    speed_str = f"{speed_match.group(1)}x" if speed_match else "..."
+                    
+                    eta_str = "..."
+                    if speed_match:
+                        sp = float(speed_match.group(1))
+                        if sp > 0:
+                            rem = (duration_sec - current_sec) / sp
+                            eta_str = f"{int(rem)}s"
+                    
+                    job.progress = percent
+                    job.speed = speed_str
+                    job.eta = eta_str
+                    self.job_progress_changed.emit(job.job_id, percent, f"Velocidad: {speed_str}", f"ETA: {eta_str}")
+
+            proc.wait()
+            
+            if cancellation_event.is_set():
+                job.status = JobStatus.CANCELLED
+                self.job_status_changed.emit(job.job_id, JobStatus.CANCELLED)
+                if os.path.exists(output_file):
+                    try:
+                        os.remove(output_file)
+                    except Exception:
+                        pass
+                return
+                
+            if proc.returncode == 0:
+                job.status = JobStatus.COMPLETED
+                job.progress = 100.0
+                job.final_filepath = output_file
+                self.job_progress_changed.emit(job.job_id, 100.0, "Completado", "")
+                self.job_status_changed.emit(job.job_id, JobStatus.COMPLETED)
+            else:
+                job.status = JobStatus.FAILED
+                job.error_message = f"FFmpeg terminó con código {proc.returncode}"
+                self.job_status_changed.emit(job.job_id, JobStatus.FAILED)
+                
+        except Exception as e:
+            logger.error(f"QueueWorker: Error en RECODE: {e}")
+            job.status = JobStatus.FAILED
+            job.error_message = str(e)
+            self.job_status_changed.emit(job.job_id, JobStatus.FAILED)
+
     @staticmethod
     def _default_output_path():
         try:
@@ -711,10 +851,15 @@ class QueueManager(QObject):
         with QMutexLocker(self._mutex):
             return list(self._jobs)
 
-    def _get_next_pending_job(self) -> Job | None:
-        """Usado internamente por el worker para obtener la siguiente tarea PENDING."""
+    def _get_next_runnable_job(self, active_recodes: int) -> Job | None:
+        """Obtiene la siguiente tarea PENDING saltando los RECODE si ya hay uno corriendo."""
         with QMutexLocker(self._mutex):
-            return next((j for j in self._jobs if j.status == JobStatus.PENDING), None)
+            for j in self._jobs:
+                if j.status == JobStatus.PENDING:
+                    if j.job_type == "RECODE" and active_recodes > 0:
+                        continue
+                    return j
+            return None
 
     def _on_worker_status_changed(self, job_id: str, status: str):
         self.job_status_changed.emit(job_id, status)

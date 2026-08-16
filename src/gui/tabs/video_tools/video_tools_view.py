@@ -12,19 +12,21 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFrame,
     QMessageBox,
+    QCheckBox,
 )
-from PySide6.QtCore import Qt, QSize
-from PySide6.QtGui import QIcon
+from PySide6.QtCore import Qt, QSize, QUrl
+from PySide6.QtGui import QIcon, QDesktopServices
 
 from gui.widgets.animated_button import AnimatedButton
 from gui.widgets.bouncing_progress_bar import BouncingProgressBar
-from gui.styles import apply_folder_browse_button_style
+from gui.styles import apply_folder_browse_button_style, apply_folder_open_button_style
 from gui.widgets.media_trim_player_widget import MediaTrimPlayerWidget
 from gui.tabs.video_tools.media_queue_widget import MediaQueueWidget
 from gui.tabs.video_tools.encoding_options_widget import EncodingOptionsWidget
 from core.logger.logger_manager import logger
 from core.utils.config_manager import get_config, save_config
 from core.tabs.editing_media.ffprobe_metadata_manager import FFprobeMetadataManager
+from core.utils.queue_manager import get_queue_manager, JobStatus
 
 AUDIO_ONLY_EXTENSIONS = {".mp3", ".wav", ".aac", ".flac", ".ogg", ".m4a", ".opus", ".wma"}
 
@@ -44,6 +46,12 @@ class VideoToolsTab(QWidget):
         self.init_ui()
         self._load_saved_output_dir()
         FFprobeMetadataManager.get_instance().metadata_ready.connect(self._on_metadata_ready)
+        
+        # Conectar señales del QueueManager
+        qm = get_queue_manager()
+        qm.job_progress_changed.connect(self._on_job_progress)
+        qm.job_status_changed.connect(self._on_job_status)
+        self._recode_jobs = set() # Mantener track de los trabajos RECODE iniciados desde esta vista
 
     def init_ui(self):
         main_layout = QHBoxLayout(self)
@@ -97,34 +105,53 @@ class VideoToolsTab(QWidget):
         grid_out = QGridLayout()
         grid_out.setSpacing(8)
 
+        # Checkbox "Guardar en misma ruta"
+        self.chk_same_path = QCheckBox(self.tr("Guardar en la misma ruta del medio original"))
+        self.chk_same_path.setObjectName("menuLabel")
+        grid_out.addWidget(self.chk_same_path, 0, 0, 1, 3)
+
         # Destino
-        lbl_dest = QLabel(self.tr("Carpeta de Salida:"))
-        lbl_dest.setObjectName("menuLabel")
-        grid_out.addWidget(lbl_dest, 0, 0)
+        self.lbl_dest = QLabel(self.tr("Carpeta de Salida:"))
+        self.lbl_dest.setObjectName("menuLabel")
+        grid_out.addWidget(self.lbl_dest, 1, 0)
         self.txt_output_dir = QLineEdit()
         self.txt_output_dir.setPlaceholderText(self.tr("Seleccionar carpeta de destino..."))
-        grid_out.addWidget(self.txt_output_dir, 0, 1)
+        grid_out.addWidget(self.txt_output_dir, 1, 1)
 
         self.btn_browse_output = QPushButton()
         self.btn_browse_output.setFixedSize(32, 32)
         self.btn_browse_output.setCursor(Qt.PointingHandCursor)
         apply_folder_browse_button_style(self.btn_browse_output, self.tr("Seleccionar carpeta de salida"))
         self.btn_browse_output.clicked.connect(self._on_browse_output_clicked)
-        grid_out.addWidget(self.btn_browse_output, 0, 2)
+        
+        # Botón para abrir la carpeta
+        self.btn_open_output = QPushButton()
+        self.btn_open_output.setFixedSize(32, 32)
+        self.btn_open_output.setCursor(Qt.PointingHandCursor)
+        apply_folder_open_button_style(self.btn_open_output, self.tr("Abrir carpeta de salida en el explorador"))
+        self.btn_open_output.clicked.connect(self._on_open_output_clicked)
+
+        # HBox para los dos botones
+        btn_box = QHBoxLayout()
+        btn_box.setSpacing(4)
+        btn_box.setContentsMargins(0, 0, 0, 0)
+        btn_box.addWidget(self.btn_browse_output)
+        btn_box.addWidget(self.btn_open_output)
+
+        grid_out.addLayout(btn_box, 1, 2)
 
         # Sufijo
         lbl_suffix = QLabel(self.tr("Sufijo del Nombre:"))
         lbl_suffix.setObjectName("menuLabel")
-        grid_out.addWidget(lbl_suffix, 1, 0)
+        grid_out.addWidget(lbl_suffix, 2, 0)
         self.txt_suffix = QLineEdit("_recoded")
-        grid_out.addWidget(self.txt_suffix, 1, 1, 1, 2)
+        grid_out.addWidget(self.txt_suffix, 2, 1, 1, 2)
+        
+        self.chk_same_path.toggled.connect(self._on_same_path_toggled)
 
         out_layout.addLayout(grid_out)
 
         # Barra de Progreso Global
-        lbl_progress = QLabel(self.tr("Progreso de Procesamiento:"))
-        lbl_progress.setObjectName("menuLabel")
-        out_layout.addWidget(lbl_progress)
         self.progress_bar = BouncingProgressBar()
         self.progress_bar.setObjectName("downloadProgressBar")
         self.progress_bar.setProperty("status", "wait")
@@ -208,6 +235,21 @@ class VideoToolsTab(QWidget):
             config["video_tools_output_dir"] = folder
             save_config(config)
 
+    def _on_open_output_clicked(self):
+        folder = self.txt_output_dir.text().strip()
+        if folder and os.path.exists(folder):
+            QDesktopServices.openUrl(QUrl.fromLocalFile(folder))
+
+    def _on_same_path_toggled(self, checked: bool):
+        self.lbl_dest.setEnabled(not checked)
+        self.txt_output_dir.setEnabled(not checked)
+        self.btn_browse_output.setEnabled(not checked)
+        self.btn_open_output.setEnabled(not checked)
+        
+        config = get_config()
+        config["video_tools_same_path"] = checked
+        save_config(config)
+
     def _load_saved_output_dir(self):
         config = get_config()
         saved = config.get("video_tools_output_dir", "")
@@ -217,6 +259,10 @@ class VideoToolsTab(QWidget):
             default_dir = os.path.join(os.path.expanduser("~"), "Videos")
             if os.path.exists(default_dir):
                 self.txt_output_dir.setText(default_dir)
+                
+        same_path = config.get("video_tools_same_path", False)
+        self.chk_same_path.setChecked(same_path)
+        self._on_same_path_toggled(same_path)
 
     def _on_start_enabled_changed(self, enabled: bool):
         self.btn_start.setEnabled(enabled)
@@ -231,18 +277,97 @@ class VideoToolsTab(QWidget):
             return
 
         out_dir = self.txt_output_dir.text().strip()
-        if not out_dir or not os.path.exists(out_dir):
+        same_path = self.chk_same_path.isChecked()
+        
+        if not same_path and (not out_dir or not os.path.exists(out_dir)):
             QMessageBox.warning(self, self.tr("Carpeta inválida"), self.tr("Por favor selecciona una carpeta de salida válida."))
             return
 
         settings = self.options_widget.get_encoding_settings()
         suffix = self.txt_suffix.text().strip()
 
-        logger.info(f"VideoToolsTab: Iniciando recodificación para {len(files)} archivos.")
-        logger.info(f"Ajustes: {settings}, Destino: {out_dir}, Sufijo: {suffix}")
+        logger.info(f"VideoToolsTab: Iniciando recodificación para {len(files)} archivos. Misma ruta: {same_path}")
         
-        QMessageBox.information(
-            self,
-            self.tr("Recodificación"),
-            f"{self.tr('Configuración de 2 Paneles lista para recodificar')} {len(files)} {self.tr('archivos en')}:\n{out_dir}"
-        )
+        qm = get_queue_manager()
+        container_ext = settings.get("container", "mp4")
+        
+        for filepath in files:
+            base_name = os.path.splitext(os.path.basename(filepath))[0]
+            out_name = f"{base_name}{suffix}.{container_ext}"
+            
+            if same_path:
+                actual_out_dir = os.path.dirname(filepath)
+            else:
+                actual_out_dir = out_dir
+                
+            out_file = os.path.join(actual_out_dir, out_name)
+            
+            ext = os.path.splitext(filepath)[1].lower()
+            media_type = "audio" if ext in AUDIO_ONLY_EXTENSIONS else "video"
+            meta = FFprobeMetadataManager.get_instance().get_metadata_instant(filepath, media_type)
+            duration_sec = self._parse_duration_to_seconds(meta.get("duración", "0"))
+            
+            config = {
+                "input_path": filepath,
+                "output_path": out_file,
+                "settings": settings,
+                "duration_sec": duration_sec,
+                "title": f"Recode: {base_name}"
+            }
+            job_id = qm.add_job(config, "RECODE")
+            self._recode_jobs.add(job_id)
+            
+            # Actualizamos visualmente la cola
+            self.queue_widget.update_file_status(filepath, self.tr("En cola"))
+            
+        self.btn_start.setEnabled(False)
+        self.progress_bar.setProperty("status", "downloading")
+        self.progress_bar.style().unpolish(self.progress_bar)
+        self.progress_bar.style().polish(self.progress_bar)
+        qm.start_queue()
+
+    def _on_job_progress(self, job_id: str, percent: float, speed: str, eta: str):
+        if job_id in self._recode_jobs:
+            self.progress_bar.setValue(int(percent))
+            self.progress_bar.setFormat(f"{percent:.1f}% - {speed} - {eta}")
+
+    def _on_job_status(self, job_id: str, status: str):
+        if job_id not in self._recode_jobs:
+            return
+            
+        qm = get_queue_manager()
+        job = qm.get_job(job_id)
+        if not job:
+            return
+            
+        file_path = job.config.get("input_path")
+        
+        if status == JobStatus.RUNNING:
+            self.queue_widget.update_file_status(file_path, self.tr("Procesando..."))
+        elif status == JobStatus.COMPLETED:
+            self.queue_widget.update_file_status(file_path, self.tr("Completado"))
+            self._check_all_finished()
+        elif status == JobStatus.FAILED:
+            self.queue_widget.update_file_status(file_path, self.tr("Error"))
+            self._check_all_finished()
+        elif status == JobStatus.CANCELLED:
+            self.queue_widget.update_file_status(file_path, self.tr("Cancelado"))
+            self._check_all_finished()
+            
+    def _check_all_finished(self):
+        qm = get_queue_manager()
+        all_done = True
+        for jid in list(self._recode_jobs):
+            job = qm.get_job(jid)
+            if job and job.status in (JobStatus.PENDING, JobStatus.RUNNING):
+                all_done = False
+                break
+                
+        if all_done:
+            self._recode_jobs.clear()
+            self.btn_start.setEnabled(True)
+            self.progress_bar.setValue(100)
+            self.progress_bar.setFormat(self.tr("Finalizado"))
+            self.progress_bar.setProperty("status", "wait")
+            self.progress_bar.style().unpolish(self.progress_bar)
+            self.progress_bar.style().polish(self.progress_bar)

@@ -370,3 +370,8 @@ class MediaQueueWidget(QFrame):
             if path and os.path.exists(path):
                 from PySide6.QtGui import QDesktopServices
                 QDesktopServices.openUrl(QUrl.fromLocalFile(os.path.dirname(path)))
+
+    def update_file_status(self, filepath: str, status_text: str):
+        item = self._items_by_path.get(filepath)
+        if item:
+            item.setText(3, status_text)

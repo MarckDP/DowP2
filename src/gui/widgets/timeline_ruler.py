@@ -26,7 +26,7 @@ class TimelineRulerWidget(QWidget):
         self.is_video = self.media_type in ("video", "video+audio")
         self.show_hours = duration_sec >= 3600.0
 
-        self.setFixedHeight(22)
+        self.setFixedHeight(18)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setStyleSheet("background: transparent;")
 
@@ -88,9 +88,6 @@ class TimelineRulerWidget(QWidget):
         h = self.height()
         if w <= 0 or h <= 0:
             return
-
-        # Fondo
-        painter.fillRect(0, 0, w, h, QColor("#0d0d0d"))
 
         # Línea inferior (separador)
         painter.setPen(QPen(QColor("#333333"), 1))

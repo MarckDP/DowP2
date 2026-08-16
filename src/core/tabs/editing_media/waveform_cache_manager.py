@@ -5,6 +5,7 @@ import json
 import subprocess
 import struct
 import array
+import math
 from PySide6.QtCore import QObject, Signal, QRunnable, QThreadPool, Qt, QSize
 from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor
 
@@ -234,11 +235,10 @@ class HiResWaveformRunnable(QRunnable):
         samples = array.array('h')
         samples.frombytes(raw_data)
 
-        # Encontrar el pico absoluto global a velocidad C nativa
-        min_s = min(samples)
-        max_s = max(samples)
-        global_max = max(abs(min_s), abs(max_s), 1)
-        inv_gmax = 1.0 / global_max
+        # Escala perceptual (Ley de potencia / raíz cuadrada de amplitud 16-bit PCM):
+        # Mantiene fidelidad de volumen (audios fuertes vs suaves) sin que los pasajes
+        # sutiles o de bajo volumen se vuelvan líneas planas invisibles.
+        inv_scale = 1.0 / 32768.0
 
         # Extraer min/max por bloque (hasta 4000 picos de alta resolución)
         target_num_peaks = max(500, min(num_samples // 4, 4000))
@@ -249,7 +249,11 @@ class HiResWaveformRunnable(QRunnable):
             end_idx = max(start_idx + 1, int((i + 1) * block_size))
             block = samples[start_idx:end_idx]
             if block:
-                minmax_peaks.append((min(block) * inv_gmax, max(block) * inv_gmax))
+                mn_raw = min(block) * inv_scale
+                mx_raw = max(block) * inv_scale
+                mn_perc = -math.sqrt(abs(mn_raw)) if mn_raw < 0 else math.sqrt(mn_raw)
+                mx_perc = math.sqrt(mx_raw) if mx_raw > 0 else -math.sqrt(abs(mx_raw))
+                minmax_peaks.append((mn_perc, mx_perc))
             else:
                 minmax_peaks.append((0.0, 0.0))
 

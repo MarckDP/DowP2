@@ -9,14 +9,17 @@ from PySide6.QtCore import Signal
 
 from gui.styles import get_theme_token
 from gui.tabs.video_tools.presets_panel import PresetsPanel
+from gui.tabs.video_tools.advanced_recode_panel import AdvancedRecodePanel
 
 class EncodingOptionsWidget(QFrame):
     """
     Panel derecho de opciones con pestañas (Preajustes, Comprimir, Convertir, Proxies, Avanzado).
-    Se ubica en el panel derecho de la interfaz. El contenido de cada pestaña está
-    pendiente de diseño; por ahora solo se deja el cascarón de pestañas.
+    Caja principal contenedora con fondo transparente y borde acorde al tema.
     """
     options_changed = Signal(dict)
+    # Emitida cuando cambia si el boton "Iniciar" deberia estar habilitado segun la
+    # pestaña actualmente activa (hoy solo Avanzado puede bloquearlo).
+    start_enabled_changed = Signal(bool)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -24,22 +27,37 @@ class EncodingOptionsWidget(QFrame):
         self._init_ui()
 
     def _init_ui(self):
-        bg_color = get_theme_token('fondo_secundario', '#1e1e1e')
-        border_color = get_theme_token('borde_normal', '#2d2d2d')
+        bg_color = get_theme_token('fondo_secundario', '#121212')
+        border_color = get_theme_token('borde_normal', '#222222')
+        accent_color = get_theme_token('acento_primario', '#B9E640')
         self.setStyleSheet(f"""
             QFrame#encodingOptionsWidget {{
                 background-color: {bg_color};
                 border: 1px solid {border_color};
                 border-radius: 6px;
             }}
+            QTabWidget#encodingTabs::pane {{
+                background: transparent;
+                border-top: 1px solid {border_color};
+            }}
+            QTabWidget#encodingTabs > QTabBar::tab {{
+                background: transparent;
+                padding: 8px 18px;
+            }}
+            QTabWidget#encodingTabs > QTabBar::tab:selected {{
+                background: transparent;
+                color: #ffffff;
+                border-bottom: 3px solid {accent_color};
+            }}
         """)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(6, 6, 6, 6)
-        layout.setSpacing(6)
+        layout.setSpacing(0)
 
         # Tab Widget Principal de Opciones
         self.tabs = QTabWidget()
+        self.tabs.setObjectName("encodingTabs")
 
         self.tab_presets = PresetsPanel(self)
         self.tabs.addTab(self.tab_presets, self.tr("Preajustes"))
@@ -53,10 +71,25 @@ class EncodingOptionsWidget(QFrame):
         self.tab_proxies = QWidget()
         self.tabs.addTab(self.tab_proxies, self.tr("Proxies"))
 
-        self.tab_advanced = QWidget()
+        self.tab_advanced = AdvancedRecodePanel(self)
         self.tabs.addTab(self.tab_advanced, self.tr("Avanzado"))
+        self.tab_advanced.validity_changed.connect(self._on_advanced_validity_changed)
 
         layout.addWidget(self.tabs)
 
+        self.tabs.currentChanged.connect(self._on_tab_changed)
+
+    def _on_tab_changed(self, index: int):
+        if self.tabs.widget(index) is self.tab_advanced:
+            self.start_enabled_changed.emit(self.tab_advanced.is_valid())
+        else:
+            self.start_enabled_changed.emit(True)
+
+    def _on_advanced_validity_changed(self, is_valid: bool):
+        if self.tabs.currentWidget() is self.tab_advanced:
+            self.start_enabled_changed.emit(is_valid)
+
     def get_encoding_settings(self) -> dict:
+        if self.tabs.currentWidget() is self.tab_advanced:
+            return self.tab_advanced.get_settings()
         return {}

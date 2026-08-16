@@ -411,7 +411,7 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         spin_layout.addWidget(self.search_spinner)
 
         self.search_input.textChanged.connect(self._update_media_input_changed)
-        search_layout.addWidget(self.search_input)
+        search_layout.addWidget(self.search_input, 1)
 
         # Contenedor para el filtro de licencias (solo visible en Freesound)
         self.license_container = QFrame()
@@ -428,6 +428,7 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
 
         self.freesound_license_combo = AutoPopupComboBox()
         self.freesound_license_combo.setFixedHeight(32)
+        self.freesound_license_combo.setFixedWidth(130)
         self.freesound_license_combo.addItem(self.tr("Cualquiera"), "Cualquiera")
         self.freesound_license_combo.addItem(self.tr("CC0 (Sin Copyright)"), "CC0")
         self.freesound_license_combo.addItem(self.tr("CC-BY (Atribución)"), "Attribution")

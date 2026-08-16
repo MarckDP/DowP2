@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # src/gui/widgets/media_trim_player_widget.py
 import os
 import math
@@ -19,7 +20,6 @@ from gui.tabs.editing_media.editing_media_icons import get_svg_icon
 from gui.widgets.timeline_ruler import TimelineRulerWidget
 from gui.widgets.audio_meter import MultiChannelMeterWidget
 from gui.widgets.volume_control import VolumeControlWidget
-from gui.widgets.combo_box import AutoPopupComboBox
 from core.tabs.editing_media.waveform_cache_manager import WaveformCacheManager
 from core.tabs.video_tools.proxy_cache_manager import ProxyCacheManager
 from core.logger.logger_manager import logger
@@ -563,29 +563,33 @@ class _TransparentVideoView(QGraphicsView):
     """QGraphicsView de fondo transparente que aloja un QGraphicsVideoItem, ajustado y
     centrado manteniendo su proporción de aspecto (letterbox/pillarbox) al redimensionar.
 
-    A diferencia de QVideoWidget (que siempre pinta las franjas sobrantes en negro sólido, sin
-    dejar ver lo que hay detrás), este view no pinta nada fuera del propio fotograma de video,
-    así que la cuadrícula de transparencia de `_CheckerboardFrame` (pintada detrás) se ve en
-    esas franjas — permitiendo distinguir a simple vista si un video es vertical, cuadrado u
-    horizontal en vez de perderlo contra un fondo negro uniforme.
+    Soporta:
+    - Zoom interactivo con la rueda del ratón (centrado bajo el cursor).
+    - Paneo / arrastre manteniendo presionado el clic cuando hay zoom (> 1.0x).
+    - Doble clic para restablecer el zoom a 1.0x (Fit to Window).
     """
 
     def __init__(self, scene: QGraphicsScene, video_item: QGraphicsVideoItem, parent=None):
         super().__init__(scene, parent)
         self._video_item = video_item
+        self._zoom_level = 1.0
+        self._min_zoom = 1.0
+        self._max_zoom = 10.0
+        self._is_panning = False
+        self._pan_start = None
+
         self.setFrameShape(QFrame.NoFrame)
         self.setStyleSheet("QGraphicsView { background: transparent; border: none; }")
         self.viewport().setAutoFillBackground(False)
         self.setRenderHint(QPainter.SmoothPixmapTransform)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
+        self.setResizeAnchor(QGraphicsView.AnchorUnderMouse)
         self.refit()
 
     def refit(self):
-        """Centra y escala el ítem de video dentro del viewport a mano (en vez de usar
-        fitInView + zoom del view): el sceneRect siempre coincide exactamente con el tamaño
-        del viewport, así que nunca queda espacio de sobra por el que se pueda hacer scroll,
-        y el video queda perfectamente centrado tanto en horizontal como en vertical."""
+        """Centra y escala el ítem de video dentro del viewport."""
         vp_w = self.viewport().width()
         vp_h = self.viewport().height()
         if vp_w <= 0 or vp_h <= 0:
@@ -595,8 +599,6 @@ class _TransparentVideoView(QGraphicsView):
 
         native = self._video_item.nativeSize()
         if native.isEmpty() or native.width() <= 0 or native.height() <= 0:
-            # Tamaño nativo aún desconocido: ocupar todo el viewport: en cuanto se conozca
-            # (nativeSizeChanged) se reajustará al tamaño real.
             self._video_item.setSize(QSizeF(vp_w, vp_h))
             self._video_item.setPos(0, 0)
             return
@@ -607,9 +609,83 @@ class _TransparentVideoView(QGraphicsView):
         self._video_item.setSize(QSizeF(scaled_w, scaled_h))
         self._video_item.setPos((vp_w - scaled_w) / 2.0, (vp_h - scaled_h) / 2.0)
 
+    def reset_zoom(self):
+        """Restablece el zoom y centra el video (1.0x Fit)."""
+        self._zoom_level = 1.0
+        self._is_panning = False
+        self._pan_start = None
+        self.resetTransform()
+        self.refit()
+        self.setCursor(Qt.ArrowCursor)
+
+    def wheelEvent(self, event):
+        delta = event.angleDelta().y()
+        if delta == 0:
+            return
+
+        factor = 1.18 if delta > 0 else 1.0 / 1.18
+        new_zoom = max(self._min_zoom, min(self._zoom_level * factor, self._max_zoom))
+
+        # Si está muy cerca de 1.0x, encajar a 1.0x exacto
+        if abs(new_zoom - 1.0) < 0.05 and delta < 0:
+            new_zoom = 1.0
+
+        if new_zoom != self._zoom_level:
+            scale_step = new_zoom / self._zoom_level
+            self._zoom_level = new_zoom
+
+            if self._zoom_level <= 1.0:
+                self.reset_zoom()
+            else:
+                self.scale(scale_step, scale_step)
+                self.setCursor(Qt.OpenHandCursor)
+
+        event.accept()
+
+    def mousePressEvent(self, event):
+        if event.button() in (Qt.LeftButton, Qt.MiddleButton):
+            if self._zoom_level > 1.0:
+                self._is_panning = True
+                self._pan_start = event.position().toPoint()
+                self.setCursor(Qt.ClosedHandCursor)
+                event.accept()
+                return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._is_panning and self._pan_start is not None:
+            delta = event.position().toPoint() - self._pan_start
+            self._pan_start = event.position().toPoint()
+
+            h_bar = self.horizontalScrollBar()
+            v_bar = self.verticalScrollBar()
+            h_bar.setValue(h_bar.value() - delta.x())
+            v_bar.setValue(v_bar.value() - delta.y())
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() in (Qt.LeftButton, Qt.MiddleButton):
+            if self._is_panning:
+                self._is_panning = False
+                self._pan_start = None
+                self.setCursor(Qt.OpenHandCursor if self._zoom_level > 1.0 else Qt.ArrowCursor)
+                event.accept()
+                return
+        super().mouseReleaseEvent(event)
+
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.reset_zoom()
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self.refit()
+        if self._zoom_level <= 1.0:
+            self.refit()
 
 
 class MediaTrimPlayerWidget(QWidget):
@@ -706,9 +782,44 @@ class MediaTrimPlayerWidget(QWidget):
         self.lbl_audio_art.setVisible(False)
         prev_layout.addWidget(self.lbl_audio_art, 1)
 
+        # Botón flotante para selección de resolución de previsualización (esquina superior derecha del visor)
+        self.btn_quality = QToolButton(self.preview_container)
+        self.btn_quality.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        self.btn_quality.setPopupMode(QToolButton.InstantPopup)
+        self.btn_quality.setCursor(Qt.PointingHandCursor)
+        self.btn_quality.setToolTip(self.tr("Resolución de previsualización (no afecta la exportación final)"))
+        self.btn_quality.setFixedHeight(20)
+        self.btn_quality.setStyleSheet("""
+            QToolButton {
+                background-color: rgba(20, 20, 20, 200);
+                border: 1px solid #444;
+                border-radius: 6px;
+                color: #cdd6f4;
+                font-size: 10px;
+                font-weight: bold;
+                padding: 2px 6px;
+            }
+            QToolButton:hover { background-color: rgba(185, 230, 64, 200); color: #141414; border-color: #B9E640; }
+            QToolButton::menu-indicator { image: none; }
+        """)
+        self.quality_menu = QMenu(self.btn_quality)
+        self.btn_quality.setMenu(self.quality_menu)
+        self.btn_quality.setVisible(False)
+        self._init_quality_menu()
+
         left_layout.addWidget(self.preview_container, 1)
 
-        # Controles de Zoom (Arriba del Waveform)
+        # Contenedor horizontal: Columna de herramientas/waveform a la izquierda y Vúmetro completo a la derecha
+        wave_container = QHBoxLayout()
+        wave_container.setContentsMargins(0, 0, 0, 0)
+        wave_container.setSpacing(8)
+
+        # Columna izquierda: Controles Zoom arriba + Timeline Ruler al medio + Waveform abajo
+        timeline_waveform_col = QVBoxLayout()
+        timeline_waveform_col.setContentsMargins(0, 0, 0, 0)
+        timeline_waveform_col.setSpacing(4)
+
+        # 1. Controles de Zoom
         zoom_bar = QHBoxLayout()
         zoom_bar.setContentsMargins(0, 0, 0, 0)
 
@@ -739,7 +850,7 @@ class MediaTrimPlayerWidget(QWidget):
         zoom_bar.addWidget(lbl_zoom_y_icon)
 
         self.slider_zoom_y = QSlider(Qt.Horizontal)
-        self.slider_zoom_y.setRange(10, 500)
+        self.slider_zoom_y.setRange(10, 1000)
         self.slider_zoom_y.setValue(100)
         self.slider_zoom_y.setFixedWidth(80)
         self.slider_zoom_y.setToolTip("Ganancia Visual (Zoom Y)")
@@ -751,45 +862,22 @@ class MediaTrimPlayerWidget(QWidget):
         zoom_bar.addWidget(self.slider_zoom_y)
 
         zoom_bar.addStretch()
+        timeline_waveform_col.addLayout(zoom_bar)
 
-        # Calidad de previsualización: Auto / Completa / 1/2 / 1/4 / 1/8. "Auto" decide el
-        # divisor según la resolución nativa real del video (útil para RAW/footage pesado).
-        lbl_quality = QLabel(self.tr("Calidad:"))
-        lbl_quality.setStyleSheet("color: #888; font-size: 11px; font-weight: bold;")
-        zoom_bar.addWidget(lbl_quality)
-
-        self.combo_quality = AutoPopupComboBox()
-        for label, _mode, _divisor in _QUALITY_OPTIONS:
-            self.combo_quality.addItem(self.tr(label))
-        self.combo_quality.setToolTip(self.tr("Resolución de previsualización (no afecta la exportación final)"))
-        self.combo_quality.currentIndexChanged.connect(self._on_quality_option_changed)
-        zoom_bar.addWidget(self.combo_quality)
-
-        self.lbl_quality_status = QLabel("")
-        self.lbl_quality_status.setStyleSheet("color: #666; font-size: 10px; font-style: italic;")
-        self.lbl_quality_status.setFixedWidth(90)
-        zoom_bar.addWidget(self.lbl_quality_status)
-
-        left_layout.addLayout(zoom_bar)
-
-        # Regla de tiempo (Timeline Ruler)
+        # 2. Regla de tiempo (Timeline Ruler) — alineada únicamente sobre la waveform
         self.timeline_ruler = TimelineRulerWidget(
             media_type=self.media_type,
             duration_sec=self.duration_sec,
             fps=self.fps
         )
-        left_layout.addWidget(self.timeline_ruler)
+        timeline_waveform_col.addWidget(self.timeline_ruler)
 
-        # Área con scroll para el Waveform y el vúmetro
-        wave_container = QHBoxLayout()
-        wave_container.setContentsMargins(0, 0, 0, 0)
-        wave_container.setSpacing(8)
-
+        # 3. Waveform con scroll
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self.scroll_area.setFixedHeight(130)
+        self.scroll_area.setFixedHeight(90)
         self.scroll_area.setStyleSheet("""
             QScrollArea { border: none; background: transparent; }
             QScrollBar:horizontal {
@@ -808,8 +896,7 @@ class MediaTrimPlayerWidget(QWidget):
         self.waveform_widget.range_changed.connect(self._on_waveform_range_changed)
         self.scroll_area.setWidget(self.waveform_widget)
 
-        # Envoltorio del scroll_area para poder superponerle el botón de selección de pista
-        # de audio como una "chip" flotante en la esquina superior izquierda de la waveform.
+        # Envoltorio del scroll_area para el selector flotante de pista de audio
         wave_wrapper = QWidget()
         wave_wrapper_layout = QVBoxLayout(wave_wrapper)
         wave_wrapper_layout.setContentsMargins(0, 0, 0, 0)
@@ -841,13 +928,16 @@ class MediaTrimPlayerWidget(QWidget):
         self.btn_audio_track.adjustSize()
         self.btn_audio_track.raise_()
 
-        wave_container.addWidget(wave_wrapper, 1)
+        timeline_waveform_col.addWidget(wave_wrapper)
+        wave_container.addLayout(timeline_waveform_col, 1)
+
         self.scroll_area.viewport().installEventFilter(self)
         # Sincronizar la regla de tiempo con el scroll
         self.scroll_area.horizontalScrollBar().valueChanged.connect(self._sync_ruler)
 
+        # Medidor de audio a la derecha abarcando toda la altura (zoom_bar + ruler + waveform ~ 140px)
         self.audio_meter = MultiChannelMeterWidget()
-        self.audio_meter.setFixedHeight(120)
+        self.audio_meter.setFixedHeight(140)
         wave_container.addWidget(self.audio_meter)
 
         left_layout.addLayout(wave_container)
@@ -981,7 +1071,6 @@ class MediaTrimPlayerWidget(QWidget):
         self._pending_proxy_divisor = None
         self._native_size_known = False
         self._native_size = None
-        self.lbl_quality_status.setText("")
 
         is_video = self.media_type in ("video", "video+audio", "imagen")
         self.video_widget.setVisible(is_video)
@@ -989,7 +1078,8 @@ class MediaTrimPlayerWidget(QWidget):
         if not is_video:
             filename = os.path.basename(self.media_path)
             self.lbl_audio_art.setText(f"{self.tr('Pista de Audio')}: {filename}" if filename else self.tr("Vista Previa de Audio"))
-        self.combo_quality.setEnabled(is_video)
+        self.btn_quality.setVisible(is_video)
+        self._update_quality_button_text()
 
         self.timeline_ruler.media_type = self.media_type
         self.timeline_ruler.is_video = is_video
@@ -997,6 +1087,7 @@ class MediaTrimPlayerWidget(QWidget):
         self.timeline_ruler.fps = self.fps
         self.timeline_ruler.show_hours = self.duration_sec >= 3600.0
         self.timeline_ruler.update()
+        self.video_widget.reset_zoom()
 
         if self.media_path and os.path.exists(self.media_path):
             self.media_player.setSource(QUrl.fromLocalFile(self.media_path))
@@ -1018,6 +1109,7 @@ class MediaTrimPlayerWidget(QWidget):
         self.cleanup(stop_only=True)
         self.media_path = ""
         self.media_player.setSource(QUrl())
+        self.video_widget.reset_zoom()
         self.video_widget.setVisible(False)
         self.lbl_audio_art.setVisible(False)
         self.waveform_widget.set_audio_path("")
@@ -1114,6 +1206,48 @@ class MediaTrimPlayerWidget(QWidget):
             if self._proxy_mode == "auto":
                 self._apply_proxy_divisor(self._compute_auto_divisor(size.width(), size.height()))
 
+    def _init_quality_menu(self):
+        """Inicializa las opciones del menú emergente de resolución de previsualización."""
+        self.quality_menu.clear()
+        for idx, (label, mode, divisor) in enumerate(_QUALITY_OPTIONS):
+            action = self.quality_menu.addAction(self.tr(label))
+            action.setCheckable(True)
+            action.setChecked(idx == 0)
+            action.triggered.connect(lambda checked=False, i=idx: self._on_quality_option_changed(i))
+        self._update_quality_button_text(0)
+
+    def _update_quality_button_text(self, index: int = None, status_text: str = ""):
+        """Actualiza el texto del botón chip de calidad y marca la acción activa en el menú."""
+        if index is None:
+            index = 0
+            for i, (l, m, d) in enumerate(_QUALITY_OPTIONS):
+                if m == self._proxy_mode and (m != "manual" or d == self._manual_divisor):
+                    index = i
+                    break
+        if index < 0 or index >= len(_QUALITY_OPTIONS):
+            index = 0
+        label = self.tr(_QUALITY_OPTIONS[index][0])
+        for i, action in enumerate(self.quality_menu.actions()):
+            action.setChecked(i == index)
+
+        display = f"{label}"
+        if status_text:
+            display += f" ({status_text})"
+        self.btn_quality.setText(f"{display} ▾")
+        self._reposition_quality_button()
+
+    def _reposition_quality_button(self):
+        """Posiciona el botón de calidad en la esquina superior derecha del contenedor de video."""
+        if hasattr(self, "btn_quality") and self.btn_quality and hasattr(self, "preview_container"):
+            self.btn_quality.adjustSize()
+            x = self.preview_container.width() - self.btn_quality.width() - 8
+            self.btn_quality.move(max(0, x), 8)
+            self.btn_quality.raise_()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._reposition_quality_button()
+
     # ------------------------------------------------------------------
     # Calidad de previsualización (proxies para medios pesados/RAW)
     # ------------------------------------------------------------------
@@ -1132,6 +1266,7 @@ class MediaTrimPlayerWidget(QWidget):
             return
         _label, mode, divisor = _QUALITY_OPTIONS[index]
         self._proxy_mode = mode
+        self._update_quality_button_text(index)
         if mode == "manual":
             self._manual_divisor = divisor
             self._apply_proxy_divisor(divisor)
@@ -1149,7 +1284,7 @@ class MediaTrimPlayerWidget(QWidget):
         if divisor <= 1:
             self._proxy_divisor = 1
             self._pending_proxy_divisor = None
-            self.lbl_quality_status.setText("")
+            self._update_quality_button_text()
             self._swap_playback_source(self.media_path)
             return
 
@@ -1158,7 +1293,7 @@ class MediaTrimPlayerWidget(QWidget):
         if cached:
             self._proxy_divisor = divisor
             self._pending_proxy_divisor = None
-            self.lbl_quality_status.setText("")
+            self._update_quality_button_text()
             self._swap_playback_source(cached)
             return
 
@@ -1170,21 +1305,21 @@ class MediaTrimPlayerWidget(QWidget):
             self._proxy_signal_connected = True
         self._pending_proxy_divisor = divisor
         mgr.request_proxy(self.media_path, divisor, self._active_audio_track)
-        self.lbl_quality_status.setText(self.tr("generando…"))
+        self._update_quality_button_text(status_text=self.tr("generando…"))
 
     def _on_proxy_ready(self, file_path: str, divisor: int, audio_track: int, proxy_path: str):
         if (file_path == self.media_path and audio_track == self._active_audio_track
                 and divisor == self._pending_proxy_divisor):
             self._proxy_divisor = divisor
             self._pending_proxy_divisor = None
-            self.lbl_quality_status.setText("")
+            self._update_quality_button_text()
             self._swap_playback_source(proxy_path)
 
     def _on_proxy_failed(self, file_path: str, divisor: int, audio_track: int):
         if (file_path == self.media_path and audio_track == self._active_audio_track
                 and divisor == self._pending_proxy_divisor):
             self._pending_proxy_divisor = None
-            self.lbl_quality_status.setText(self.tr("no disponible"))
+            self._update_quality_button_text(status_text=self.tr("no disp."))
 
     def _swap_playback_source(self, path: str):
         """Cambia la fuente del reproductor manteniendo posición y estado de reproducción.
@@ -1254,9 +1389,12 @@ class MediaTrimPlayerWidget(QWidget):
 
     def _apply_source_restore(self, pending):
         pos_ms, was_playing = pending
-        self.media_player.setPosition(pos_ms)
         if was_playing:
+            self.media_player.setPosition(pos_ms)
             self.media_player.play()
+        else:
+            self.media_player.pause()
+            self.media_player.setPosition(pos_ms)
 
     # ------------------------------------------------------------------
     # Selección de pista de audio (medios multipista)
@@ -1487,20 +1625,15 @@ class MediaTrimPlayerWidget(QWidget):
         self.playing_changed.emit(self.media_player.playbackState() == QMediaPlayer.PlayingState)
 
     def _clamp_seek_ms(self, sec: float) -> int:
-        """Convierte segundos a milisegundos para setPosition() dejando siempre un colchón de
-        al menos un fotograma antes del final real del medio. Seekear justo al último
-        milisegundo de duration_sec (p.ej. ratio=1.0 al arrastrar hasta el borde de la
-        waveform, o un rango que termina exactamente en la duración total) suele caer más
-        allá del último frame decodificable — el reproductor se queda sin imagen en vez de
-        mostrar el último fotograma. Restar la duración de un frame evita pisar ese borde."""
+        """Convierte segundos a milisegundos para setPosition dejando siempre un colchon de
+        al menos un fotograma antes del final real del medio para evitar caer fuera de rango."""
         frame_ms = 1000.0 / self.fps if self.fps and self.fps > 0 else 33.0
         max_ms = max(0, int(self.duration_sec * 1000) - int(frame_ms))
         ms = int(sec * 1000)
         return max(0, min(ms, max_ms))
 
     def preview_range(self, in_sec: float, out_sec: float):
-        """Reproduce en bucle dentro de un rango dado hasta que el usuario mueva el cabezal
-        manualmente fuera de él o use el play/pause normal."""
+        """Reproduce en bucle dentro de un rango dado hasta que el usuario mueva el cabezal manualmente."""
         self._preview_loop_range = (in_sec, out_sec)
         self.media_player.setPosition(self._clamp_seek_ms(in_sec))
         self.media_player.play()
@@ -1533,8 +1666,6 @@ class MediaTrimPlayerWidget(QWidget):
     def _on_waveform_seek(self, ratio: float):
         if self.duration_sec > 0:
             pos_sec = ratio * self.duration_sec
-            # Si el usuario mueve manualmente el cabezal fuera del rango que se está
-            # previsualizando en bucle, se sale de ese modo de bucle.
             if self._preview_loop_range is not None:
                 lo, hi = self._preview_loop_range
                 if pos_sec < lo or pos_sec > hi:
@@ -1551,12 +1682,7 @@ class MediaTrimPlayerWidget(QWidget):
     def _on_player_position_changed(self, pos_ms: int):
         pos_sec = pos_ms / 1000.0
 
-        # Previsualización en bucle de un rango guardado: al llegar al final del rango,
-        # volver al inicio en vez de seguir reproduciendo más allá de él. Si "hi" está en la
-        # duración total (o muy cerca), la posición real nunca llega a reportar exactamente
-        # "hi" (el último frame decodificable queda un poco antes) — comparar con un pequeño
-        # margen asegura que el bucle salte antes de que el reproductor llegue solo al final
-        # y se quede sin imagen esperando el siguiente frame que ya no existe.
+        # Previsualizacion en bucle de un rango guardado
         if self._preview_loop_range is not None:
             lo, hi = self._preview_loop_range
             frame_sec = (1000.0 / self.fps if self.fps and self.fps > 0 else 33.0) / 1000.0

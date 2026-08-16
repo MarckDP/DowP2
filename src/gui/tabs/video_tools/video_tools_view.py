@@ -76,27 +76,26 @@ class VideoToolsTab(QWidget):
         self.right_container = QWidget()
         right_layout = QVBoxLayout(self.right_container)
         right_layout.setContentsMargins(0, 0, 0, 0)
-        right_layout.setSpacing(8)
+        right_layout.setSpacing(10)
 
         # 1. Panel Superior de Opciones con Pestañas
         self.options_widget = EncodingOptionsWidget(self)
+        self.options_widget.start_enabled_changed.connect(self._on_start_enabled_changed)
         right_layout.addWidget(self.options_widget, 1)
 
         # 2. Cubo Inferior de Opciones de Salida y Ejecución
-        # Reutiliza el mismo estilo (objectName) que el resto de la app para estos
-        # componentes (definido en gui/themes/_base.qss), en vez de un stylesheet ad-hoc.
         self.output_card = QFrame()
         self.output_card.setObjectName("outputOptionsContainer")
         out_layout = QVBoxLayout(self.output_card)
-        out_layout.setContentsMargins(10, 10, 10, 10)
-        out_layout.setSpacing(8)
+        out_layout.setContentsMargins(14, 12, 14, 12)
+        out_layout.setSpacing(10)
 
         lbl_out_title = QLabel(self.tr("Opciones de Salida y Procesamiento"))
         lbl_out_title.setObjectName("sectionTitle")
         out_layout.addWidget(lbl_out_title)
 
         grid_out = QGridLayout()
-        grid_out.setSpacing(6)
+        grid_out.setSpacing(8)
 
         # Destino
         lbl_dest = QLabel(self.tr("Carpeta de Salida:"))
@@ -168,15 +167,17 @@ class VideoToolsTab(QWidget):
             duration_sec = 1.0
 
         self.preview_widget.load_media(filepath, media_type, duration_sec, fps_val)
+        self.options_widget.tab_advanced.set_source_media(meta, filepath)
+
+    def _on_metadata_ready(self, path: str, meta: dict):
+        if path == self.current_preview_file:
+            self.preview_widget.set_fps(self._parse_fps(meta.get("fps", "30")))
+            self.options_widget.tab_advanced.set_source_media(meta, path)
 
     def _on_trim_range_changed(self, in_sec: float, out_sec: float):
         self.in_point_ms = int(in_sec * 1000)
         self.out_point_ms = int(out_sec * 1000)
         logger.debug(f"VideoToolsTab: Trim points actualizados: In={self.in_point_ms}ms, Out={self.out_point_ms}ms")
-
-    def _on_metadata_ready(self, path: str, meta: dict):
-        if path == self.current_preview_file:
-            self.preview_widget.set_fps(self._parse_fps(meta.get("fps", "30")))
 
     def _parse_duration_to_seconds(self, dur_str) -> float:
         if not dur_str or dur_str == "-":
@@ -216,6 +217,12 @@ class VideoToolsTab(QWidget):
             default_dir = os.path.join(os.path.expanduser("~"), "Videos")
             if os.path.exists(default_dir):
                 self.txt_output_dir.setText(default_dir)
+
+    def _on_start_enabled_changed(self, enabled: bool):
+        self.btn_start.setEnabled(enabled)
+        self.btn_start.setToolTip(
+            "" if enabled else self.tr("La combinación elegida en la pestaña Avanzado no es compatible con este ffmpeg.")
+        )
 
     def _on_start_recoding_clicked(self):
         files = self.queue_widget.get_all_filepaths()

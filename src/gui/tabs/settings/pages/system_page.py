@@ -186,11 +186,8 @@ class SystemPage(QWidget):
 
     def load_hardware_info(self, force: bool = False):
         """Carga y muestra la información de hardware desde la caché o ejecutando detección."""
-        config = get_config()
-        info = config.get("hardware_info", {})
-        
-        if not info or force:
-            info = detect_hardware(force_refresh=force)
+        from core.utils.hardware_detector import detect_hardware
+        info = detect_hardware(force_refresh=force)
 
         self.lbl_os.setText(info.get("os_name", "Desconocido"))
         self.lbl_cpu.setText(info.get("cpu_name", "Desconocido"))

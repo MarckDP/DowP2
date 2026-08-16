@@ -370,6 +370,10 @@ class MainWindow(QMainWindow):
             logger.info("MainWindow: Recargando etiquetas en Proceso Avanzado")
             self.tab_single.video_details.load_labels()
 
+        if self.tabs.widget(index) == self.tab_quick and hasattr(self.tab_quick, "load_labels"):
+            logger.info("MainWindow: Recargando etiquetas en Modo Rápido")
+            self.tab_quick.load_labels()
+
         from core.utils.clipboard_monitor import ClipboardURLMonitor
         ClipboardURLMonitor.instance().check_clipboard(force=True)
 

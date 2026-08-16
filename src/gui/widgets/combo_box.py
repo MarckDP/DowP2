@@ -65,10 +65,23 @@ class AutoPopupComboBox(QComboBox):
         rect = self.style().subControlRect(
             QStyle.ComplexControl.CC_ComboBox, opt, QStyle.SubControl.SC_ComboBoxEditField, self
         )
-        rect.setLeft(rect.left() + 5)
-        rect.setRight(rect.right() - 5)
+        # Si hay icono, desplazar el inicio del texto para que no se dibuje encima del icono
+        if not opt.currentIcon.isNull():
+            icon_size = opt.iconSize if (hasattr(opt, "iconSize") and opt.iconSize.isValid() and opt.iconSize.width() > 0) else self.iconSize()
+            icon_w = icon_size.width() if icon_size.isValid() and icon_size.width() > 0 else 16
+            rect.setLeft(rect.left() + icon_w + 6)
 
-        group = self.palette().ColorGroup.Normal if self.isEnabled() else self.palette().ColorGroup.Disabled
-        painter.setPen(self.palette().color(group, self.palette().ColorRole.Text))
-        elided = self.fontMetrics().elidedText(text, Qt.TextElideMode.ElideRight, rect.width())
+        # Margen mínimo de seguridad para que no toque exactamente la línea divisoria
+        rect.setRight(rect.right() - 2)
+
+        # Usar color personalizado si la opción tiene uno asignado (ej. etiquetas de color)
+        custom_color = self.itemData(self.currentIndex(), Qt.UserRole + 1)
+        if custom_color and isinstance(custom_color, str) and custom_color.startswith("#"):
+            from PySide6.QtGui import QColor
+            painter.setPen(QColor(custom_color))
+        else:
+            group = self.palette().ColorGroup.Normal if self.isEnabled() else self.palette().ColorGroup.Disabled
+            painter.setPen(self.palette().color(group, self.palette().ColorRole.Text))
+
+        elided = self.fontMetrics().elidedText(text, Qt.TextElideMode.ElideRight, max(0, rect.width()))
         painter.drawText(rect, Qt.AlignmentFlag.AlignVCenter, elided)

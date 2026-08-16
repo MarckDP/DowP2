@@ -84,6 +84,7 @@ class QuickModeTab(QWidget):
         self.output_options.btn_open_output_path.clicked.connect(self._on_open_output_path_clicked)
 
         self._on_mode_changed(self.mode_combo.currentIndex())
+        self.load_labels()
 
     def _build_url_panel(self):
         panel = QWidget()
@@ -103,6 +104,12 @@ class QuickModeTab(QWidget):
         monitor.register(self.url_input)
         monitor.url_detected.connect(self._on_clipboard_url_detected)
 
+        # ComboBox de Etiquetas (a la derecha de la URL y antes del botón de cortar fragmentos)
+        self.combo_tags = AutoPopupComboBox()
+        self.combo_tags.setObjectName("tagsComboBox")
+        self.combo_tags.setPlaceholderText(self.tr("Etiqueta"))
+        self.combo_tags.currentIndexChanged.connect(self._on_label_changed)
+
         # Botón conmutable para activar el recorte de fragmentos, inline junto a la URL
         # y "Descargar" — forma cuadrada estándar para integrarse con esos controles.
         self.btn_cut = QPushButton()
@@ -121,6 +128,7 @@ class QuickModeTab(QWidget):
 
         layout.addWidget(QLabel(self.tr("URL:")))
         layout.addWidget(self.url_input, 1)
+        layout.addWidget(self.combo_tags)
         layout.addWidget(self.btn_cut)
         layout.addWidget(self.btn_download)
         return panel
@@ -324,3 +332,66 @@ class QuickModeTab(QWidget):
     def _on_cut_toggled(self, checked: bool):
         status = "saved" if checked else "normal"
         apply_cut_button_style(self.btn_cut, status, icon_size=18, shape="square")
+
+    def load_labels(self):
+        """Carga las etiquetas configuradas en la aplicación en el combo de etiquetas con círculos de color."""
+        if not hasattr(self, "combo_tags"):
+            return
+        from gui.styles import create_colored_circle_icon, update_label_combobox_style
+        from core.utils.config_manager import get_config
+        from PySide6.QtGui import QColor
+
+        self.combo_tags.blockSignals(True)
+        current_text = self.combo_tags.currentText()
+        self.combo_tags.clear()
+        self.combo_tags.addItem(self.tr("Etiqueta"), "")
+
+        config = get_config()
+        labels = config.get("labels", [])
+        for label in labels:
+            name = label.get("name", "")
+            path = label.get("path", "")
+            color = label.get("color", "#B9E640")
+
+            idx = self.combo_tags.count()
+            icon = create_colored_circle_icon(color, size=12)
+            self.combo_tags.addItem(icon, name, path)
+
+            self.combo_tags.setItemData(idx, color, Qt.UserRole + 1)
+            self.combo_tags.setItemData(idx, QColor(color), Qt.ForegroundRole)
+
+        # Intentar restaurar selección si aún existe
+        idx = self.combo_tags.findText(current_text)
+        if idx >= 0:
+            self.combo_tags.setCurrentIndex(idx)
+        else:
+            self.combo_tags.setCurrentIndex(0)
+
+        self.combo_tags.blockSignals(False)
+        self._update_combo_style()
+
+    def _update_combo_style(self):
+        """Actualiza el color de texto del combo según la etiqueta seleccionada."""
+        if hasattr(self, "combo_tags"):
+            from gui.styles import update_label_combobox_style
+            update_label_combobox_style(self.combo_tags)
+
+    def _on_label_changed(self, index):
+        """Maneja el cambio de selección en el combobox de etiquetas."""
+        self._update_combo_style()
+        if index <= 0:
+            # Ninguna etiqueta seleccionada: restaurar ruta por defecto
+            from core.utils.paths import get_default_download_dir
+            from core.utils.config_manager import get_config
+            config = get_config()
+            default_path = config.get("default_download_dir", get_default_download_dir())
+            self.output_options.output_path_input.setText(default_path)
+            self.output_options.output_path_input.setEnabled(True)
+            self.output_options.btn_select_output_path.setEnabled(True)
+        else:
+            # Etiqueta seleccionada: actualizar ruta y bloquear edición
+            path = self.combo_tags.currentData()
+            if path:
+                self.output_options.output_path_input.setText(path)
+            self.output_options.output_path_input.setEnabled(False)
+            self.output_options.btn_select_output_path.setEnabled(False)

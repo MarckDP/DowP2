@@ -99,47 +99,185 @@ def _get_gpu_name() -> str:
     return "Gráficos integrados / Estándar"
 
 
-def _get_ffmpeg_supported_encoders() -> tuple[list[str], str]:
+# Encoders candidatos por códec, en orden de prioridad de uso (hardware antes que software).
+# backend: identificador corto usado en hardware_acceleration / UI badges.
+CODEC_ENCODERS = {
+    "h264": [
+        ("h264_nvenc", "NVIDIA NVENC", "nvenc"),
+        ("h264_videotoolbox", "Apple VideoToolbox", "videotoolbox"),
+        ("h264_qsv", "Intel QuickSync", "qsv"),
+        ("h264_amf", "AMD AMF", "amf"),
+        ("h264_vaapi", "Linux VA-API", "vaapi"),
+        ("libx264", "CPU Software (x264)", "software"),
+    ],
+    "hevc": [
+        ("hevc_nvenc", "NVIDIA NVENC", "nvenc"),
+        ("hevc_videotoolbox", "Apple VideoToolbox", "videotoolbox"),
+        ("hevc_qsv", "Intel QuickSync", "qsv"),
+        ("hevc_amf", "AMD AMF", "amf"),
+        ("hevc_vaapi", "Linux VA-API", "vaapi"),
+        ("libx265", "CPU Software (x265)", "software"),
+    ],
+    "av1": [
+        ("av1_nvenc", "NVIDIA NVENC", "nvenc"),
+        ("av1_qsv", "Intel QuickSync", "qsv"),
+        ("av1_amf", "AMD AMF", "amf"),
+        ("av1_vaapi", "Linux VA-API", "vaapi"),
+        ("libsvtav1", "CPU Software (SVT-AV1)", "software"),
+        ("libaom-av1", "CPU Software (aom)", "software"),
+    ],
+    "vp9": [
+        ("vp9_vaapi", "Linux VA-API", "vaapi"),
+        ("libvpx-vp9", "CPU Software (VP9)", "software"),
+    ],
+}
+
+# Orden de prioridad de backend al elegir el "preferido" dentro de un códec.
+_BACKEND_PRIORITY = ["nvenc", "videotoolbox", "qsv", "amf", "vaapi", "software"]
+
+
+def _probe_encoder(ffmpeg_exe: str, env, encoder_code: str, backend: str) -> bool:
     """
-    Inspecciona el ejecutable ffmpeg.exe empaquetado para listar los encoders
-    disponibles en este sistema y determinar el mejor encoder por hardware.
+    Confirma que un encoder listado en el binario realmente funciona en ESTE hardware.
+    Que ffmpeg -encoders liste 'av1_nvenc' solo dice que el binario fue compilado con
+    soporte NVENC AV1 — no que esta GPU en particular lo soporte (p. ej. NVENC AV1 recién
+    existe desde RTX 40-series). Software (libx264, libx265, etc.) no se prueba: si el
+    binario lo trae, siempre funciona, y probarlo solo agrega tiempo de escaneo.
+    """
+    if backend == "software":
+        return True
+    try:
+        # 256x256: los encoders por hardware (NVENC, QSV, AMF) rechazan resoluciones muy
+        # chicas (ej. NVENC exige un mínimo ~145x49) devolviendo "Frame Dimension less than
+        # the minimum supported value" — con 64x64 el probe fallaba siempre por esto, no por
+        # falta de soporte real.
+        cmd = [
+            ffmpeg_exe, "-v", "error", "-f", "lavfi", "-i", "color=c=black:s=256x256:d=0.1",
+            "-frames:v", "2", "-c:v", encoder_code, "-f", "null", "-",
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=6)
+        return res.returncode == 0
+    except Exception as e:
+        logger.debug(f"HardwareDetector: Probe fallido para {encoder_code}: {e}")
+        return False
+
+
+def _get_codec_support_map() -> dict:
+    """
+    Inspecciona el ffmpeg empaquetado y arma un mapa {códec: {backend: info}} con
+    verificación real por probe-encode, cubriendo H.264, HEVC, AV1 y VP9 —no solo H.264.
     """
     env = get_dependency_env()
     ffmpeg_exe = "ffmpeg"
-    supported = []
-    
-    # Encoders posibles a verificar en orden de prioridad
-    candidate_encoders = [
-        ("h264_nvenc", "NVIDIA NVENC", "NVIDIA"),
-        ("h264_videotoolbox", "Apple VideoToolbox", "Apple"),
-        ("h264_qsv", "Intel QuickSync", "Intel"),
-        ("h264_amf", "AMD AMF", "AMD"),
-        ("h264_vaapi", "Linux VA-API", "Linux"),
-        ("libx264", "CPU Software (x264)", "CPU"),
-    ]
+    codec_support: dict = {}
 
     try:
         res = subprocess.run([ffmpeg_exe, "-encoders"], capture_output=True, text=True, env=env, timeout=4)
         stdout = res.stdout
-        for enc_code, label, vendor in candidate_encoders:
-            if f"V..... {enc_code}" in stdout or f"V....D {enc_code}" in stdout or enc_code in stdout:
-                supported.append(enc_code)
     except Exception as e:
         logger.warning(f"HardwareDetector: Error al ejecutar ffmpeg -encoders: {e}")
-        supported = ["libx264"]
+        stdout = ""
+
+    for codec, encoders in CODEC_ENCODERS.items():
+        codec_support[codec] = {}
+        for enc_code, label, backend in encoders:
+            listed = bool(stdout) and (
+                f"V..... {enc_code}" in stdout or f"V....D {enc_code}" in stdout or enc_code in stdout
+            )
+            probed_ok = _probe_encoder(ffmpeg_exe, env, enc_code, backend) if listed else False
+            entry = {
+                "encoder": enc_code,
+                "label": label,
+                "listed_in_binary": listed,
+                "probed_ok": probed_ok,
+                "supported": listed and probed_ok,
+            }
+            # Dos codecs (ej. av1: libsvtav1 y libaom-av1) pueden compartir el mismo
+            # backend "software". Se respeta el orden de CODEC_ENCODERS como prioridad:
+            # el primero que funcione gana la ranura; uno posterior solo la toma si la
+            # ranura seguia vacia o el candidato anterior no funcionaba.
+            existing = codec_support[codec].get(backend)
+            if existing is None or (not existing["supported"] and entry["supported"]):
+                codec_support[codec][backend] = entry
+
+    return codec_support
+
+
+def _flatten_supported_encoders(codec_support: dict) -> tuple[list[str], str]:
+    """
+    Deriva la lista plana de encoders soportados y el preferido de H.264 (compatibilidad
+    con la UI existente, que solo muestra badges de H.264 por ahora).
+    """
+    supported = []
+    for codec, backends in codec_support.items():
+        for backend, info in backends.items():
+            if info["supported"]:
+                supported.append(info["encoder"])
 
     if not supported:
         supported = ["libx264"]
 
-    # Seleccionar el encoder preferido por prioridad
-    priority_order = ["h264_nvenc", "h264_videotoolbox", "h264_qsv", "h264_amf", "h264_vaapi", "libx264"]
+    h264 = codec_support.get("h264", {})
     preferred = "libx264"
-    for enc in priority_order:
-        if enc in supported:
-            preferred = enc
+    for backend in _BACKEND_PRIORITY:
+        info = h264.get(backend)
+        if info and info["supported"]:
+            preferred = info["encoder"]
             break
 
     return supported, preferred
+
+
+def _summarize_codec_status(codec_support: dict) -> dict:
+    """
+    Reduce el detalle por-backend a un estado único por códec, pensado para consumo
+    directo desde la UI de exportación: full (acelerado por hardware, confirmado),
+    partial (solo por software, funcional pero lento), none (ni hardware ni software
+    disponibles en ESTE build de ffmpeg instalado).
+    """
+    summary = {}
+    for codec, backends in codec_support.items():
+        hw_ok = {b: info for b, info in backends.items() if b != "software" and info["supported"]}
+        hw_listed_but_failed = any(
+            info["listed_in_binary"] and not info["supported"]
+            for b, info in backends.items() if b != "software"
+        )
+        sw_info = backends.get("software")
+        sw_ok = bool(sw_info and sw_info["supported"])
+
+        chosen = None
+        for backend in _BACKEND_PRIORITY:
+            if backend in hw_ok:
+                chosen = (backend, hw_ok[backend])
+                break
+
+        if chosen:
+            backend, info = chosen
+            summary[codec] = {
+                "status": "full",
+                "encoder": info["encoder"],
+                "backend": backend,
+                "note": "Codificación acelerada por hardware, confirmada en este equipo.",
+            }
+        elif sw_ok:
+            note = "Solo disponible por software (CPU): funcional pero más lento."
+            if hw_listed_but_failed:
+                note = "El hardware detectado no confirmó aceleración; se usará software (CPU), más lento."
+            summary[codec] = {
+                "status": "partial",
+                "encoder": sw_info["encoder"],
+                "backend": "software",
+                "note": note,
+            }
+        else:
+            summary[codec] = {
+                "status": "none",
+                "encoder": None,
+                "backend": None,
+                "note": "Este build de ffmpeg no trae ningún encoder funcional para este códec.",
+            }
+
+    return summary
 
 
 def _get_ram_info() -> str:
@@ -183,10 +321,10 @@ def _get_ram_info() -> str:
     return "No detectada"
 
 
-def _generate_ffmpeg_log_files(supported_encoders: list, preferred_encoder: str) -> tuple[str, str]:
+def _generate_ffmpeg_log_files(codec_support: dict, codec_status: dict, supported_encoders: list, preferred_encoder: str) -> tuple[str, str]:
     """
     Genera el log de capacidades en formato JSON (ffmpeg_encoders_log.json)
-    y el informe estructurado básico en JSON (ffmpeg_capabilities.json) en AppData.
+    y el informe estructurado (ffmpeg_capabilities.json) en AppData.
     """
     import json
     from core.utils.paths import get_app_data_dir
@@ -195,20 +333,28 @@ def _generate_ffmpeg_log_files(supported_encoders: list, preferred_encoder: str)
     json_path = os.path.join(app_data, "ffmpeg_capabilities.json")
     env = get_dependency_env()
 
-    # 1. Generar JSON estructurado para el motor de la app
+    # Estado de aceleración por hardware a nivel global: True si CUALQUIER códec tiene
+    # ese backend confirmado por probe. Se mantiene por compatibilidad con la UI actual.
     hw_accel_status = {
-        "nvenc": "h264_nvenc" in supported_encoders,
-        "videotoolbox": "h264_videotoolbox" in supported_encoders,
-        "qsv": "h264_qsv" in supported_encoders,
-        "amf": "h264_amf" in supported_encoders,
-        "vaapi": "h264_vaapi" in supported_encoders,
+        backend: any(
+            codec_support.get(codec, {}).get(backend, {}).get("supported", False)
+            for codec in codec_support
+        )
+        for backend in ("nvenc", "videotoolbox", "qsv", "amf", "vaapi")
     }
 
     capabilities_json = {
+        "schema_version": "2.0",
+        # Campos legacy: se mantienen para no romper system_page.py y otros consumidores existentes.
         "preferred_encoder": preferred_encoder,
         "supported_video_encoders": supported_encoders,
         "hardware_acceleration": hw_accel_status,
         "is_gpu_accelerated": preferred_encoder != "libx264",
+        # Mapa detallado: fuente de verdad por-backend para diagnóstico.
+        "codec_support": codec_support,
+        # Resumen directo para la UI: qué códecs puede, puede parcialmente, o no puede
+        # producir ESTE ffmpeg instalado, sin importar de qué build/versión venga.
+        "codec_status": codec_status,
         "last_scan_timestamp": int(time.time()),
     }
 
@@ -272,7 +418,14 @@ def detect_hardware(force_refresh: bool = False) -> dict:
     from core.utils.paths import get_app_data_dir
     log_path = os.path.join(get_app_data_dir(), "ffmpeg_encoders_log.json")
 
-    if not force_refresh and cached_info and cached_info.get("cpu_name") and cached_info.get("ram_size") and os.path.exists(log_path):
+    if (
+        not force_refresh
+        and cached_info
+        and cached_info.get("cpu_name")
+        and cached_info.get("ram_size")
+        and cached_info.get("codec_support")
+        and os.path.exists(log_path)
+    ):
         return cached_info
 
     logger.info("HardwareDetector: Iniciando escaneo de hardware del sistema...")
@@ -281,8 +434,10 @@ def detect_hardware(force_refresh: bool = False) -> dict:
     cpu_name = _get_cpu_name()
     gpu_name = _get_gpu_name()
     ram_size = _get_ram_info()
-    supported_encoders, preferred_encoder = _get_ffmpeg_supported_encoders()
-    txt_log_path, json_log_path = _generate_ffmpeg_log_files(supported_encoders, preferred_encoder)
+    codec_support = _get_codec_support_map()
+    codec_status = _summarize_codec_status(codec_support)
+    supported_encoders, preferred_encoder = _flatten_supported_encoders(codec_support)
+    txt_log_path, json_log_path = _generate_ffmpeg_log_files(codec_support, codec_status, supported_encoders, preferred_encoder)
     
     os_name = _get_os_name()
     
@@ -293,6 +448,8 @@ def detect_hardware(force_refresh: bool = False) -> dict:
         "ram_size": ram_size,
         "preferred_encoder": preferred_encoder,
         "supported_encoders": supported_encoders,
+        "codec_support": codec_support,
+        "codec_status": codec_status,
         "ffmpeg_log_path": txt_log_path,
         "ffmpeg_json_path": json_log_path,
         "last_checked": int(time.time()),

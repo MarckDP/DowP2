@@ -364,11 +364,13 @@ QTabBar QToolButton {
 QComboBox {
     background-color: {{fondo_terciario}}; /* Solid background to avoid transparency */
     border: 1px solid {{borde_normal}};
-    padding: 6px 30px 6px 10px;
+    padding: 6px 4px 6px 8px;
     min-height: 18px;
 }
 
 QComboBox::drop-down {
+    subcontrol-origin: padding;
+    subcontrol-position: top right;
     border-left: 1px solid {{borde_normal}};
     background-color: rgba(0, 0, 0, 0.4); /* Clearly darker section */
     width: 25px;

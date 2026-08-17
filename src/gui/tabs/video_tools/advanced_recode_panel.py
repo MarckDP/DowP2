@@ -65,10 +65,17 @@ _ENGINE_LABELS = {
 
 _CONTAINER_LABELS = {
     "qtff": "MOV",
+    "mov": "MOV",
+    "mp4": "MP4",
+    "mkv": "MKV",
+    "avi": "AVI",
     "asf": "WMV",
     "ps": "MPEG-PS",
     "ts": "MPEG-TS",
-    "webm": "WebM",
+    "webm": "WEBM",
+    "mxf": "MXF",
+    "3gp": "3GP",
+    "3g2": "3G2",
     "mp3": "MP3",
     "m4a": "M4A",
     "ogg": "OGG",
@@ -76,9 +83,41 @@ _CONTAINER_LABELS = {
     "flac": "FLAC",
     "flv": "FLV",
     "apng": "APNG",
-    "webp": "WebP",
+    "webp": "WEBP",
     "gif": "GIF",
-    "opus": "Opus",
+    "opus": "OPUS",
+}
+
+_PREFERRED_CONTAINER_BY_CODEC = {
+    # Video profesional / edición -> qtff (MOV)
+    "prores": "qtff",
+    "dnxhd": "qtff",
+    "dnxhr": "qtff",
+    "cfhd": "qtff",
+    "qtrle": "qtff",
+    "hap": "qtff",
+    # Animaciones
+    "gif": "gif",
+    "apng": "apng",
+    # Web / Abiertos
+    "theora": "ogg",
+    "vp8": "webm",
+    "vp9": "webm",
+    "h264": "mp4",
+    "hevc": "mp4",
+    "av1": "mp4",
+    "vvc": "mp4",
+    # Audio
+    "mp3": "mp3",
+    "aac": "m4a",
+    "flac": "flac",
+    "alac": "m4a",
+    "opus": "opus",
+    "vorbis": "ogg",
+    "pcm_s16le": "wav",
+    "pcm_s24le": "wav",
+    "pcm_s32le": "wav",
+    "pcm_f32le": "wav",
 }
 
 
@@ -883,15 +922,44 @@ class AdvancedRecodePanel(QWidget):
     def _refresh_container_options(self):
         self._building = True
         try:
-            codec_ids = [c for c in (self._guard_codec("video"), self._guard_codec("audio")) if c]
+            v_codec = self._guard_codec("video")
+            a_codec = self._guard_codec("audio")
+            codec_ids = [c for c in (v_codec, a_codec) if c]
             containers = get_compatible_containers(codec_ids) if codec_ids else []
             current = self.combo_container.currentData()
             self.combo_container.clear()
             for cont_id in containers:
                 label = _CONTAINER_LABELS.get(cont_id, cont_id.upper())
                 self.combo_container.addItem(label, cont_id)
-            if current:
-                idx = self.combo_container.findData(current)
+
+            stream_mode = self._current_stream_mode()
+            is_audio_only = (stream_mode == "audio_only")
+            primary_codec = a_codec if is_audio_only else v_codec
+            preferred = _PREFERRED_CONTAINER_BY_CODEC.get(primary_codec)
+
+            # Auto-selección inteligente de contenedor:
+            # 1. En modo Solo Audio: auto-seleccionar siempre de inmediato el contenedor nativo del códec de audio
+            if is_audio_only and preferred in containers:
+                target = preferred
+            # 2. En video: Códecs con contenedor obligatorio / estándar de la industria (ProRes/DNxHD/etc -> MOV, GIF -> GIF):
+            elif primary_codec in ("prores", "dnxhd", "dnxhr", "cfhd", "qtrle", "hap", "gif", "apng") and preferred in containers:
+                target = preferred
+            # 3. Si el contenedor actual sigue siendo compatible y válido en la lista, conservarlo
+            elif current and self.combo_container.findData(current) >= 0:
+                target = current
+            # 4. Si el contenedor anterior no es compatible, usar el preferido del códec si está en la lista
+            elif preferred and preferred in containers:
+                target = preferred
+            # 5. Homónimo directo (ej. webp, flac, mp3, wav)
+            elif v_codec and v_codec in containers:
+                target = v_codec
+            elif a_codec and a_codec in containers:
+                target = a_codec
+            else:
+                target = None
+
+            if target:
+                idx = self.combo_container.findData(target)
                 if idx >= 0:
                     self.combo_container.setCurrentIndex(idx)
         finally:
@@ -954,6 +1022,7 @@ class AdvancedRecodePanel(QWidget):
         if not container_id:
             self._add_message("unverified", self.tr("No hay ningún contenedor compatible con la combinación de codecs elegida."))
             self._last_valid = False
+            self._invalid_reason = self.tr("Sin contenedor compatible")
             self.validity_changed.emit(False)
             return
 
@@ -970,6 +1039,7 @@ class AdvancedRecodePanel(QWidget):
                 self._add_message(issue["severity"], message)
 
         self._last_valid = result["verdict"] != "blocked"
+        self._invalid_reason = self.tr("Combinación no compatible") if not self._last_valid else ""
         self.validity_changed.emit(self._last_valid)
 
     def _format_playback_risk_message(self, risk: dict) -> str:
@@ -1025,6 +1095,11 @@ class AdvancedRecodePanel(QWidget):
 
     def is_valid(self) -> bool:
         return self._last_valid
+
+    def get_status(self) -> tuple[bool, str]:
+        if not self._last_valid:
+            return False, self._invalid_reason or self.tr("Combinación no compatible")
+        return True, self.tr("Iniciar Recodificación")
 
     def get_settings(self) -> dict:
         stream_mode = self._current_stream_mode()

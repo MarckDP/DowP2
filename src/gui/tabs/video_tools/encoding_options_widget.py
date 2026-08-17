@@ -17,9 +17,8 @@ class EncodingOptionsWidget(QFrame):
     Caja principal contenedora con fondo transparente y borde acorde al tema.
     """
     options_changed = Signal(dict)
-    # Emitida cuando cambia si el boton "Iniciar" deberia estar habilitado segun la
-    # pestaña actualmente activa (hoy solo Avanzado puede bloquearlo).
-    start_enabled_changed = Signal(bool)
+    # Emitida cuando cambia el estado del botón "Iniciar" (válido/inválido + texto contextual)
+    start_status_changed = Signal(bool, str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -75,32 +74,35 @@ class EncodingOptionsWidget(QFrame):
         self.tabs.addTab(self.tab_advanced, self.tr("Avanzado"))
         self.tab_advanced.validity_changed.connect(self._on_advanced_validity_changed)
 
-        # A diferencia de Avanzado (que valida en vivo via validity_changed),
-        # Preajustes solo cambia de válido/inválido cuando el usuario elige o
-        # deselecciona un preset en su combo.
+        # Preajustes cambia de válido/inválido cuando el usuario elige o deselecciona un preset
         self.tab_presets.preset_bar.preset_applied.connect(self._on_presets_validity_changed)
 
         layout.addWidget(self.tabs)
 
         self.tabs.currentChanged.connect(self._on_tab_changed)
 
-    def _on_tab_changed(self, index: int):
-        widget = self.tabs.widget(index)
-        if widget is self.tab_advanced:
-            self.start_enabled_changed.emit(self.tab_advanced.is_valid())
-        elif widget is self.tab_presets:
-            self.start_enabled_changed.emit(self.tab_presets.is_valid())
-        else:
-            # Comprimir/Convertir/Proxies: todavía no tienen lógica propia.
-            self.start_enabled_changed.emit(True)
+    def get_current_status(self) -> tuple[bool, str]:
+        current = self.tabs.currentWidget()
+        if current is self.tab_advanced:
+            return self.tab_advanced.get_status()
+        if current is self.tab_presets:
+            return self.tab_presets.get_status()
+        return True, self.tr("Iniciar Recodificación")
 
-    def _on_advanced_validity_changed(self, is_valid: bool):
+    def _emit_current_status(self):
+        is_valid, text = self.get_current_status()
+        self.start_status_changed.emit(is_valid, text)
+
+    def _on_tab_changed(self, index: int):
+        self._emit_current_status()
+
+    def _on_advanced_validity_changed(self, _is_valid: bool):
         if self.tabs.currentWidget() is self.tab_advanced:
-            self.start_enabled_changed.emit(is_valid)
+            self._emit_current_status()
 
     def _on_presets_validity_changed(self, *_args):
         if self.tabs.currentWidget() is self.tab_presets:
-            self.start_enabled_changed.emit(self.tab_presets.is_valid())
+            self._emit_current_status()
 
     def get_encoding_settings(self) -> dict:
         current = self.tabs.currentWidget()

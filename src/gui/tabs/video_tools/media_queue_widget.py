@@ -18,11 +18,31 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QSize, QUrl
 from PySide6.QtGui import QIcon, QDragEnterEvent, QDropEvent
 
-from gui.styles import get_theme_token
+from gui.styles import get_theme_token, create_colored_circle_icon
 from gui.tabs.editing_media.editing_media_icons import get_colored_svg_icon
 from core.tabs.editing_media.thumbnail_cache_manager import ThumbnailCacheManager
 from core.tabs.editing_media.waveform_cache_manager import WaveformCacheManager
 from core.logger.logger_manager import logger
+
+_STATUS_COLOR_MAP = {
+    "pendiente": "estado_espera",
+    "en cola": "estado_espera",
+    "procesando": "estado_aviso",
+    "completado": "estado_exito",
+    "finalizado": "estado_exito",
+    "error": "estado_error",
+    "cancelado": "estado_espera",
+}
+
+def _get_status_icon(status_text: str):
+    clean = (status_text or "").lower().strip()
+    token_key = "estado_espera"
+    for key, token in _STATUS_COLOR_MAP.items():
+        if key in clean:
+            token_key = token
+            break
+    color = get_theme_token(token_key, "#888888")
+    return create_colored_circle_icon(color, size=10)
 
 
 def _accent_rgba(alpha: int) -> str:
@@ -123,6 +143,8 @@ class MediaQueueWidget(QFrame):
         # "modo lista" del Gestor de Medios (QTreeView#mediaTableWidget en editing_media_view.py).
         self.tree = QTreeWidget()
         self.tree.setObjectName("mediaQueueTree")
+        self.tree.setRootIsDecorated(False)
+        self.tree.setIndentation(0)
         self.tree.setHeaderLabels([
             self.tr("Nombre"),
             self.tr("Tipo"),
@@ -145,6 +167,9 @@ class MediaQueueWidget(QFrame):
                 font-size: 12px;
                 alternate-background-color: {get_theme_token('fondo_secundario', '#121212')};
                 outline: none;
+            }}
+            QTreeWidget#mediaQueueTree::branch {{
+                background: transparent;
             }}
             QTreeWidget#mediaQueueTree::item {{
                 padding: 4px 8px;
@@ -269,6 +294,7 @@ class MediaQueueWidget(QFrame):
             item.setText(1, ext)
             item.setText(2, size_str)
             item.setText(3, self.tr("Pendiente"))
+            item.setIcon(3, _get_status_icon("pendiente"))
             item.setData(0, Qt.UserRole, p)
             item.setIcon(0, self._get_icon_for_file(p, media_type))
 
@@ -375,3 +401,4 @@ class MediaQueueWidget(QFrame):
         item = self._items_by_path.get(filepath)
         if item:
             item.setText(3, status_text)
+            item.setIcon(3, _get_status_icon(status_text))

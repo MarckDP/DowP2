@@ -39,3 +39,8 @@ class PresetsPanel(QWidget):
 
     def is_valid(self) -> bool:
         return self.preset_bar.active_preset_name() is not None
+
+    def get_status(self) -> tuple[bool, str]:
+        if self.preset_bar.active_preset_name() is None:
+            return False, self.tr("Selecciona un preajuste")
+        return True, self.tr("Iniciar Recodificación")

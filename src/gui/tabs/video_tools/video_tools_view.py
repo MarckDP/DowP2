@@ -48,6 +48,7 @@ class VideoToolsTab(QWidget):
         self.current_preview_file = ""
         self.in_point_ms = 0
         self.out_point_ms = 0
+        self._recode_jobs = set()  # Mantener track de los trabajos RECODE iniciados desde esta vista
 
         self.init_ui()
         self._load_saved_output_dir()
@@ -58,7 +59,6 @@ class VideoToolsTab(QWidget):
         qm = get_queue_manager()
         qm.job_progress_changed.connect(self._on_job_progress)
         qm.job_status_changed.connect(self._on_job_status)
-        self._recode_jobs = set() # Mantener track de los trabajos RECODE iniciados desde esta vista
 
     def init_ui(self):
         main_layout = QHBoxLayout(self)
@@ -95,7 +95,7 @@ class VideoToolsTab(QWidget):
 
         # 1. Panel Superior de Opciones con Pestañas
         self.options_widget = EncodingOptionsWidget(self)
-        self.options_widget.start_enabled_changed.connect(self._on_start_enabled_changed)
+        self.options_widget.start_status_changed.connect(self._on_start_status_changed)
         right_layout.addWidget(self.options_widget, 1)
 
         # 2. Cubo Inferior de Opciones de Salida y Ejecución
@@ -200,6 +200,9 @@ class VideoToolsTab(QWidget):
         self.btn_start.setFixedHeight(36)
         self.btn_start.clicked.connect(self._on_start_recoding_clicked)
         out_layout.addWidget(self.btn_start)
+
+        # Estado y texto inicial contextual del botón
+        self._on_start_status_changed(*self.options_widget.get_current_status())
 
         right_layout.addWidget(self.output_card)
 
@@ -358,13 +361,19 @@ class VideoToolsTab(QWidget):
         self.chk_same_path.setChecked(same_path)
         self._on_same_path_toggled(same_path)
 
-    def _on_start_enabled_changed(self, enabled: bool):
-        self.btn_start.setEnabled(enabled)
-        self.btn_start.setToolTip(
-            "" if enabled else self.tr("La combinación elegida en la pestaña Avanzado no es compatible con este ffmpeg.")
-        )
+    def _on_start_status_changed(self, is_valid: bool, text: str):
+        if getattr(self, "_recode_jobs", None):
+            return
+        if hasattr(self, "btn_start"):
+            self.btn_start.setEnabled(is_valid)
+            self.btn_start.setText(text)
 
     def _on_start_recoding_clicked(self):
+        is_valid, reason = self.options_widget.get_current_status()
+        if not is_valid:
+            QMessageBox.warning(self, self.tr("Configuración no válida"), reason)
+            return
+
         files = self.queue_widget.get_all_filepaths()
         if not files:
             QMessageBox.warning(self, self.tr("Sin archivos"), self.tr("Por favor agrega al menos un archivo a la cola para iniciar la recodificación."))
@@ -378,6 +387,10 @@ class VideoToolsTab(QWidget):
             return
 
         settings = self.options_widget.get_encoding_settings()
+        if not settings:
+            QMessageBox.warning(self, self.tr("Sin configuración"), self.tr("Selecciona un preajuste o una configuración válida."))
+            return
+
         prefix = self.txt_prefix.text() if hasattr(self, "txt_prefix") else ""
         suffix = self.txt_suffix.text() if hasattr(self, "txt_suffix") else ""
 
@@ -478,7 +491,7 @@ class VideoToolsTab(QWidget):
                 
         if all_done:
             self._recode_jobs.clear()
-            self.btn_start.setEnabled(True)
+            self._on_start_status_changed(*self.options_widget.get_current_status())
             self.progress_bar.setValue(100)
             self.progress_bar.setFormat(self.tr("Finalizado"))
             self.progress_bar.setProperty("status", "wait")

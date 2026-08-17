@@ -171,27 +171,32 @@ AUDIO_ENCODER_PROFILES = {
         {"label": "Alta Calidad (~256kbps)", "args": ["-c:a", "aac", "-b:a", "256k"]},
         {"label": "Buena Calidad (~192kbps)", "args": ["-c:a", "aac", "-b:a", "192k"]},
         {"label": "Calidad Media (~128kbps)", "args": ["-c:a", "aac", "-b:a", "128k"]},
+        {"label": "Bitrate Personalizado", "custom": "audio_bitrate"},
     ],
     "libmp3lame": [
         {"label": "320kbps (CBR)", "args": ["-c:a", "libmp3lame", "-b:a", "320k"]},
         {"label": "256kbps aprox. (VBR)", "args": ["-c:a", "libmp3lame", "-q:a", "0"]},
         {"label": "192kbps (CBR)", "args": ["-c:a", "libmp3lame", "-b:a", "192k"]},
+        {"label": "Bitrate Personalizado", "custom": "audio_bitrate"},
     ],
     "libopus": [
         {"label": "Calidad Transparente (~256kbps)", "args": ["-c:a", "libopus", "-b:a", "256k"]},
         {"label": "Calidad Alta (~192kbps)", "args": ["-c:a", "libopus", "-b:a", "192k"]},
         {"label": "Calidad Media (~128kbps)", "args": ["-c:a", "libopus", "-b:a", "128k"]},
+        {"label": "Bitrate Personalizado", "custom": "audio_bitrate"},
     ],
     "libvorbis": [
         {"label": "Calidad Muy Alta (q8)", "args": ["-c:a", "libvorbis", "-q:a", "8"]},
         {"label": "Calidad Alta (q6)", "args": ["-c:a", "libvorbis", "-q:a", "6"]},
         {"label": "Calidad Media (q4)", "args": ["-c:a", "libvorbis", "-q:a", "4"]},
+        {"label": "Bitrate Personalizado", "custom": "audio_bitrate"},
     ],
     "ac3": [
         {"label": "Stereo (192kbps)", "args": ["-c:a", "ac3", "-b:a", "192k"]},
         {"label": "Stereo (256kbps)", "args": ["-c:a", "ac3", "-b:a", "256k"]},
         {"label": "Surround 5.1 (448kbps)", "args": ["-c:a", "ac3", "-b:a", "448k", "-ac", "6"]},
         {"label": "Surround 5.1 (640kbps)", "args": ["-c:a", "ac3", "-b:a", "640k", "-ac", "6"]},
+        {"label": "Bitrate Personalizado", "custom": "audio_bitrate"},
     ],
     "alac": [
         {"label": "Estándar (sin pérdida)", "args": ["-c:a", "alac"]},
@@ -207,6 +212,7 @@ AUDIO_ENCODER_PROFILES = {
     "wmav2": [
         {"label": "Calidad Alta (192kbps)", "args": ["-c:a", "wmav2", "-b:a", "192k"]},
         {"label": "Calidad Media (128kbps)", "args": ["-c:a", "wmav2", "-b:a", "128k"]},
+        {"label": "Bitrate Personalizado", "custom": "audio_bitrate"},
     ],
 }
 
@@ -296,6 +302,13 @@ def build_custom_bitrate_args(encoder: str, mode: str, bitrate_kbps: int) -> lis
     maxrate = f"{int(bitrate_kbps * 1.5)}k"
     bufsize = f"{bitrate_kbps * 2}k"
     return ["-c:v", encoder, "-b:v", b, "-maxrate", maxrate, "-bufsize", bufsize]
+
+
+def build_custom_audio_bitrate_args(encoder: str, bitrate_kbps: int) -> list[str]:
+    """
+    Arma los flags de ffmpeg para un bitrate de audio elegido a mano.
+    """
+    return ["-c:a", encoder, "-b:a", f"{bitrate_kbps}k"]
 
 
 def extract_bitrate_kbps(args: list[str], flag: str = "-b:v") -> float | None:

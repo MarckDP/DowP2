@@ -317,9 +317,14 @@ class AdvancedRecodePanel(QWidget):
         custom_layout.addWidget(lbl_custom)
 
         bitrate_spin = QSpinBox()
-        bitrate_spin.setRange(64, 500000)
-        bitrate_spin.setSingleStep(500)
-        bitrate_spin.setValue(8000)
+        if is_video:
+            bitrate_spin.setRange(64, 500000)
+            bitrate_spin.setSingleStep(500)
+            bitrate_spin.setValue(8000)
+        else:
+            bitrate_spin.setRange(16, 640)
+            bitrate_spin.setSingleStep(32)
+            bitrate_spin.setValue(192)
         bitrate_spin.setSuffix(" kbps")
         bitrate_spin.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
         custom_layout.addWidget(bitrate_spin)
@@ -691,7 +696,7 @@ class AdvancedRecodePanel(QWidget):
             lbl_custom.setText(self.tr("Nivel de calidad (CRF/CQ):"))
             bitrate_spin.setVisible(False)
             cq_spin.setVisible(True)
-        elif custom_type in ("vbr", "cbr"):
+        elif custom_type in ("vbr", "cbr", "audio_bitrate"):
             lbl_custom.setText(self.tr("Bitrate objetivo:"))
             bitrate_spin.setVisible(True)
             cq_spin.setVisible(False)
@@ -735,7 +740,12 @@ class AdvancedRecodePanel(QWidget):
                 from core.tabs.video_tools.codec_profiles import build_custom_quality_args
                 cq_val = getattr(self, f"spin_{prefix}_cq").value()
                 args = build_custom_quality_args(encoder, cq_val)
+            elif custom_type == "audio_bitrate":
+                from core.tabs.video_tools.codec_profiles import build_custom_audio_bitrate_args
+                bitrate = getattr(self, f"spin_{prefix}_bitrate").value()
+                args = build_custom_audio_bitrate_args(encoder, bitrate)
             else:
+                from core.tabs.video_tools.codec_profiles import build_custom_bitrate_args
                 bitrate = getattr(self, f"spin_{prefix}_bitrate").value()
                 args = build_custom_bitrate_args(encoder, custom_type, bitrate)
         else:

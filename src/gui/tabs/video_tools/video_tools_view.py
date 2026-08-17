@@ -19,7 +19,8 @@ from PySide6.QtGui import QIcon, QDesktopServices
 
 from gui.widgets.animated_button import AnimatedButton
 from gui.widgets.bouncing_progress_bar import BouncingProgressBar
-from gui.styles import apply_folder_browse_button_style, apply_folder_open_button_style
+from gui.widgets.combo_box import AutoPopupComboBox
+from gui.styles import apply_folder_browse_button_style, apply_folder_open_button_style, create_colored_circle_icon, update_label_combobox_style
 from gui.widgets.media_trim_player_widget import MediaTrimPlayerWidget
 from gui.tabs.video_tools.media_queue_widget import MediaQueueWidget
 from gui.tabs.video_tools.encoding_options_widget import EncodingOptionsWidget
@@ -29,6 +30,11 @@ from core.tabs.editing_media.ffprobe_metadata_manager import FFprobeMetadataMana
 from core.utils.queue_manager import get_queue_manager, JobStatus
 
 AUDIO_ONLY_EXTENSIONS = {".mp3", ".wav", ".aac", ".flac", ".ogg", ".m4a", ".opus", ".wma"}
+CONTAINER_TO_EXTENSION = {
+    "qtff": "mov",
+    "asf": "wmv",
+    "ps": "mpg",
+}
 
 class VideoToolsTab(QWidget):
     """
@@ -45,6 +51,7 @@ class VideoToolsTab(QWidget):
 
         self.init_ui()
         self._load_saved_output_dir()
+        self.load_labels()
         FFprobeMetadataManager.get_instance().metadata_ready.connect(self._on_metadata_ready)
         
         # Conectar señales del QueueManager
@@ -104,20 +111,33 @@ class VideoToolsTab(QWidget):
 
         grid_out = QGridLayout()
         grid_out.setSpacing(8)
+        grid_out.setColumnStretch(1, 1)
 
         # Checkbox "Guardar en misma ruta"
         self.chk_same_path = QCheckBox(self.tr("Guardar en la misma ruta del medio original"))
         self.chk_same_path.setObjectName("menuLabel")
         grid_out.addWidget(self.chk_same_path, 0, 0, 1, 3)
 
-        # Destino
-        self.lbl_dest = QLabel(self.tr("Carpeta de Salida:"))
+        # Fila 1: Ruta + Selector de Etiquetas + Botones de Examinar/Abrir
+        self.lbl_dest = QLabel(self.tr("Ruta:"))
         self.lbl_dest.setObjectName("menuLabel")
         grid_out.addWidget(self.lbl_dest, 1, 0)
+
+        path_row = QHBoxLayout()
+        path_row.setSpacing(6)
+        path_row.setContentsMargins(0, 0, 0, 0)
+
         self.txt_output_dir = QLineEdit()
         self.txt_output_dir.setPlaceholderText(self.tr("Seleccionar carpeta de destino..."))
-        grid_out.addWidget(self.txt_output_dir, 1, 1)
+        path_row.addWidget(self.txt_output_dir, 1)
 
+        # ComboBox de Etiquetas
+        self.combo_tags = AutoPopupComboBox()
+        self.combo_tags.setObjectName("tagsComboBox")
+        self.combo_tags.setPlaceholderText(self.tr("Etiqueta"))
+        self.combo_tags.currentIndexChanged.connect(self._on_label_changed)
+
+        # Botón para examinar carpeta
         self.btn_browse_output = QPushButton()
         self.btn_browse_output.setFixedSize(32, 32)
         self.btn_browse_output.setCursor(Qt.PointingHandCursor)
@@ -131,21 +151,33 @@ class VideoToolsTab(QWidget):
         apply_folder_open_button_style(self.btn_open_output, self.tr("Abrir carpeta de salida en el explorador"))
         self.btn_open_output.clicked.connect(self._on_open_output_clicked)
 
-        # HBox para los dos botones
-        btn_box = QHBoxLayout()
-        btn_box.setSpacing(4)
-        btn_box.setContentsMargins(0, 0, 0, 0)
-        btn_box.addWidget(self.btn_browse_output)
-        btn_box.addWidget(self.btn_open_output)
+        path_row.addWidget(self.btn_browse_output)
+        path_row.addWidget(self.btn_open_output)
+        path_row.addWidget(self.combo_tags)
 
-        grid_out.addLayout(btn_box, 1, 2)
+        grid_out.addLayout(path_row, 1, 1, 1, 2)
 
-        # Sufijo
-        lbl_suffix = QLabel(self.tr("Sufijo del Nombre:"))
-        lbl_suffix.setObjectName("menuLabel")
-        grid_out.addWidget(lbl_suffix, 2, 0)
+        # Fila 2: Prefijo y Sufijo
+        self.lbl_prefix = QLabel(self.tr("Prefijo:"))
+        self.lbl_prefix.setObjectName("menuLabel")
+        grid_out.addWidget(self.lbl_prefix, 2, 0)
+
+        affixes_row = QHBoxLayout()
+        affixes_row.setSpacing(10)
+        affixes_row.setContentsMargins(0, 0, 0, 0)
+
+        self.txt_prefix = QLineEdit()
+        self.txt_prefix.setPlaceholderText("")
+
+        self.lbl_suffix = QLabel(self.tr("Sufijo:"))
+        self.lbl_suffix.setObjectName("menuLabel")
         self.txt_suffix = QLineEdit("_recoded")
-        grid_out.addWidget(self.txt_suffix, 2, 1, 1, 2)
+
+        affixes_row.addWidget(self.txt_prefix, 1)
+        affixes_row.addWidget(self.lbl_suffix)
+        affixes_row.addWidget(self.txt_suffix, 1)
+
+        grid_out.addLayout(affixes_row, 2, 1, 1, 2)
         
         self.chk_same_path.toggled.connect(self._on_same_path_toggled)
 
@@ -227,9 +259,68 @@ class VideoToolsTab(QWidget):
         except (ValueError, AttributeError):
             return 30.0
 
+    def load_labels(self):
+        """Carga las etiquetas configuradas en la aplicación en el combo de etiquetas con círculos de color."""
+        if not hasattr(self, "combo_tags"):
+            return
+        from core.utils.config_manager import get_config
+        from PySide6.QtGui import QColor
+
+        self.combo_tags.blockSignals(True)
+        current_text = self.combo_tags.currentText()
+        self.combo_tags.clear()
+        self.combo_tags.addItem(self.tr("Etiqueta"), "")
+
+        config = get_config()
+        labels = config.get("labels", [])
+        for label in labels:
+            name = label.get("name", "")
+            path = label.get("path", "")
+            color = label.get("color", "#B9E640")
+
+            idx = self.combo_tags.count()
+            icon = create_colored_circle_icon(color, size=12)
+            self.combo_tags.addItem(icon, name, path)
+
+            self.combo_tags.setItemData(idx, color, Qt.UserRole + 1)
+            self.combo_tags.setItemData(idx, QColor(color), Qt.ForegroundRole)
+
+        # Intentar restaurar selección si aún existe
+        idx = self.combo_tags.findText(current_text)
+        if idx >= 0:
+            self.combo_tags.setCurrentIndex(idx)
+        else:
+            self.combo_tags.setCurrentIndex(0)
+
+        self.combo_tags.blockSignals(False)
+        self._update_combo_style()
+
+    def _update_combo_style(self):
+        """Actualiza el color de texto del combo según la etiqueta seleccionada."""
+        if hasattr(self, "combo_tags"):
+            update_label_combobox_style(self.combo_tags)
+
+    def _on_label_changed(self, index):
+        """Maneja el cambio de selección en el combobox de etiquetas."""
+        self._update_combo_style()
+        if self.chk_same_path.isChecked():
+            return
+        if index <= 0:
+            self._load_saved_output_dir()
+            self.txt_output_dir.setEnabled(True)
+            self.btn_browse_output.setEnabled(True)
+        else:
+            path = self.combo_tags.currentData()
+            if path:
+                self.txt_output_dir.setText(path)
+            self.txt_output_dir.setEnabled(False)
+            self.btn_browse_output.setEnabled(False)
+
     def _on_browse_output_clicked(self):
         folder = QFileDialog.getExistingDirectory(self, self.tr("Seleccionar Carpeta de Salida"))
         if folder:
+            if hasattr(self, "combo_tags"):
+                self.combo_tags.setCurrentIndex(0)
             self.txt_output_dir.setText(folder)
             config = get_config()
             config["video_tools_output_dir"] = folder
@@ -241,10 +332,13 @@ class VideoToolsTab(QWidget):
             QDesktopServices.openUrl(QUrl.fromLocalFile(folder))
 
     def _on_same_path_toggled(self, checked: bool):
+        has_tag = hasattr(self, "combo_tags") and self.combo_tags.currentIndex() > 0
         self.lbl_dest.setEnabled(not checked)
-        self.txt_output_dir.setEnabled(not checked)
-        self.btn_browse_output.setEnabled(not checked)
+        self.txt_output_dir.setEnabled((not checked) and (not has_tag))
+        self.btn_browse_output.setEnabled((not checked) and (not has_tag))
         self.btn_open_output.setEnabled(not checked)
+        if hasattr(self, "combo_tags"):
+            self.combo_tags.setEnabled(not checked)
         
         config = get_config()
         config["video_tools_same_path"] = checked
@@ -284,16 +378,18 @@ class VideoToolsTab(QWidget):
             return
 
         settings = self.options_widget.get_encoding_settings()
-        suffix = self.txt_suffix.text().strip()
+        prefix = self.txt_prefix.text() if hasattr(self, "txt_prefix") else ""
+        suffix = self.txt_suffix.text() if hasattr(self, "txt_suffix") else ""
 
         logger.info(f"VideoToolsTab: Iniciando recodificación para {len(files)} archivos. Misma ruta: {same_path}")
         
         qm = get_queue_manager()
-        container_ext = settings.get("container", "mp4")
+        raw_container = settings.get("container", "mp4")
+        container_ext = CONTAINER_TO_EXTENSION.get(raw_container, raw_container)
         
         for filepath in files:
             base_name = os.path.splitext(os.path.basename(filepath))[0]
-            out_name = f"{base_name}{suffix}.{container_ext}"
+            out_name = f"{prefix}{base_name}{suffix}.{container_ext}"
             
             if same_path:
                 actual_out_dir = os.path.dirname(filepath)

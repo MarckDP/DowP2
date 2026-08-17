@@ -2,6 +2,8 @@
 import json
 import os
 
+from PySide6.QtCore import QObject, Signal
+
 from core.logger.logger_manager import logger
 from core.utils.paths import get_app_data_dir
 
@@ -11,7 +13,7 @@ def _get_presets_path() -> str:
     return os.path.join(get_app_data_dir(), "presets.json")
 
 
-class PresetManager:
+class PresetManager(QObject):
     """
     Gestor genérico de presets (sin UI): guarda/carga/lista/borra diccionarios
     de ajustes con nombre, agrupados por namespace (ej. "video_tools/comprimir").
@@ -20,10 +22,17 @@ class PresetManager:
     usa el suyo, y todos comparten el mismo archivo presets.json en AppData.
     Estructura del archivo:
         { "<namespace>": { "<nombre_preset>": { ...ajustes... } } }
+
+    Emite `presets_changed(namespace)` en cada mutación (guardar/eliminar/
+    importar), para que cualquier PresetBar abierto se refresque solo sin
+    necesidad de llamadas cruzadas manuales entre widgets.
     """
     _instance = None
 
+    presets_changed = Signal(str)
+
     def __init__(self):
+        super().__init__()
         self._data = None  # caché en memoria, se carga lazy desde disco
 
     @classmethod
@@ -70,6 +79,7 @@ class PresetManager:
         self._data.setdefault(namespace, {})[name] = dict(settings)
         self._save_to_disk()
         logger.info(f"PresetManager: Preset '{name}' guardado en '{namespace}'.")
+        self.presets_changed.emit(namespace)
 
     def delete_preset(self, namespace: str, name: str) -> bool:
         """Elimina un preset. Retorna True si existía."""
@@ -80,6 +90,7 @@ class PresetManager:
         del presets[name]
         self._save_to_disk()
         logger.info(f"PresetManager: Preset '{name}' eliminado de '{namespace}'.")
+        self.presets_changed.emit(namespace)
         return True
 
     def export_preset(self, namespace: str, name: str, file_path: str) -> bool:

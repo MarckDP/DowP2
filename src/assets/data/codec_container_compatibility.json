@@ -1,22 +1,10 @@
 {
-  "schema_version": "2.0",
+  "schema_version": "3.0",
   "source": {
     "name": "Wikipedia — Comparison of video container formats",
     "url": "https://en.wikipedia.org/wiki/Comparison_of_video_container_formats",
     "retrieved": "2026-08-15",
     "scope": "Video and audio coding-format compatibility matrices"
-  },
-  "support_levels": {
-    "full": "Soporte completo y estándar en este contenedor.",
-    "partial": "Soporte restringido a un perfil, versión o subformato específico (ver 'note').",
-    "indirect": "Soporte indirecto a través de un mecanismo externo (VCM/ACM), no nativo del contenedor.",
-    "requires_external": "Requiere un componente o codec adicional instalado aparte (ver 'note').",
-    "private": "Implementación privada o no estandarizada del contenedor.",
-    "nonstandard": "Reconocido por algunos lectores/editores pero no forma parte del estándar.",
-    "problematic": "Técnicamente posible pero problemático o poco fiable en la práctica.",
-    "planned": "Soporte planeado a futuro, no disponible todavía.",
-    "beta": "Soporte en fase beta, puede ser inestable.",
-    "none": "Sin soporte."
   },
   "containers": {
     "mkv": {
@@ -98,40 +86,31 @@
       "license": "Patent encumbered",
       "container_support": {
         "mkv": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mp4": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "qtff": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "asf": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "avi": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mxf": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "ps_ts": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "3gp": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "3g2": {
-          "level": "full",
-          "note": null
+          "level": "full"
         }
       }
     },
@@ -141,40 +120,31 @@
       "license": "Patent encumbered",
       "container_support": {
         "mkv": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mp4": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "qtff": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "asf": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "avi": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mxf": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "ps_ts": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "3gp": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "3g2": {
-          "level": "full",
-          "note": null
+          "level": "full"
         }
       }
     },
@@ -184,40 +154,31 @@
       "license": "Patent claims",
       "container_support": {
         "mkv": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mp4": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "qtff": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "asf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "avi": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "mxf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "ps_ts": {
-          "level": "planned",
-          "note": null
+          "level": "planned"
         },
         "3gp": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3g2": {
-          "level": "none",
-          "note": null
+          "level": "none"
         }
       }
     },
@@ -227,40 +188,31 @@
       "license": "Patent claims",
       "container_support": {
         "mkv": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mp4": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "qtff": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "asf": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "avi": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mxf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "ps_ts": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3gp": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3g2": {
-          "level": "none",
-          "note": null
+          "level": "none"
         }
       }
     },
@@ -270,40 +222,31 @@
       "license": "Patent claims",
       "container_support": {
         "mkv": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mp4": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "qtff": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "asf": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "avi": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mxf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "ps_ts": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3gp": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3g2": {
-          "level": "none",
-          "note": null
+          "level": "none"
         }
       }
     },
@@ -314,39 +257,32 @@
       "container_support": {
         "mkv": {
           "level": "indirect",
-          "note": "Soporte indirecto vía Video Compression Manager (VCM)"
+          "via": "vcm"
         },
         "mp4": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "qtff": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "asf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "avi": {
           "level": "requires_external",
-          "note": "Requiere: Dirac"
+          "requires": "Dirac"
         },
         "mxf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "ps_ts": {
-          "level": "private",
-          "note": "Implementación privada o no estandarizada"
+          "level": "private"
         },
         "3gp": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3g2": {
-          "level": "none",
-          "note": null
+          "level": "none"
         }
       }
     },
@@ -356,40 +292,31 @@
       "license": "Patent encumbered",
       "container_support": {
         "mkv": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mp4": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "qtff": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "asf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "avi": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "mxf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "ps_ts": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3gp": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "3g2": {
-          "level": "full",
-          "note": null
+          "level": "full"
         }
       }
     },
@@ -399,40 +326,31 @@
       "license": "Expired patents",
       "container_support": {
         "mkv": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mp4": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "qtff": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "asf": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "avi": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mxf": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "ps_ts": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "3gp": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3g2": {
-          "level": "none",
-          "note": null
+          "level": "none"
         }
       }
     },
@@ -442,40 +360,31 @@
       "license": "Expired patents",
       "container_support": {
         "mkv": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mp4": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "qtff": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "asf": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "avi": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mxf": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "ps_ts": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "3gp": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3g2": {
-          "level": "none",
-          "note": null
+          "level": "none"
         }
       }
     },
@@ -485,40 +394,32 @@
       "license": "Expired patents",
       "container_support": {
         "mkv": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mp4": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "qtff": {
           "level": "partial",
           "note": "First edition"
         },
         "asf": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "avi": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mxf": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "ps_ts": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "3gp": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "3g2": {
-          "level": "full",
-          "note": null
+          "level": "full"
         }
       }
     },
@@ -528,40 +429,31 @@
       "license": "Patent encumbered, proprietary",
       "container_support": {
         "mkv": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mp4": {
-          "level": "nonstandard",
-          "note": "Reconocido por algunos lectores pero fuera del estándar del contenedor"
+          "level": "nonstandard"
         },
         "qtff": {
-          "level": "nonstandard",
-          "note": "Reconocido por algunos lectores pero fuera del estándar del contenedor"
+          "level": "nonstandard"
         },
         "asf": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "avi": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mxf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "ps_ts": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3gp": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3g2": {
-          "level": "none",
-          "note": null
+          "level": "none"
         }
       }
     },
@@ -572,39 +464,31 @@
       "container_support": {
         "mkv": {
           "level": "indirect",
-          "note": "Soporte indirecto vía Video Compression Manager (VCM)"
+          "via": "vcm"
         },
         "mp4": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "qtff": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "asf": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "avi": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mxf": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "ps_ts": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3gp": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3g2": {
-          "level": "none",
-          "note": null
+          "level": "none"
         }
       }
     },
@@ -614,40 +498,31 @@
       "license": "Patent encumbered",
       "container_support": {
         "mkv": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "mp4": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "qtff": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "asf": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "avi": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mxf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "ps_ts": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3gp": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "3g2": {
-          "level": "full",
-          "note": null
+          "level": "full"
         }
       }
     },
@@ -657,40 +532,32 @@
       "license": "Free license",
       "container_support": {
         "mkv": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mp4": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "qtff": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "asf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "avi": {
           "level": "requires_external",
-          "note": "Requiere: ffdshow"
+          "requires": "ffdshow"
         },
         "mxf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "ps_ts": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3gp": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3g2": {
-          "level": "none",
-          "note": null
+          "level": "none"
         }
       }
     },
@@ -700,40 +567,31 @@
       "license": "Proprietary",
       "container_support": {
         "mkv": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mp4": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "qtff": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "asf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "avi": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mxf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "ps_ts": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3gp": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3g2": {
-          "level": "none",
-          "note": null
+          "level": "none"
         }
       }
     },
@@ -743,40 +601,33 @@
       "license": "Proprietary",
       "container_support": {
         "mkv": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mp4": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "qtff": {
           "level": "partial",
           "note": "Versions 1 and 3"
         },
         "asf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "avi": {
           "level": "partial",
           "note": "Version 1"
         },
         "mxf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "ps_ts": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3gp": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3g2": {
-          "level": "none",
-          "note": null
+          "level": "none"
         }
       }
     },
@@ -794,32 +645,25 @@
           "note": "RV60"
         },
         "qtff": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "asf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "avi": {
-          "level": "nonstandard",
-          "note": "Reconocido por algunos lectores pero fuera del estándar del contenedor"
+          "level": "nonstandard"
         },
         "mxf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "ps_ts": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3gp": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3g2": {
-          "level": "none",
-          "note": null
+          "level": "none"
         }
       }
     },
@@ -829,40 +673,32 @@
       "license": "Proprietary",
       "container_support": {
         "mkv": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "mp4": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "qtff": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "asf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "avi": {
           "level": "requires_external",
-          "note": "Requiere: VP6"
+          "requires": "VP6"
         },
         "mxf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "ps_ts": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3gp": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3g2": {
-          "level": "none",
-          "note": null
+          "level": "none"
         }
       }
     },
@@ -873,7 +709,7 @@
       "container_support": {
         "mkv": {
           "level": "indirect",
-          "note": "Soporte indirecto vía Video Compression Manager (VCM)"
+          "via": "vcm"
         },
         "mp4": {
           "level": "partial",
@@ -884,28 +720,22 @@
           "note": "DV 25"
         },
         "asf": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "avi": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mxf": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "ps_ts": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3gp": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3g2": {
-          "level": "none",
-          "note": null
+          "level": "none"
         }
       }
     },
@@ -916,39 +746,31 @@
       "container_support": {
         "mkv": {
           "level": "indirect",
-          "note": "Soporte indirecto vía Video Compression Manager (VCM)"
+          "via": "vcm"
         },
         "mp4": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "qtff": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "asf": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "avi": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mxf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "ps_ts": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3gp": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3g2": {
-          "level": "none",
-          "note": null
+          "level": "none"
         }
       }
     },
@@ -958,40 +780,31 @@
       "license": "Patent encumbered",
       "container_support": {
         "mkv": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "mp4": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "qtff": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "asf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "avi": {
-          "level": "nonstandard",
-          "note": "Reconocido por algunos lectores pero fuera del estándar del contenedor"
+          "level": "nonstandard"
         },
         "mxf": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "ps_ts": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3gp": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3g2": {
-          "level": "none",
-          "note": null
+          "level": "none"
         }
       }
     },
@@ -1001,40 +814,31 @@
       "license": "Proprietary",
       "container_support": {
         "mkv": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "mp4": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "qtff": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "asf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "avi": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "mxf": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "ps_ts": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3gp": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3g2": {
-          "level": "none",
-          "note": null
+          "level": "none"
         }
       }
     },
@@ -1045,39 +849,32 @@
       "container_support": {
         "mkv": {
           "level": "indirect",
-          "note": "Soporte indirecto vía Video Compression Manager (VCM)"
+          "via": "vcm"
         },
         "mp4": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "qtff": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "asf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "avi": {
           "level": "requires_external",
-          "note": "Requiere: HuffYUV"
+          "requires": "HuffYUV"
         },
         "mxf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "ps_ts": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3gp": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3g2": {
-          "level": "none",
-          "note": null
+          "level": "none"
         }
       }
     },
@@ -1087,40 +884,32 @@
       "license": "Patent-free",
       "container_support": {
         "mkv": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mp4": {
           "level": "partial",
           "note": "SheerVideo"
         },
         "qtff": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "asf": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "avi": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mxf": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "ps_ts": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3gp": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3g2": {
-          "level": "none",
-          "note": null
+          "level": "none"
         }
       }
     },
@@ -1130,40 +919,34 @@
       "license": "Varies",
       "container_support": {
         "mkv": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "mp4": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "qtff": {
           "level": "partial",
           "note": "DVC Pro 50, Photo JPEG, Graphics, QuickTime Animation"
         },
         "asf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "avi": {
           "level": "partial",
           "note": "Indeo"
         },
         "mxf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "ps_ts": {
           "level": "partial",
           "note": "JPEG 2000, TICO"
         },
         "3gp": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3g2": {
-          "level": "none",
-          "note": null
+          "level": "none"
         }
       }
     }
@@ -1175,16 +958,13 @@
       "license": "Royalties on codecs",
       "container_support": {
         "mkv": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mp4": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "qtff": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "asf": {
           "level": "partial",
@@ -1195,12 +975,10 @@
           "note": "AAC-LC, HE-AAC"
         },
         "mxf": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "ps_ts": {
-          "level": "private",
-          "note": "Implementación privada o no estandarizada"
+          "level": "private"
         },
         "3gp": {
           "level": "partial",
@@ -1218,40 +996,32 @@
       "license": "Expired patents",
       "container_support": {
         "mkv": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mp4": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "qtff": {
           "level": "partial",
           "note": "MPEG-1 Audio"
         },
         "asf": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "avi": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mxf": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "ps_ts": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "3gp": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3g2": {
-          "level": "none",
-          "note": null
+          "level": "none"
         }
       }
     },
@@ -1261,40 +1031,31 @@
       "license": "Expired patents",
       "container_support": {
         "mkv": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mp4": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "qtff": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "asf": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "avi": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mxf": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "ps_ts": {
-          "level": "private",
-          "note": "Implementación privada o no estandarizada"
+          "level": "private"
         },
         "3gp": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3g2": {
-          "level": "none",
-          "note": null
+          "level": "none"
         }
       }
     },
@@ -1308,36 +1069,28 @@
           "note": "QuickTime"
         },
         "mp4": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "qtff": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "asf": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "avi": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "mxf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "ps_ts": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3gp": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3g2": {
-          "level": "none",
-          "note": null
+          "level": "none"
         }
       }
     },
@@ -1347,40 +1100,31 @@
       "license": "Proprietary",
       "container_support": {
         "mkv": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mp4": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "qtff": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "asf": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "avi": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mxf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "ps_ts": {
-          "level": "private",
-          "note": "Implementación privada o no estandarizada"
+          "level": "private"
         },
         "3gp": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3g2": {
-          "level": "none",
-          "note": null
+          "level": "none"
         }
       }
     },
@@ -1391,39 +1135,31 @@
       "container_support": {
         "mkv": {
           "level": "indirect",
-          "note": "Soporte indirecto vía Audio Compression Manager (ACM)"
+          "via": "acm"
         },
         "mp4": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "qtff": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "asf": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "avi": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mxf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "ps_ts": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3gp": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3g2": {
-          "level": "none",
-          "note": null
+          "level": "none"
         }
       }
     },
@@ -1433,40 +1169,31 @@
       "license": "Royalty-free",
       "container_support": {
         "mkv": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mp4": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "qtff": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "asf": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "avi": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mxf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "ps_ts": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "3gp": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3g2": {
-          "level": "none",
-          "note": null
+          "level": "none"
         }
       }
     },
@@ -1476,40 +1203,31 @@
       "license": "Open source",
       "container_support": {
         "mkv": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mp4": {
-          "level": "private",
-          "note": "Implementación privada o no estandarizada"
+          "level": "private"
         },
         "qtff": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "asf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "avi": {
-          "level": "problematic",
-          "note": "Técnicamente posible pero problemático o poco fiable en la práctica"
+          "level": "problematic"
         },
         "mxf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "ps_ts": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3gp": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3g2": {
-          "level": "none",
-          "note": null
+          "level": "none"
         }
       }
     },
@@ -1519,40 +1237,31 @@
       "license": "Patent-free",
       "container_support": {
         "mkv": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mp4": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "qtff": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "asf": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "avi": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mxf": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "ps_ts": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "3gp": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3g2": {
-          "level": "none",
-          "note": null
+          "level": "none"
         }
       }
     },
@@ -1562,40 +1271,31 @@
       "license": "Expired patents",
       "container_support": {
         "mkv": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mp4": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "qtff": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "asf": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "avi": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mxf": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "ps_ts": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "3gp": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3g2": {
-          "level": "none",
-          "note": null
+          "level": "none"
         }
       }
     },
@@ -1609,36 +1309,28 @@
           "note": "QuickTime"
         },
         "mp4": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "qtff": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "asf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "avi": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "mxf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "ps_ts": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3gp": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3g2": {
-          "level": "none",
-          "note": null
+          "level": "none"
         }
       }
     },
@@ -1648,40 +1340,31 @@
       "license": "Proprietary",
       "container_support": {
         "mkv": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mp4": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "qtff": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "asf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "avi": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "mxf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "ps_ts": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3gp": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3g2": {
-          "level": "none",
-          "note": null
+          "level": "none"
         }
       }
     },
@@ -1691,40 +1374,31 @@
       "license": "Open source",
       "container_support": {
         "mkv": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mp4": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "qtff": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "asf": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "avi": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mxf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "ps_ts": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3gp": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3g2": {
-          "level": "none",
-          "note": null
+          "level": "none"
         }
       }
     },
@@ -1734,40 +1408,31 @@
       "license": "Open source",
       "container_support": {
         "mkv": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mp4": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "qtff": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "asf": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "avi": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mxf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "ps_ts": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3gp": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3g2": {
-          "level": "none",
-          "note": null
+          "level": "none"
         }
       }
     },
@@ -1778,39 +1443,31 @@
       "container_support": {
         "mkv": {
           "level": "indirect",
-          "note": "Soporte indirecto vía Audio Compression Manager (ACM)"
+          "via": "acm"
         },
         "mp4": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "qtff": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "asf": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "avi": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mxf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "ps_ts": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3gp": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3g2": {
-          "level": "none",
-          "note": null
+          "level": "none"
         }
       }
     },
@@ -1820,40 +1477,31 @@
       "license": "Proprietary",
       "container_support": {
         "mkv": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mp4": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "qtff": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "asf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "avi": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "mxf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "ps_ts": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3gp": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3g2": {
-          "level": "none",
-          "note": null
+          "level": "none"
         }
       }
     },
@@ -1867,36 +1515,28 @@
           "note": "Soporte maduro"
         },
         "mp4": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "qtff": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "asf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "avi": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "mxf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "ps_ts": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3gp": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3g2": {
-          "level": "none",
-          "note": null
+          "level": "none"
         }
       }
     },
@@ -1906,40 +1546,31 @@
       "license": "Proprietary",
       "container_support": {
         "mkv": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "mp4": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "qtff": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "asf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "avi": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "mxf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "ps_ts": {
-          "level": "private",
-          "note": "Implementación privada o no estandarizada"
+          "level": "private"
         },
         "3gp": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3g2": {
-          "level": "none",
-          "note": null
+          "level": "none"
         }
       }
     },
@@ -1949,40 +1580,31 @@
       "license": "Patent encumbered",
       "container_support": {
         "mkv": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "mp4": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "qtff": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "asf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "avi": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "mxf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "ps_ts": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "3gp": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3g2": {
-          "level": "none",
-          "note": null
+          "level": "none"
         }
       }
     },
@@ -1992,40 +1614,31 @@
       "license": "Patent encumbered",
       "container_support": {
         "mkv": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "mp4": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "qtff": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "asf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "avi": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "mxf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "ps_ts": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "3gp": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3g2": {
-          "level": "none",
-          "note": null
+          "level": "none"
         }
       }
     },
@@ -2035,40 +1648,31 @@
       "license": "Patent-free",
       "container_support": {
         "mkv": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mp4": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "qtff": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "asf": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "avi": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mxf": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "ps_ts": {
-          "level": "private",
-          "note": "Implementación privada o no estandarizada"
+          "level": "private"
         },
         "3gp": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3g2": {
-          "level": "none",
-          "note": null
+          "level": "none"
         }
       }
     },
@@ -2079,39 +1683,31 @@
       "container_support": {
         "mkv": {
           "level": "indirect",
-          "note": "Soporte indirecto vía Audio Compression Manager (ACM)"
+          "via": "acm"
         },
         "mp4": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "qtff": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "asf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "avi": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mxf": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "ps_ts": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3gp": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3g2": {
-          "level": "none",
-          "note": null
+          "level": "none"
         }
       }
     },
@@ -2122,39 +1718,31 @@
       "container_support": {
         "mkv": {
           "level": "indirect",
-          "note": "Soporte indirecto vía Audio Compression Manager (ACM)"
+          "via": "acm"
         },
         "mp4": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "qtff": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "asf": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "avi": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "mxf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "ps_ts": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3gp": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3g2": {
-          "level": "none",
-          "note": null
+          "level": "none"
         }
       }
     },
@@ -2164,40 +1752,31 @@
       "license": "Patent-free",
       "container_support": {
         "mkv": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mp4": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "qtff": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "asf": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "avi": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mxf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "ps_ts": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3gp": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3g2": {
-          "level": "none",
-          "note": null
+          "level": "none"
         }
       }
     },
@@ -2208,39 +1787,31 @@
       "container_support": {
         "mkv": {
           "level": "indirect",
-          "note": "Soporte indirecto vía Audio Compression Manager (ACM)"
+          "via": "acm"
         },
         "mp4": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "qtff": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "asf": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "avi": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mxf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "ps_ts": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3gp": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3g2": {
-          "level": "none",
-          "note": null
+          "level": "none"
         }
       }
     },
@@ -2250,40 +1821,31 @@
       "license": "Proprietary",
       "container_support": {
         "mkv": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "mp4": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "qtff": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "asf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "avi": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "mxf": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "ps_ts": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3gp": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3g2": {
-          "level": "none",
-          "note": null
+          "level": "none"
         }
       }
     },
@@ -2293,36 +1855,28 @@
       "license": "Patent encumbered",
       "container_support": {
         "mkv": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "mp4": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "qtff": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "asf": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "avi": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mxf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "ps_ts": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3gp": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "3g2": {
           "level": "partial",
@@ -2336,40 +1890,31 @@
       "license": "Expired patents",
       "container_support": {
         "mkv": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "mp4": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "qtff": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "asf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "avi": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "mxf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "ps_ts": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3gp": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3g2": {
-          "level": "none",
-          "note": null
+          "level": "none"
         }
       }
     },
@@ -2380,39 +1925,31 @@
       "container_support": {
         "mkv": {
           "level": "indirect",
-          "note": "Soporte indirecto vía Audio Compression Manager (ACM)"
+          "via": "acm"
         },
         "mp4": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "qtff": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "asf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "avi": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "mxf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "ps_ts": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3gp": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3g2": {
-          "level": "none",
-          "note": null
+          "level": "none"
         }
       }
     },
@@ -2422,36 +1959,28 @@
       "license": "Proprietary",
       "container_support": {
         "mkv": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "mp4": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "qtff": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "asf": {
-          "level": "full",
-          "note": null
+          "level": "full"
         },
         "avi": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "mxf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "ps_ts": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3gp": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3g2": {
           "level": "partial",
@@ -2469,8 +1998,7 @@
           "note": "Musepack, WavPack, TTA, any format supported by ACM"
         },
         "mp4": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "qtff": {
           "level": "partial",
@@ -2485,12 +2013,10 @@
           "note": "G.721, G.722, G.723, G.726, G.729a, CVSD, ATRAC1, Dolby AC-2"
         },
         "mxf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "ps_ts": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3gp": {
           "level": "partial",
@@ -2508,40 +2034,33 @@
       "license": "Varies",
       "container_support": {
         "mkv": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "mp4": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "qtff": {
           "level": "partial",
           "note": "MACE 3:1, MACE 6:1"
         },
         "asf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "avi": {
           "level": "partial",
           "note": "Truespeech, many others"
         },
         "mxf": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "ps_ts": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3gp": {
-          "level": "none",
-          "note": null
+          "level": "none"
         },
         "3g2": {
-          "level": "none",
-          "note": null
+          "level": "none"
         }
       }
     }
@@ -2696,5 +2215,18 @@
       "The page notes that some common multimedia formats are combinations of containers and codec/profile restrictions, such as AVCHD and DivX formats.",
       "The source page itself carries an April 2026 warning about possible original research/synthesis."
     ]
-  }
+  },
+  "support_levels": [
+    "full",
+    "partial",
+    "indirect",
+    "requires_external",
+    "private",
+    "nonstandard",
+    "problematic",
+    "planned",
+    "beta",
+    "none"
+  ],
+  "_readme": "Datos estructurados puros: sin texto para mostrar en UI (eso vive en recode_guard.py._LEVEL_DESCRIPTIONS, traducible via .tr() en la capa GUI). 'note' solo se usa para hechos tecnicos que no requieren traduccion (nombres de perfil/formato, ej. 'AAC-LC, HE-AAC'). 'via' y 'requires' son codigos/nombres propios, no prosa."
 }

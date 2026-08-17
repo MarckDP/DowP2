@@ -526,29 +526,56 @@ class QueueWorker(QThread):
 
         # Construir comando FFmpeg
         cmd = [ffmpeg_exe, "-y", "-i", input_file]
-        
+
+        stream_mode = settings.get("stream_mode", "video+audio")
+
+        # Selección explícita de pistas de audio a conservar (ver advanced_recode_panel.py):
+        # None = comportamiento de siempre, ffmpeg elige automáticamente 1 pista (la
+        #        mayoría de los archivos fuente solo tienen una, así que este sigue siendo
+        #        el camino más común, sin cambios de comportamiento).
+        # "all" = todas las pistas de audio del archivo fuente.
+        # int   = índice RELATIVO de audio (0 = primera pista, 1 = segunda, etc.).
+        # OJO: agregar CUALQUIER -map desactiva la auto-selección de ffmpeg para TODOS
+        # los tipos de stream a la vez, no solo audio — por eso, apenas se activa esto,
+        # hay que mapear el video a mano también (si corresponde) para no perderlo.
+        audio_track_selection = settings.get("audio_track_selection")
+        explicit_mapping = audio_track_selection is not None
+
         # Opciones de Video
-        video_mode = settings.get("video_mode", "recode")
-        if video_mode == "copy":
-            cmd.extend(["-c:v", "copy"])
+        if stream_mode == "audio_only":
+            cmd.append("-vn")
         else:
-            v_args = settings.get("video_args", [])
-            if v_args:
-                cmd.extend(v_args)
+            if explicit_mapping:
+                cmd.extend(["-map", "0:v:0?"])
+            video_mode = settings.get("video_mode", "recode")
+            if video_mode == "copy":
+                cmd.extend(["-c:v", "copy"])
             else:
-                cmd.extend(["-c:v", "libx264", "-crf", "23"])
+                v_args = settings.get("video_args", [])
+                if v_args:
+                    cmd.extend(v_args)
+                else:
+                    cmd.extend(["-c:v", "libx264", "-crf", "23"])
 
         # Opciones de Audio
-        audio_mode = settings.get("audio_mode", "recode")
-        if audio_mode == "copy":
-            cmd.extend(["-c:a", "copy"])
+        if stream_mode == "video_only":
+            cmd.append("-an")
         else:
-            a_args = settings.get("audio_args", [])
-            if a_args:
-                cmd.extend(a_args)
+            if audio_track_selection == "all":
+                cmd.extend(["-map", "0:a"])
+            elif isinstance(audio_track_selection, int):
+                cmd.extend(["-map", f"0:a:{audio_track_selection}"])
+
+            audio_mode = settings.get("audio_mode", "recode")
+            if audio_mode == "copy":
+                cmd.extend(["-c:a", "copy"])
             else:
-                cmd.extend(["-c:a", "aac", "-b:a", "192k"])
-                
+                a_args = settings.get("audio_args", [])
+                if a_args:
+                    cmd.extend(a_args)
+                else:
+                    cmd.extend(["-c:a", "aac", "-b:a", "192k"])
+
         cmd.append(output_file)
         
         logger.info(f"QueueWorker: Iniciando RECODE con comando: {' '.join(cmd)}")

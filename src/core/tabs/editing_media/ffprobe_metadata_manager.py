@@ -10,6 +10,13 @@ from core.setup.ffmpeg_setup import get_ffprobe_path, get_ffmpeg_dir, get_platfo
 
 CACHE_FILE = os.path.join(get_cache_dir(), "metadata_cache.json")
 
+# Version del esquema de metadatos que devuelve _parse_ffprobe_json/_get_empty_meta.
+# Subir este numero cada vez que se agregue/cambie un campo en ese dict - si no, una
+# entrada de cache vieja (guardada con un esquema anterior, ej. sin "audio_streams")
+# se sigue devolviendo tal cual por mtime/size aunque le falten campos nuevos, y la UI
+# que los consume nunca los ve hasta que el usuario borra la cache a mano.
+CACHE_SCHEMA_VERSION = 2
+
 class FFprobeTask(QRunnable):
     """Tarea asíncrona para ejecutar ffprobe en un archivo multimedia."""
 
@@ -97,7 +104,11 @@ class FFprobeMetadataManager(QObject):
         with QMutexLocker(self.mutex):
             if path in self.cache:
                 entry = self.cache[path]
-                if entry.get("mtime") == file_mtime and entry.get("size") == file_size:
+                if (
+                    entry.get("mtime") == file_mtime
+                    and entry.get("size") == file_size
+                    and entry.get("schema") == CACHE_SCHEMA_VERSION
+                ):
                     return entry.get("data", {})
 
         # No está en caché -> Crear metadatos básicos rápidos (Tier 1)
@@ -132,6 +143,7 @@ class FFprobeMetadataManager(QObject):
             entry = {
                 "mtime": stat_info.st_mtime,
                 "size": stat_info.st_size,
+                "schema": CACHE_SCHEMA_VERSION,
                 "data": meta
             }
             with QMutexLocker(self.mutex):
@@ -149,7 +161,12 @@ class FFprobeMetadataManager(QObject):
             "creado": "-", "modificado": "-", "duración": "-", "resolución": "-",
             "video_codec": "-", "video_profile": "-", "fps": "-", "aspecto": "-",
             "bitrate_video": "-", "color": "-", "audio_codec": "-", "samplerate": "-",
-            "canales": "-", "bitrate_audio": "-"
+            "canales": "-", "bitrate_audio": "-",
+            # Lista completa de pistas de audio (a diferencia de los campos escalares de
+            # arriba, que solo reflejan la PRIMERA pista, por compatibilidad con el resto
+            # de la UI). Cada entrada: {"codec", "channels", "channel_layout", "language"}.
+            # "language" puede ser None si el stream no trae tag de idioma.
+            "audio_streams": [],
         }
 
     def _get_basic_stat_meta(self, path: str, stat_info: os.stat_result, tipo: str) -> dict:
@@ -298,8 +315,27 @@ class FFprobeMetadataManager(QObject):
                     else:
                         meta["bitrate_video"] = f"{int(kbps)} kb/s"
 
-            elif codec_type == "audio" and meta["audio_codec"] == "-":
+            elif codec_type == "audio":
                 codec_name = st.get("codec_name", "").upper()
+                channels = st.get("channels")
+                channel_layout = st.get("channel_layout")
+                language = (st.get("tags") or {}).get("language")
+
+                # Registrar SIEMPRE esta pista en la lista completa, sin importar si ya
+                # se registraron los campos escalares de abajo (esos solo reflejan la
+                # primera pista, ver _get_empty_meta). El índice en esta lista es el
+                # índice RELATIVO de audio (0, 1, 2...), que es lo que espera el
+                # specifier "0:a:N" de ffmpeg al armar el -map en queue_manager.py.
+                meta["audio_streams"].append({
+                    "codec": codec_name,
+                    "channels": channels,
+                    "channel_layout": channel_layout,
+                    "language": language,
+                })
+
+                if meta["audio_codec"] != "-":
+                    continue
+
                 meta["audio_codec"] = codec_name
 
                 sample_rate = st.get("sample_rate")
@@ -313,8 +349,6 @@ class FFprobeMetadataManager(QObject):
                     except Exception:
                         meta["samplerate"] = str(sample_rate)
 
-                channels = st.get("channels")
-                channel_layout = st.get("channel_layout")
                 if channels:
                     layout_str = f" ({channel_layout})" if channel_layout else ""
                     meta["canales"] = f"{channels}{layout_str}"

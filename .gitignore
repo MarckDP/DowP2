@@ -41,6 +41,10 @@ logs/
 scratch/
 *.log
 
+# Codec matrix tooling (tools/codec_matrix/): salida regenerable, no versionar
+tools/codec_matrix/_tmp_probe/
+tools/codec_matrix/runs/
+
 # OS
 Thumbs.db
 Desktop.ini

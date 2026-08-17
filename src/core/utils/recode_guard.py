@@ -33,8 +33,9 @@ from core.logger.logger_manager import logger
 from core.utils.hardware_detector import detect_hardware
 
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-_MATRIX_PATH = os.path.join(_REPO_ROOT, "ffmpeg_codec_matrix.json")
-_WIKI_PATH = os.path.join(_REPO_ROOT, "codec_container_compatibility.json")
+_DATA_DIR = os.path.join(_REPO_ROOT, "src", "assets", "data")
+_MATRIX_PATH = os.path.join(_DATA_DIR, "ffmpeg_codec_matrix.json")
+_WIKI_PATH = os.path.join(_DATA_DIR, "codec_container_compatibility.json")
 # NOTA: rutas relativas al arbol de codigo fuente. Cuando el proyecto tenga empaquetador
 # (hoy no lo tiene, ver AGENTS.md), esta resolucion va a necesitar revisarse para leer
 # desde el recurso empaquetado en vez del repo.
@@ -181,6 +182,46 @@ def get_compatible_containers(codec_ids: list[str]) -> list[str]:
     return sorted(result)
 
 
+def get_channel_support(codec_id: str | None, container: str | None) -> dict:
+    """
+    Soporte de canales (mono/estéreo/5.1) de un codec de audio en un contenedor dado.
+
+    Cruza dos datos de ffmpeg_codec_matrix.json (ver tools/codec_matrix/run_matrix.py):
+    el límite del encoder en sí (codecs[id].channels) y el límite propio del muxer del
+    contenedor si fue relevado (codecs[id].containers[cont].channels) — este último tiene
+    prioridad porque hay casos donde el encoder soporta N canales pero el contenedor no
+    (ej. AMR-NB en 3GP: el encoder ya rechaza estéreo, pero podría haber muxers con su
+    propia restricción independiente).
+
+    Permisivo ante falta de dato (codec no verificado, combinación no relevada, o
+    codec_id/container ausentes): devuelve supported=True para no ocultar/bloquear
+    opciones de UI sin evidencia empírica real.
+
+    Returns: {"1": {"supported": bool, "reason": str|None},
+              "2": {...}, "6": {...}}
+    """
+    result = {ch: {"supported": True, "reason": None} for ch in ("1", "2", "6")}
+    if not codec_id or not container:
+        return result
+
+    matrix = _load_matrix()
+    entry = matrix.get("codecs", {}).get(codec_id)
+    if not entry or not entry.get("verified"):
+        return result
+
+    container_id = normalize_container(container)
+    codec_channels = entry.get("channels") or {}
+    cont_info = entry.get("containers", {}).get(container_id) or {}
+    cont_channels = cont_info.get("channels") or {}
+
+    for ch in ("1", "2", "6"):
+        info = cont_channels.get(ch) or codec_channels.get(ch)
+        if info is None:
+            continue
+        result[ch] = {"supported": info.get("supported", True), "reason": info.get("ffmpeg_error")}
+    return result
+
+
 def _check_container_support(codec_id: str) -> dict:
     matrix = _load_matrix()
     codec_entry = matrix.get("codecs", {}).get(codec_id)
@@ -191,11 +232,18 @@ def _check_container_support(codec_id: str) -> dict:
     return {"level": "verified", "reason": None, "entry": codec_entry}
 
 
-def _check_playback_risk(codec_entry: dict, container_id: str) -> str | None:
+def _check_playback_risk(codec_entry: dict, container_id: str) -> dict | None:
     """Solo se llama cuando ffmpeg YA acepto el mux. Cruza con Wikipedia para detectar
     casos donde el contenedor fue permisivo (acepto cualquier FourCC) pero el estandar
-    nunca contemplo esa combinacion. Devuelve un mensaje de advertencia, o None si no hay
-    objecion (o no hay dato de Wikipedia para cruzar)."""
+    nunca contemplo esa combinacion.
+
+    Devuelve datos ESTRUCTURADOS, no un mensaje ya armado: este modulo no es un QObject
+    y no tiene acceso a .tr(), asi que el texto final (traducible) se compone en
+    advanced_recode_panel.py::_format_playback_risk_message, que si es un QWidget.
+    None si no hay objecion (nivel "full") o no hay dato de Wikipedia para cruzar.
+
+    Returns: {"level": str, "via": str|None, "requires": str|None, "note": str|None}
+    """
     wiki_name = codec_entry.get("wikipedia_name")
     if not wiki_name:
         return None
@@ -216,13 +264,12 @@ def _check_playback_risk(codec_entry: dict, container_id: str) -> str | None:
     if level == "full":
         return None
 
-    level_desc = wiki.get("support_levels", {}).get(level, level)
-    note = support.get("note")
-    msg = f"ffmpeg acepta este mux, pero no es un uso estandar del contenedor ({level_desc})"
-    if note:
-        msg += f" — {note}"
-    msg += ". Podria no reproducirse en todos los reproductores/dispositivos."
-    return msg
+    return {
+        "level": level,
+        "via": support.get("via"),
+        "requires": support.get("requires"),
+        "note": support.get("note"),
+    }
 
 
 def _check_hardware_support(codec_id: str) -> dict:
@@ -257,8 +304,16 @@ def evaluate_recode(video_codec: str | None, audio_codec: str | None, container:
         {
             "verdict": "ok" | "warning" | "unverified" | "blocked",
             "container": <id normalizado>,
-            "issues": [ {"scope": "video"/"audio", "check": "container"/"playback_risk"/"hardware",
-                          "severity": "warning"/"unverified"/"blocked", "message": str}, ... ]
+            "issues": [
+                # container / hardware: mensaje ya armado (ver limitacion de .tr() en el
+                # docstring del modulo).
+                {"scope": "video"/"audio", "check": "container"/"hardware",
+                 "severity": "warning"/"unverified"/"blocked", "message": str},
+                # playback_risk: datos estructurados en vez de mensaje, para que la GUI
+                # arme el texto traducible (ver _check_playback_risk).
+                {"scope": "video"/"audio", "check": "playback_risk", "severity": "warning",
+                 "risk": {"level": str, "via": str|None, "requires": str|None, "note": str|None}},
+            ]
         }
 
     Nota: si video_codec/audio_codec es None (stream copiado o ausente), no se evalua ese
@@ -285,9 +340,9 @@ def evaluate_recode(video_codec: str | None, audio_codec: str | None, container:
                 issues.append({"scope": scope, "check": "container", "severity": "blocked",
                                 "message": cont_info.get("ffmpeg_error") or "Este contenedor no acepta este codec en el ffmpeg instalado."})
             else:
-                risk_msg = _check_playback_risk(codec_entry, container_id)
-                if risk_msg:
-                    issues.append({"scope": scope, "check": "playback_risk", "severity": "warning", "message": risk_msg})
+                risk = _check_playback_risk(codec_entry, container_id)
+                if risk:
+                    issues.append({"scope": scope, "check": "playback_risk", "severity": "warning", "risk": risk})
 
         if scope == "video":
             hw_check = _check_hardware_support(codec_id)
@@ -321,4 +376,5 @@ if __name__ == "__main__":
         result = evaluate_recode(v, a, c)
         print(f"\n{v} + {a} -> .{c}  =>  {result['verdict'].upper()}")
         for issue in result["issues"]:
-            print(f"  [{issue['severity']}] ({issue['scope']}/{issue['check']}) {issue['message']}")
+            detail = issue.get("message") or issue.get("risk")
+            print(f"  [{issue['severity']}] ({issue['scope']}/{issue['check']}) {detail}")

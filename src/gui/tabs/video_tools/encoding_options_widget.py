@@ -75,21 +75,37 @@ class EncodingOptionsWidget(QFrame):
         self.tabs.addTab(self.tab_advanced, self.tr("Avanzado"))
         self.tab_advanced.validity_changed.connect(self._on_advanced_validity_changed)
 
+        # A diferencia de Avanzado (que valida en vivo via validity_changed),
+        # Preajustes solo cambia de válido/inválido cuando el usuario elige o
+        # deselecciona un preset en su combo.
+        self.tab_presets.preset_bar.preset_applied.connect(self._on_presets_validity_changed)
+
         layout.addWidget(self.tabs)
 
         self.tabs.currentChanged.connect(self._on_tab_changed)
 
     def _on_tab_changed(self, index: int):
-        if self.tabs.widget(index) is self.tab_advanced:
+        widget = self.tabs.widget(index)
+        if widget is self.tab_advanced:
             self.start_enabled_changed.emit(self.tab_advanced.is_valid())
+        elif widget is self.tab_presets:
+            self.start_enabled_changed.emit(self.tab_presets.is_valid())
         else:
+            # Comprimir/Convertir/Proxies: todavía no tienen lógica propia.
             self.start_enabled_changed.emit(True)
 
     def _on_advanced_validity_changed(self, is_valid: bool):
         if self.tabs.currentWidget() is self.tab_advanced:
             self.start_enabled_changed.emit(is_valid)
 
+    def _on_presets_validity_changed(self, *_args):
+        if self.tabs.currentWidget() is self.tab_presets:
+            self.start_enabled_changed.emit(self.tab_presets.is_valid())
+
     def get_encoding_settings(self) -> dict:
-        if self.tabs.currentWidget() is self.tab_advanced:
+        current = self.tabs.currentWidget()
+        if current is self.tab_advanced:
             return self.tab_advanced.get_settings()
+        if current is self.tab_presets:
+            return self.tab_presets.get_settings()
         return {}

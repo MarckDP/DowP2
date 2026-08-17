@@ -2,19 +2,24 @@
 from PySide6.QtWidgets import QWidget, QVBoxLayout
 
 from gui.widgets.preset_bar import PresetBar
-
-PRESET_NAMESPACE = "video_tools/preajustes"
+from gui.tabs.video_tools.advanced_recode_panel import _PRESET_NAMESPACE
 
 
 class PresetsPanel(QWidget):
     """
     Pestaña 'Preajustes' de Herramientas Multimedia.
 
-    Por ahora es solo la barra de gestión de presets (guardar/cargar/exportar/
-    importar/eliminar). No contiene opciones propias: los ajustes que guarda
-    cada preset vendrán de las demás pestañas (Comprimir, Convertir, etc.)
-    cuando se implementen — de ahí que get_settings/set_settings sean
-    provisionales y operen sobre un dict vacío.
+    Acá el usuario ELIGE qué preset usar para el próximo trabajo, sin pasar
+    por la pestaña que lo creó (ej. guardaste "422 Proxy" en Avanzado una vez;
+    de ahí en más solo entrás acá, lo elegís, y mandás "Iniciar
+    Recodificación" directo). Por eso expone get_settings()/is_valid() con la
+    misma forma que AdvancedRecodePanel - EncodingOptionsWidget los trata
+    igual sea cual sea la pestaña activa.
+
+    Namespace: por ahora apunta al mismo que usa AdvancedRecodePanel, porque
+    es la única pestaña que hoy guarda ajustes reales. Cuando Comprimir/
+    Convertir/Proxies tengan lógica propia, esto va a necesitar mostrar
+    varios namespaces a la vez (agrupados o con un filtro), no solo uno.
     """
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -22,15 +27,15 @@ class PresetsPanel(QWidget):
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(10)
 
-        self.preset_bar = PresetBar(PRESET_NAMESPACE, self.get_settings, self.set_settings, self)
+        self.preset_bar = PresetBar(
+            _PRESET_NAMESPACE, get_settings=None, parent=self,
+            show_picker=True, show_save_button=False,
+        )
         layout.addWidget(self.preset_bar)
         layout.addStretch(1)
 
     def get_settings(self) -> dict:
-        # Provisional: cuando existan las lógicas de las otras pestañas,
-        # aquí se recolectarán sus ajustes para guardarlos como preset.
-        return {}
+        return self.preset_bar.current_preset_settings() or {}
 
-    def set_settings(self, settings: dict):
-        # Provisional: aquí se distribuirán los ajustes del preset a las otras pestañas.
-        pass
+    def is_valid(self) -> bool:
+        return self.preset_bar.active_preset_name() is not None

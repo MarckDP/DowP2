@@ -3,6 +3,7 @@ from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
+    QGridLayout,
     QFrame,
     QLabel,
     QComboBox,
@@ -16,8 +17,10 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Signal, Qt
 
 from gui.styles import get_theme_token
+from gui.widgets.mode_selector import ModeSelector
+from gui.widgets.preset_bar import PresetBar
 from core.logger.logger_manager import logger
-from core.utils.recode_guard import evaluate_recode, get_video_codecs, get_audio_codecs, get_compatible_containers, resolve_encoder
+from core.utils.recode_guard import evaluate_recode, get_video_codecs, get_audio_codecs, get_compatible_containers, resolve_encoder, get_channel_support
 from core.utils.hardware_detector import detect_hardware
 from core.tabs.video_tools.codec_profiles import (
     get_profiles, build_custom_bitrate_args, extract_bitrate_kbps,
@@ -29,6 +32,15 @@ from core.tabs.video_tools.size_estimator import (
 
 # Con listas de ~25-30 codecs, el popup del combo se cae a scroll para no tapar la pantalla
 _MAX_VISIBLE_COMBO_ITEMS = 12
+
+_PRESET_NAMESPACE = "video_tools/avanzado"
+
+# Contenedores de stream elemental que NUNCA pueden llevar más de una pista de audio,
+# sin importar el códec (a diferencia del resto, que son contenedores de multiplexado
+# reales y sí pueden). Lista acotada a mano por ahora, igual que hacía DowP Lite -
+# pendiente de reemplazar por un dato verificado empíricamente contra el ffmpeg
+# empaquetado cuando se amplíe tools/codec_matrix con soporte multi-pista (ver charla).
+_SINGLE_AUDIO_STREAM_CONTAINERS = {"mp3", "wav", "flac"}
 
 _SEVERITY_LABELS = {
     "ok": "Compatible",
@@ -56,6 +68,17 @@ _CONTAINER_LABELS = {
     "asf": "WMV",
     "ps": "MPEG-PS",
     "ts": "MPEG-TS",
+    "webm": "WebM",
+    "mp3": "MP3",
+    "m4a": "M4A",
+    "ogg": "OGG",
+    "wav": "WAV",
+    "flac": "FLAC",
+    "flv": "FLV",
+    "apng": "APNG",
+    "webp": "WebP",
+    "gif": "GIF",
+    "opus": "Opus",
 }
 
 
@@ -107,22 +130,36 @@ class AdvancedRecodePanel(QWidget):
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(10)
 
+        # 0. Selector de Modo (Video + Audio / Solo Audio / Solo Video)
+        self.mode_selector = ModeSelector()
+        self.mode_selector.mode_changed.connect(self._on_mode_changed)
+        layout.addWidget(self.mode_selector)
+
         # 1. Tarjeta de Estado de Compatibilidad
         layout.addWidget(self._build_messages_section())
 
-        # 2. Fila Principal de Video y Audio (Columnas Simétricas 50/50 fijas)
-        streams_row = QHBoxLayout()
-        streams_row.setSpacing(10)
-        streams_row.addWidget(self._build_stream_section("Video", "video", is_video=True), 1)
-        streams_row.addWidget(self._build_stream_section("Audio", "audio", is_video=False), 1)
-        layout.addLayout(streams_row)
+        # 2. Cuadrícula dinámica de Tarjetas (2 columnas adaptables)
+        self.cards_grid = QGridLayout()
+        self.cards_grid.setSpacing(10)
+        self.cards_grid.setColumnStretch(0, 1)
+        self.cards_grid.setColumnStretch(1, 1)
 
-        # 3 y 4. Contenedor de Salida y Peso Estimado (Misma Fila)
-        bottom_row = QHBoxLayout()
-        bottom_row.setSpacing(10)
-        bottom_row.addWidget(self._build_container_section(), 1)
-        bottom_row.addWidget(self._build_size_estimate_section(), 1)
-        layout.addLayout(bottom_row)
+        self._build_stream_section(self.tr("Video"), "video", is_video=True)
+        self._build_stream_section(self.tr("Audio"), "audio", is_video=False)
+        self._build_container_section()
+        self._build_size_estimate_section()
+
+        layout.addLayout(self.cards_grid)
+
+        # Preajustes: va debajo de todo el panel (no es una tarjeta más de la
+        # cuadrícula) - ver conversación sobre el sistema de presets.
+        preset_card, preset_card_layout = self._card_frame(self.tr("Preajustes"))
+        self.preset_bar = PresetBar(
+            _PRESET_NAMESPACE, self.get_settings, self,
+            show_picker=False, show_save_button=True,
+        )
+        preset_card_layout.addWidget(self.preset_bar)
+        layout.addWidget(preset_card)
 
         layout.addStretch(1)
 
@@ -146,7 +183,10 @@ class AdvancedRecodePanel(QWidget):
         v.setContentsMargins(12, 10, 12, 12)
         v.setSpacing(8)
         if title:
-            lbl = QLabel(self.tr(title))
+            # NOTA: `title` debe llegar ya traducido (self.tr("literal") en el call site) -
+            # lupdate no puede extraer texto que pasa por una variable, solo strings
+            # literales pasados directamente a .tr().
+            lbl = QLabel(title)
             lbl.setObjectName("sectionTitle")
             v.addWidget(lbl)
         return frame, v
@@ -166,7 +206,8 @@ class AdvancedRecodePanel(QWidget):
         header_row.setContentsMargins(0, 0, 0, 2)
         header_row.setSpacing(8)
 
-        lbl_title = QLabel(self.tr(title))
+        # `title` ya llega traducido desde el call site (ver nota en _card_frame).
+        lbl_title = QLabel(title)
         lbl_title.setObjectName("sectionTitle")
         header_row.addWidget(lbl_title)
         header_row.addStretch(1)
@@ -323,11 +364,57 @@ class AdvancedRecodePanel(QWidget):
             pass_container.setVisible(False)
             rb_pass1.toggled.connect(self._update_size_estimate)
 
+        if not is_video:
+            channels_container = QWidget()
+            channels_layout = QVBoxLayout(channels_container)
+            channels_layout.setContentsMargins(0, 0, 0, 4)
+            channels_layout.setSpacing(8)
+
+            lbl_channels = QLabel(self.tr("Canales:"))
+            lbl_channels.setObjectName("menuLabel")
+            channels_layout.addWidget(lbl_channels)
+
+            channels_combo = QComboBox()
+            self._setup_fixed_combo(channels_combo)
+            channels_combo.addItem(self.tr("Igual al original"), "")
+            channels_combo.addItem(self.tr("Mono (1 canal)"), "1")
+            channels_combo.addItem(self.tr("Estéreo (2 canales)"), "2")
+            channels_combo.addItem(self.tr("5.1 Surround"), "6")
+            channels_layout.addWidget(channels_combo)
+
+            v.addWidget(channels_container)
+            self.widget_audio_channels = channels_container
+            self.lbl_audio_channels = lbl_channels
+            self.combo_audio_channels = channels_combo
+
+            # Selector de pistas de audio: solo visible cuando el archivo fuente tiene
+            # 2 o más pistas (ver _refresh_audio_tracks_combo, llamado desde
+            # set_source_media). Con una sola pista no aporta nada y quedaría oculto.
+            tracks_container = QWidget()
+            tracks_layout = QVBoxLayout(tracks_container)
+            tracks_layout.setContentsMargins(0, 0, 0, 4)
+            tracks_layout.setSpacing(8)
+
+            lbl_tracks = QLabel(self.tr("Pistas de audio:"))
+            lbl_tracks.setObjectName("menuLabel")
+            tracks_layout.addWidget(lbl_tracks)
+
+            tracks_combo = QComboBox()
+            self._setup_fixed_combo(tracks_combo)
+            tracks_layout.addWidget(tracks_combo)
+
+            v.addWidget(tracks_container)
+            self.widget_audio_tracks = tracks_container
+            self.lbl_audio_tracks = lbl_tracks
+            self.combo_audio_tracks = tracks_combo
+            tracks_container.setVisible(False)
+            tracks_combo.currentIndexChanged.connect(self._on_selection_changed)
+
         v.addStretch(1)
         return frame
 
     def _build_container_section(self) -> QFrame:
-        frame, v = self._card_frame("Contenedor de salida")
+        frame, v = self._card_frame(self.tr("Contenedor de salida"))
 
         self.combo_container = QComboBox()
         self._setup_fixed_combo(self.combo_container)
@@ -339,10 +426,11 @@ class AdvancedRecodePanel(QWidget):
         v.addWidget(lbl_hint)
 
         self.combo_container.currentIndexChanged.connect(self._on_container_changed)
+        self.frame_container = frame
         return frame
 
     def _build_size_estimate_section(self) -> QFrame:
-        frame, v = self._card_frame("Peso final estimado")
+        frame, v = self._card_frame(self.tr("Peso final estimado"))
 
         self.lbl_source_info = QLabel(self.tr("Seleccioná un archivo en la cola para estimar el peso."))
         self.lbl_source_info.setObjectName("mutedLabel")
@@ -354,10 +442,11 @@ class AdvancedRecodePanel(QWidget):
         self.lbl_size_estimate.setObjectName("sectionTitle")
         v.addWidget(self.lbl_size_estimate)
 
+        self.frame_size = frame
         return frame
 
     def _build_messages_section(self) -> QFrame:
-        frame, v = self._card_frame("Estado de compatibilidad")
+        frame, v = self._card_frame(self.tr("Estado de compatibilidad"))
         self.messages_layout = QVBoxLayout()
         self.messages_layout.setContentsMargins(0, 2, 0, 2)
         self.messages_layout.setSpacing(6)
@@ -408,12 +497,31 @@ class AdvancedRecodePanel(QWidget):
 
     # ─── Logica de cambio de seleccion ──────────────────────────
 
+    def _current_stream_mode(self) -> str:
+        """Devuelve 'video+audio', 'audio_only' o 'video_only'."""
+        if not hasattr(self, "mode_selector"):
+            return "video+audio"
+        if self.mode_selector.btn_audio.isChecked():
+            return "audio_only"
+        if self.mode_selector.btn_video.isChecked():
+            return "video_only"
+        return "video+audio"
+
+    def _on_mode_changed(self, _mode_text: str = ""):
+        self._on_selection_changed()
+
     def _current_video_codec(self):
+        if self._current_stream_mode() == "audio_only":
+            return None
+        if getattr(self, "frame_video", None) and not self.frame_video.isEnabled():
+            return None
         if self.rb_video_copy.isChecked():
             return None
         return self.combo_video_codec.currentData()
 
     def _current_audio_codec(self):
+        if self._current_stream_mode() == "video_only":
+            return None
         if getattr(self, "frame_audio", None) and not self.frame_audio.isEnabled():
             return None
         if self.rb_audio_copy.isChecked():
@@ -444,21 +552,31 @@ class AdvancedRecodePanel(QWidget):
     def _on_selection_changed(self, *_args):
         if self._building:
             return
-        
-        # Habilitar o deshabilitar sección de audio entera si es GIF
-        is_gif = (self.combo_video_codec.currentData() == "gif" and self.rb_video_recode.isChecked())
+
+        stream_mode = self._current_stream_mode()
+        is_audio_only = (stream_mode == "audio_only")
+        is_video_only = (stream_mode == "video_only")
+
+        # Habilitar o deshabilitar columnas según el selector de modo
+        if getattr(self, "frame_video", None):
+            self.frame_video.setEnabled(not is_audio_only)
+
+        is_gif = (self.combo_video_codec.currentData() == "gif" and self.rb_video_recode.isChecked() and not is_audio_only)
         if getattr(self, "frame_audio", None):
-            self.frame_audio.setEnabled(not is_gif)
+            self.frame_audio.setEnabled((not is_video_only) and (not is_gif))
 
         # Habilitar o deshabilitar campos según modo recodificar vs copiar
-        video_recode = self.rb_video_recode.isChecked()
-        audio_recode = self.rb_audio_recode.isChecked()
+        video_recode = self.rb_video_recode.isChecked() and (not is_audio_only)
+        audio_recode = self.rb_audio_recode.isChecked() and (not is_video_only)
 
         self.combo_video_codec.setEnabled(video_recode)
         self.combo_audio_codec.setEnabled(audio_recode)
         self.combo_video_profile.setEnabled(video_recode)
         self.combo_audio_profile.setEnabled(audio_recode)
+        if hasattr(self, "combo_audio_channels"):
+            self.combo_audio_channels.setEnabled(audio_recode)
 
+        self._relayout_cards()
         self._update_engine_label()
         self._refresh_variant_combo("video", self._current_video_codec())
         self._refresh_variant_combo("audio", self._current_audio_codec())
@@ -468,6 +586,35 @@ class AdvancedRecodePanel(QWidget):
         self._refresh_container_options()
         self._evaluate_and_render()
         self._update_size_estimate()
+
+    def _relayout_cards(self):
+        """Reorganiza dinámicamente las tarjetas en la cuadrícula de 2 columnas según el modo activo."""
+        if not hasattr(self, "cards_grid") or not hasattr(self, "frame_container") or not hasattr(self, "frame_size"):
+            return
+
+        stream_mode = self._current_stream_mode()
+
+        if stream_mode == "audio_only":
+            self.frame_video.hide()
+            self.frame_audio.show()
+            visible_cards = [self.frame_audio, self.frame_container, self.frame_size]
+        elif stream_mode == "video_only":
+            self.frame_audio.hide()
+            self.frame_video.show()
+            visible_cards = [self.frame_video, self.frame_container, self.frame_size]
+        else: # video+audio
+            self.frame_video.show()
+            self.frame_audio.show()
+            visible_cards = [self.frame_video, self.frame_audio, self.frame_container, self.frame_size]
+
+        while self.cards_grid.count():
+            self.cards_grid.takeAt(0)
+
+        for idx, card in enumerate(visible_cards):
+            row = idx // 2
+            col = idx % 2
+            self.cards_grid.addWidget(card, row, col)
+            card.show()
 
     def _refresh_variant_combo(self, prefix: str, codec_id):
         combo = getattr(self, f"combo_{prefix}_variant")
@@ -565,16 +712,25 @@ class AdvancedRecodePanel(QWidget):
             return None
             
         custom_type = profile.get("custom")
+        args = []
         if custom_type:
             encoder = self._effective_encoder(prefix, codec_id)
             if custom_type == "cq":
                 from core.tabs.video_tools.codec_profiles import build_custom_quality_args
                 cq_val = getattr(self, f"spin_{prefix}_cq").value()
-                return build_custom_quality_args(encoder, cq_val)
+                args = build_custom_quality_args(encoder, cq_val)
             else:
                 bitrate = getattr(self, f"spin_{prefix}_bitrate").value()
-                return build_custom_bitrate_args(encoder, custom_type, bitrate)
-        return profile["args"]
+                args = build_custom_bitrate_args(encoder, custom_type, bitrate)
+        else:
+            args = list(profile["args"])
+            
+        if prefix == "audio" and hasattr(self, "combo_audio_channels"):
+            channels = self.combo_audio_channels.currentData()
+            if channels:
+                args.extend(["-ac", channels])
+                
+        return args
 
     # ─── Datos del archivo fuente (cola de medios) ──────────────
 
@@ -582,6 +738,7 @@ class AdvancedRecodePanel(QWidget):
         self._source_meta = meta or None
         self._source_filepath = filepath
         self._update_source_info_label()
+        self._refresh_audio_tracks_combo()
         self._evaluate_and_render()
         self._update_size_estimate()
 
@@ -597,6 +754,13 @@ class AdvancedRecodePanel(QWidget):
             self.tr("Archivo de origen: duración {0} | video {1} | audio {2}").format(dur, vcod, acod)
         )
 
+    def _current_audio_track_selection(self):
+        """None (comportamiento por defecto, sin -map explícito) | "all" | int (índice
+        relativo de audio). Ver combo_audio_tracks / _refresh_audio_tracks_combo."""
+        if not hasattr(self, "combo_audio_tracks") or not self.widget_audio_tracks.isVisible():
+            return None
+        return self.combo_audio_tracks.currentData()
+
     def _source_codec(self, prefix: str):
         if not self._source_meta:
             return None
@@ -604,6 +768,12 @@ class AdvancedRecodePanel(QWidget):
         return source_codec_id(self._source_meta.get(key))
 
     def _guard_codec(self, prefix: str):
+        stream_mode = self._current_stream_mode()
+        if prefix == "video" and stream_mode == "audio_only":
+            return None
+        if prefix == "audio" and stream_mode == "video_only":
+            return None
+
         frame = getattr(self, f"frame_{prefix}", None)
         if frame and not frame.isEnabled():
             return None
@@ -626,14 +796,16 @@ class AdvancedRecodePanel(QWidget):
             self.lbl_size_estimate.setText(self.tr("Duración del archivo todavía no disponible."))
             return
 
+        stream_mode = self._current_stream_mode()
+
         def stream_kbps(prefix, meta_key, arg_flag):
             if getattr(self, f"rb_{prefix}_copy").isChecked():
                 return parse_kbps_from_label(self._source_meta.get(meta_key))
             args = self._effective_args(prefix)
             return extract_bitrate_kbps(args, arg_flag) if args else None
 
-        video_kbps = stream_kbps("video", "bitrate_video", "-b:v")
-        audio_kbps = stream_kbps("audio", "bitrate_audio", "-b:a")
+        video_kbps = stream_kbps("video", "bitrate_video", "-b:v") if stream_mode != "audio_only" else None
+        audio_kbps = stream_kbps("audio", "bitrate_audio", "-b:a") if stream_mode != "video_only" else None
         size_mb = estimate_size_mb(video_kbps, audio_kbps, duration_sec)
 
         if size_mb is None:
@@ -644,10 +816,12 @@ class AdvancedRecodePanel(QWidget):
             return
 
         parts = []
-        parts.append(self.tr("video: {0:.0f} kbps").format(video_kbps) if video_kbps is not None
-                      else self.tr("video: sin bitrate fijo, no incluido"))
-        parts.append(self.tr("audio: {0:.0f} kbps").format(audio_kbps) if audio_kbps is not None
-                      else self.tr("audio: sin bitrate fijo, no incluido"))
+        if stream_mode != "audio_only":
+            parts.append(self.tr("video: {0:.0f} kbps").format(video_kbps) if video_kbps is not None
+                          else self.tr("video: sin bitrate fijo, no incluido"))
+        if stream_mode != "video_only":
+            parts.append(self.tr("audio: {0:.0f} kbps").format(audio_kbps) if audio_kbps is not None
+                          else self.tr("audio: sin bitrate fijo, no incluido"))
 
         self.lbl_size_estimate.setText(
             self.tr("~ {0:.1f} MB").format(size_mb) + "  (" + ", ".join(parts) + ")"
@@ -770,9 +944,101 @@ class AdvancedRecodePanel(QWidget):
         lbl.setStyleSheet(f"color: {color}; font-size: {'13px' if compact else '12px'}; font-weight: {'bold' if compact else 'normal'};")
         self.messages_layout.addWidget(lbl)
 
+    def _refresh_audio_channel_options(self, container_id: str | None):
+        """Muestra/oculta y habilita/deshabilita las opciones del combo 'Canales' según lo
+        que el codec de audio elegido soporta en el contenedor elegido (ver
+        recode_guard.get_channel_support / ffmpeg_codec_matrix.json)."""
+        if not hasattr(self, "combo_audio_channels"):
+            return
+        combo = self.combo_audio_channels
+        audio_codec = self._current_audio_codec()
+        support = get_channel_support(audio_codec, container_id) if (audio_codec and container_id) else {}
+
+        self._building = True
+        try:
+            model = combo.model()
+            view = combo.view()
+            current_data = combo.currentData()
+            reset_needed = False
+            for i in range(combo.count()):
+                data = combo.itemData(i)
+                if not data:
+                    continue  # "Igual al original": siempre disponible
+                info = support.get(data)
+                enabled = info["supported"] if info else True
+                item = model.item(i)
+                item.setEnabled(enabled)
+                item.setToolTip((info or {}).get("reason") or "" if not enabled else "")
+                view.setRowHidden(i, not enabled)
+                if not enabled and data == current_data:
+                    reset_needed = True
+            if reset_needed:
+                combo.setCurrentIndex(0)
+        finally:
+            self._building = False
+
+    def _refresh_audio_tracks_combo(self):
+        """Puebla el combo 'Pistas de audio' con las pistas del archivo fuente (ver
+        set_source_media / ffprobe_metadata_manager.py). Se oculta solo si hay 0 o 1
+        pista, que es el caso más común - ahí no hay nada que elegir."""
+        if not hasattr(self, "combo_audio_tracks"):
+            return
+        streams = (self._source_meta or {}).get("audio_streams", [])
+        combo = self.combo_audio_tracks
+
+        self._building = True
+        try:
+            combo.clear()
+            if len(streams) <= 1:
+                self.widget_audio_tracks.setVisible(False)
+                return
+
+            combo.addItem(self.tr("Todas las pistas"), "all")
+            for i, st in enumerate(streams):
+                parts = [st.get("codec") or "?"]
+                if st.get("channels"):
+                    parts.append(f"{st['channels']}ch")
+                if st.get("language"):
+                    parts.append(st["language"])
+                combo.addItem(self.tr("Pista {0}: {1}").format(i + 1, ", ".join(parts)), i)
+
+            # Por defecto se elige la primera pista sola (no "Todas"), para no cambiar
+            # el tamaño/comportamiento de salida esperado sin que el usuario lo pida.
+            combo.setCurrentIndex(1)
+            self.widget_audio_tracks.setVisible(True)
+        finally:
+            self._building = False
+        self._apply_container_audio_track_limits(self.combo_container.currentData())
+
+    def _apply_container_audio_track_limits(self, container_id: str | None):
+        """Deshabilita 'Todas las pistas' si el contenedor elegido es de stream elemental
+        (ver _SINGLE_AUDIO_STREAM_CONTAINERS) - esos nunca pueden llevar más de una pista
+        de audio, sin importar el códec."""
+        if not hasattr(self, "combo_audio_tracks"):
+            return
+        combo = self.combo_audio_tracks
+        if combo.count() == 0:
+            return
+
+        blocked = container_id in _SINGLE_AUDIO_STREAM_CONTAINERS
+        model = combo.model()
+        all_item = model.item(0)  # "Todas las pistas" siempre es el primer item
+        if not all_item:
+            return
+
+        all_item.setEnabled(not blocked)
+        if blocked and combo.currentData() == "all" and combo.count() > 1:
+            self._building = True
+            try:
+                combo.setCurrentIndex(1)
+            finally:
+                self._building = False
+
     def _evaluate_and_render(self):
         self._clear_messages()
         container_id = self.combo_container.currentData()
+        self._refresh_audio_channel_options(container_id)
+        self._apply_container_audio_track_limits(container_id)
 
         if not container_id:
             self._add_message("unverified", self.tr("No hay ningún contenedor compatible con la combinación de codecs elegida."))
@@ -786,10 +1052,63 @@ class AdvancedRecodePanel(QWidget):
             self._add_message("ok", self.tr("Configuración compatible y lista para procesar."), compact=True)
         else:
             for issue in result["issues"]:
-                self._add_message(issue["severity"], issue["message"])
+                if issue["check"] == "playback_risk":
+                    message = self._format_playback_risk_message(issue["risk"])
+                else:
+                    message = issue["message"]
+                self._add_message(issue["severity"], message)
 
         self._last_valid = result["verdict"] != "blocked"
         self.validity_changed.emit(self._last_valid)
+
+    def _format_playback_risk_message(self, risk: dict) -> str:
+        """Arma el texto final del warning de "riesgo de reproducción" (ver
+        recode_guard._check_playback_risk, que solo devuelve datos estructurados).
+        Vive acá y no en recode_guard.py porque necesita self.tr() para ser
+        traducible — ese módulo es lógica pura, no un QObject.
+
+        level="none"/"planned" es un caso distinto de los demás: ahí ffmpeg logró
+        el mux pero el estándar del contenedor directamente NO contempla esta
+        combinación (no es solo "no estándar" o "parcial"), así que se avisa con
+        una frase separada en vez de reusar la plantilla genérica con una
+        descripción de nivel que diría, de forma confusa, "no es estándar (sin
+        soporte)"."""
+        level = risk.get("level")
+
+        if level in ("none", "planned"):
+            msg = self.tr(
+                "ffmpeg permite generar este archivo, pero el estándar del contenedor "
+                "no contempla esta combinación de codec"
+            )
+        else:
+            level_descriptions = {
+                "partial": self.tr("soporte restringido a un perfil, versión o subformato específico"),
+                "indirect": self.tr("soporte indirecto a través de un mecanismo externo, no nativo del contenedor"),
+                "requires_external": self.tr("requiere un componente o codec adicional instalado aparte"),
+                "private": self.tr("implementación privada o no estandarizada del contenedor"),
+                "nonstandard": self.tr("reconocido por algunos reproductores/editores pero no forma parte del estándar"),
+                "problematic": self.tr("técnicamente posible pero problemático o poco fiable en la práctica"),
+                "beta": self.tr("soporte en fase beta, puede ser inestable"),
+            }
+            desc = level_descriptions.get(level, level)
+            msg = self.tr("ffmpeg acepta este mux, pero no es un uso estándar del contenedor ({0})").format(desc)
+
+        extra = None
+        if risk.get("via"):
+            via_labels = {
+                "vcm": self.tr("Video Compression Manager (VCM)"),
+                "acm": self.tr("Audio Compression Manager (ACM)"),
+            }
+            extra = self.tr("vía {0}").format(via_labels.get(risk["via"], risk["via"]))
+        elif risk.get("requires"):
+            extra = self.tr("requiere {0}").format(risk["requires"])
+        elif risk.get("note"):
+            extra = risk["note"]  # hecho técnico (nombre de perfil/formato), no se traduce a propósito
+
+        if extra:
+            msg += f" — {extra}"
+        msg += ". " + self.tr("Podría no reproducirse en todos los reproductores/dispositivos.")
+        return msg
 
     # ─── API publica ─────────────────────────────────────────────
 
@@ -797,18 +1116,21 @@ class AdvancedRecodePanel(QWidget):
         return self._last_valid
 
     def get_settings(self) -> dict:
-        video_args = self._effective_args("video") if self.rb_video_recode.isChecked() else None
-        passes = 2 if (video_args and self.rb_video_pass2.isChecked() and self.rb_video_pass2.isEnabled()) else 1
+        stream_mode = self._current_stream_mode()
+        video_args = self._effective_args("video") if (stream_mode != "audio_only" and self.rb_video_recode.isChecked()) else None
+        passes = 2 if (video_args and self.rb_video_pass2.isChecked() and self.rb_video_pass2.isEnabled() and stream_mode != "audio_only") else 1
 
         settings = {
+            "stream_mode": stream_mode,
             "video_mode": "copy" if self.rb_video_copy.isChecked() else "recode",
             "video_codec": self._current_video_codec(),
             "video_args": video_args,
             "video_passes": passes,
             "audio_mode": "copy" if self.rb_audio_copy.isChecked() else "recode",
             "audio_codec": self._current_audio_codec(),
-            "audio_args": self._effective_args("audio") if self.rb_audio_recode.isChecked() else None,
+            "audio_args": self._effective_args("audio") if (stream_mode != "video_only" and self.rb_audio_recode.isChecked()) else None,
             "container": self.combo_container.currentData(),
+            "audio_track_selection": self._current_audio_track_selection(),
         }
         if passes == 2:
             settings["video_args_pass1"] = build_pass_args(video_args, 1)

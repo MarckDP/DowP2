@@ -310,6 +310,145 @@ class AddLabelDialog(QDialog):
         }
 
 
+class SavePresetDialog(QDialog):
+    """Diálogo simple para pedir el nombre de un preset nuevo (ver gui.widgets.preset_bar.
+    PresetBar). Reemplaza al patrón anterior de escribir el nombre directo en el combo
+    -no tenía sentido tener que escribir dentro de un combo pensado para elegir de una
+    lista existente."""
+    def __init__(self, parent=None, existing_names=None):
+        super().__init__(parent)
+        self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setWindowTitle(self.tr("Guardar como preajuste"))
+        self.setFixedSize(360, 190)
+        self._existing_names = existing_names or []
+        self.result_name = None
+        self.init_ui()
+
+    def init_ui(self):
+        from gui.widgets.title_bar import CustomTitleBar
+        from gui.styles import get_theme_token
+
+        main_dialog_layout = QVBoxLayout(self)
+        main_dialog_layout.setContentsMargins(0, 0, 0, 0)
+        main_dialog_layout.setSpacing(0)
+
+        self.central_widget = QFrame()
+        self.central_widget.setObjectName("SavePresetDialogContainer")
+        self.central_widget.setStyleSheet(f"""
+            QFrame#SavePresetDialogContainer {{
+                background-color: {get_theme_token("fondo_secundario", "#1e1e1e")};
+                border: 1px solid {get_theme_token("borde", "#2d2d2d")};
+                border-radius: 6px;
+            }}
+            QLabel {{
+                color: {get_theme_token("texto_principal", "#ffffff")};
+                font-size: 12px;
+                border: none;
+                background: transparent;
+            }}
+            QLineEdit {{
+                background-color: {get_theme_token("fondo_principal", "#121212")};
+                color: {get_theme_token("texto_principal", "#ffffff")};
+                border: 1px solid {get_theme_token("borde", "#2d2d2d")};
+                border-radius: 6px;
+                padding: 6px;
+            }}
+            QPushButton#dialogButton {{
+                background-color: {get_theme_token("boton_secundario_fondo", "#1b3b22")};
+                color: {get_theme_token("boton_secundario_texto", "#B9E640")};
+                border: none;
+                border-radius: 6px;
+                padding: 6px 12px;
+                font-weight: bold;
+            }}
+            QPushButton#dialogButton:hover {{
+                background-color: {get_theme_token("boton_secundario_hover", "#224a2b")};
+            }}
+            QPushButton#dialogCancelButton {{
+                background-color: transparent;
+                color: #e74c3c;
+                border: 1px solid #e74c3c;
+                border-radius: 6px;
+                padding: 6px 12px;
+                font-weight: bold;
+            }}
+            QPushButton#dialogCancelButton:hover {{
+                background-color: rgba(231, 76, 60, 0.15);
+            }}
+        """)
+        main_dialog_layout.addWidget(self.central_widget)
+
+        central_layout = QVBoxLayout(self.central_widget)
+        central_layout.setContentsMargins(0, 0, 0, 0)
+        central_layout.setSpacing(0)
+
+        self.title_bar = CustomTitleBar(self, self.windowTitle())
+        self.title_bar.btn_min.hide()
+        self.title_bar.btn_max.hide()
+        self.title_bar.btn_close.clicked.disconnect()
+        self.title_bar.btn_close.clicked.connect(self.reject)
+        self.title_bar.setStyleSheet("""
+            CustomTitleBar {
+                background-color: #0d0d0d;
+                border-bottom: 1px solid #222222;
+                border-top-left-radius: 11px;
+                border-top-right-radius: 11px;
+            }
+        """)
+        central_layout.addWidget(self.title_bar)
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(16, 12, 16, 16)
+        layout.setSpacing(8)
+
+        self.lbl_name = QLabel(self.tr("Nombre del preajuste:"))
+        self.name_input = QLineEdit()
+        self.name_input.setPlaceholderText(self.tr("ej: ProRes Proxy"))
+        self.name_input.returnPressed.connect(self._on_save_clicked)
+        layout.addWidget(self.lbl_name)
+        layout.addWidget(self.name_input)
+
+        self.error_lbl = QLabel("")
+        self.error_lbl.setStyleSheet("color: #e74c3c; font-size: 11px;")
+        self.error_lbl.hide()
+        layout.addWidget(self.error_lbl)
+
+        actions_layout = QHBoxLayout()
+        self.btn_cancel = QPushButton(self.tr("Cancelar"))
+        self.btn_cancel.setObjectName("dialogCancelButton")
+        self.btn_cancel.clicked.connect(self.reject)
+
+        self.btn_save = QPushButton(self.tr("Guardar"))
+        self.btn_save.setObjectName("dialogButton")
+        self.btn_save.clicked.connect(self._on_save_clicked)
+
+        actions_layout.addStretch()
+        actions_layout.addWidget(self.btn_cancel)
+        actions_layout.addWidget(self.btn_save)
+        layout.addLayout(actions_layout)
+
+        central_layout.addLayout(layout)
+        self.name_input.setFocus()
+
+    def _on_save_clicked(self):
+        name = self.name_input.text().strip()
+        if not name:
+            self.error_lbl.setText(self.tr("El nombre no puede estar vacío."))
+            self.error_lbl.show()
+            return
+        if name in self._existing_names:
+            resp = show_warning_confirm(
+                self,
+                self.tr("Sobrescribir preset"),
+                self.tr("El preset '{0}' ya existe. ¿Sobrescribirlo?").format(name),
+            )
+            if not resp:
+                return
+        self.result_name = name
+        self.accept()
+
+
 class ColorSquare(QWidget):
     color_changed = Signal(int, int) # Sat, Val
 

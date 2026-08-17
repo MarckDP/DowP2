@@ -53,7 +53,7 @@ python main.py
 
 ## Tests
 
-**No existe suite de tests** (no hay `pytest`, carpeta `tests/`, ni configuración de linter/formateador). La verificación es manual: ejecutar la app y probar el flujo afectado. `prueba.py` en la raíz es un script de prueba aislado de Qt (QComboBox), no un test automatizado.
+**No existe suite de tests** (no hay `pytest`, carpeta `tests/`, ni configuración de linter/formateador). La verificación es manual: ejecutar la app y probar el flujo afectado. `scratch/prueba.py` es un script de prueba aislado de Qt (QComboBox), no un test automatizado.
 
 ## Estructura del código
 

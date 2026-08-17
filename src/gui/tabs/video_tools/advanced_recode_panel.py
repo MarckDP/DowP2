@@ -387,29 +387,6 @@ class AdvancedRecodePanel(QWidget):
             self.lbl_audio_channels = lbl_channels
             self.combo_audio_channels = channels_combo
 
-            # Selector de pistas de audio: solo visible cuando el archivo fuente tiene
-            # 2 o más pistas (ver _refresh_audio_tracks_combo, llamado desde
-            # set_source_media). Con una sola pista no aporta nada y quedaría oculto.
-            tracks_container = QWidget()
-            tracks_layout = QVBoxLayout(tracks_container)
-            tracks_layout.setContentsMargins(0, 0, 0, 4)
-            tracks_layout.setSpacing(8)
-
-            lbl_tracks = QLabel(self.tr("Pistas de audio:"))
-            lbl_tracks.setObjectName("menuLabel")
-            tracks_layout.addWidget(lbl_tracks)
-
-            tracks_combo = QComboBox()
-            self._setup_fixed_combo(tracks_combo)
-            tracks_layout.addWidget(tracks_combo)
-
-            v.addWidget(tracks_container)
-            self.widget_audio_tracks = tracks_container
-            self.lbl_audio_tracks = lbl_tracks
-            self.combo_audio_tracks = tracks_combo
-            tracks_container.setVisible(False)
-            tracks_combo.currentIndexChanged.connect(self._on_selection_changed)
-
         v.addStretch(1)
         return frame
 
@@ -738,7 +715,6 @@ class AdvancedRecodePanel(QWidget):
         self._source_meta = meta or None
         self._source_filepath = filepath
         self._update_source_info_label()
-        self._refresh_audio_tracks_combo()
         self._evaluate_and_render()
         self._update_size_estimate()
 
@@ -753,13 +729,6 @@ class AdvancedRecodePanel(QWidget):
         self.lbl_source_info.setText(
             self.tr("Archivo de origen: duración {0} | video {1} | audio {2}").format(dur, vcod, acod)
         )
-
-    def _current_audio_track_selection(self):
-        """None (comportamiento por defecto, sin -map explícito) | "all" | int (índice
-        relativo de audio). Ver combo_audio_tracks / _refresh_audio_tracks_combo."""
-        if not hasattr(self, "combo_audio_tracks") or not self.widget_audio_tracks.isVisible():
-            return None
-        return self.combo_audio_tracks.currentData()
 
     def _source_codec(self, prefix: str):
         if not self._source_meta:
@@ -977,68 +946,10 @@ class AdvancedRecodePanel(QWidget):
         finally:
             self._building = False
 
-    def _refresh_audio_tracks_combo(self):
-        """Puebla el combo 'Pistas de audio' con las pistas del archivo fuente (ver
-        set_source_media / ffprobe_metadata_manager.py). Se oculta solo si hay 0 o 1
-        pista, que es el caso más común - ahí no hay nada que elegir."""
-        if not hasattr(self, "combo_audio_tracks"):
-            return
-        streams = (self._source_meta or {}).get("audio_streams", [])
-        combo = self.combo_audio_tracks
-
-        self._building = True
-        try:
-            combo.clear()
-            if len(streams) <= 1:
-                self.widget_audio_tracks.setVisible(False)
-                return
-
-            combo.addItem(self.tr("Todas las pistas"), "all")
-            for i, st in enumerate(streams):
-                parts = [st.get("codec") or "?"]
-                if st.get("channels"):
-                    parts.append(f"{st['channels']}ch")
-                if st.get("language"):
-                    parts.append(st["language"])
-                combo.addItem(self.tr("Pista {0}: {1}").format(i + 1, ", ".join(parts)), i)
-
-            # Por defecto se elige la primera pista sola (no "Todas"), para no cambiar
-            # el tamaño/comportamiento de salida esperado sin que el usuario lo pida.
-            combo.setCurrentIndex(1)
-            self.widget_audio_tracks.setVisible(True)
-        finally:
-            self._building = False
-        self._apply_container_audio_track_limits(self.combo_container.currentData())
-
-    def _apply_container_audio_track_limits(self, container_id: str | None):
-        """Deshabilita 'Todas las pistas' si el contenedor elegido es de stream elemental
-        (ver _SINGLE_AUDIO_STREAM_CONTAINERS) - esos nunca pueden llevar más de una pista
-        de audio, sin importar el códec."""
-        if not hasattr(self, "combo_audio_tracks"):
-            return
-        combo = self.combo_audio_tracks
-        if combo.count() == 0:
-            return
-
-        blocked = container_id in _SINGLE_AUDIO_STREAM_CONTAINERS
-        model = combo.model()
-        all_item = model.item(0)  # "Todas las pistas" siempre es el primer item
-        if not all_item:
-            return
-
-        all_item.setEnabled(not blocked)
-        if blocked and combo.currentData() == "all" and combo.count() > 1:
-            self._building = True
-            try:
-                combo.setCurrentIndex(1)
-            finally:
-                self._building = False
-
     def _evaluate_and_render(self):
         self._clear_messages()
         container_id = self.combo_container.currentData()
         self._refresh_audio_channel_options(container_id)
-        self._apply_container_audio_track_limits(container_id)
 
         if not container_id:
             self._add_message("unverified", self.tr("No hay ningún contenedor compatible con la combinación de codecs elegida."))
@@ -1130,7 +1041,6 @@ class AdvancedRecodePanel(QWidget):
             "audio_codec": self._current_audio_codec(),
             "audio_args": self._effective_args("audio") if (stream_mode != "video_only" and self.rb_audio_recode.isChecked()) else None,
             "container": self.combo_container.currentData(),
-            "audio_track_selection": self._current_audio_track_selection(),
         }
         if passes == 2:
             settings["video_args_pass1"] = build_pass_args(video_args, 1)

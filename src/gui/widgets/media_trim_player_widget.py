@@ -6,7 +6,7 @@ import array
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit,
     QFrame, QSizePolicy, QScrollArea, QSlider, QGraphicsView, QGraphicsScene,
-    QToolButton, QMenu
+    QToolButton, QMenu, QCheckBox
 )
 from PySide6.QtCore import Qt, QUrl, QSize, QSizeF, QPointF, QTimer, Signal, QEvent, QRectF
 from PySide6.QtGui import QPainter, QColor, QPen, QPainterPath, QPixmap, QImage
@@ -862,6 +862,48 @@ class MediaTrimPlayerWidget(QWidget):
         zoom_bar.addWidget(self.slider_zoom_y)
 
         zoom_bar.addStretch()
+
+        # Controles de multipista a la derecha de la barra de zoom
+        self.btn_audio_track = QToolButton()
+        self.btn_audio_track.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        self.btn_audio_track.setPopupMode(QToolButton.InstantPopup)
+        self.btn_audio_track.setCursor(Qt.PointingHandCursor)
+        self.btn_audio_track.setToolTip(self.tr("Seleccionar pista de audio para previsualización"))
+        self.btn_audio_track.setFixedHeight(22)
+        self.btn_audio_track.setStyleSheet("""
+            QToolButton {
+                background-color: rgba(30, 30, 30, 220);
+                border: 1px solid #444;
+                border-radius: 4px;
+                color: #cdd6f4;
+                font-size: 11px;
+                font-weight: 500;
+                padding: 2px 8px;
+            }
+            QToolButton:hover {
+                background-color: rgba(185, 230, 64, 30);
+                color: #B9E640;
+                border-color: #B9E640;
+            }
+            QToolButton::menu-indicator { image: none; }
+        """)
+        self.audio_track_menu = QMenu(self.btn_audio_track)
+        self.btn_audio_track.setMenu(self.audio_track_menu)
+        self.btn_audio_track.setVisible(False)
+        zoom_bar.addWidget(self.btn_audio_track)
+
+        zoom_bar.addSpacing(6)
+
+        self.chk_all_tracks = QCheckBox(self.tr("Procesar todas las pistas"))
+        self.chk_all_tracks.setChecked(True)
+        self.chk_all_tracks.setCursor(Qt.PointingHandCursor)
+        self.chk_all_tracks.setToolTip(
+            self.tr("Si está marcado, se procesarán y conservarán todas las pistas de audio del archivo. "
+                    "Si se desmarca, solo se procesará la pista seleccionada.")
+        )
+        self.chk_all_tracks.setVisible(False)
+        zoom_bar.addWidget(self.chk_all_tracks)
+
         timeline_waveform_col.addLayout(zoom_bar)
 
         # 2. Regla de tiempo (Timeline Ruler) — alineada únicamente sobre la waveform
@@ -896,39 +938,7 @@ class MediaTrimPlayerWidget(QWidget):
         self.waveform_widget.range_changed.connect(self._on_waveform_range_changed)
         self.scroll_area.setWidget(self.waveform_widget)
 
-        # Envoltorio del scroll_area para el selector flotante de pista de audio
-        wave_wrapper = QWidget()
-        wave_wrapper_layout = QVBoxLayout(wave_wrapper)
-        wave_wrapper_layout.setContentsMargins(0, 0, 0, 0)
-        wave_wrapper_layout.addWidget(self.scroll_area)
-
-        self.btn_audio_track = QToolButton(wave_wrapper)
-        self.btn_audio_track.setToolButtonStyle(Qt.ToolButtonTextOnly)
-        self.btn_audio_track.setPopupMode(QToolButton.InstantPopup)
-        self.btn_audio_track.setCursor(Qt.PointingHandCursor)
-        self.btn_audio_track.setToolTip(self.tr("Seleccionar pista de audio"))
-        self.btn_audio_track.setFixedHeight(20)
-        self.btn_audio_track.setStyleSheet("""
-            QToolButton {
-                background-color: rgba(20, 20, 20, 200);
-                border: 1px solid #444;
-                border-radius: 6px;
-                color: #cdd6f4;
-                font-size: 10px;
-                font-weight: bold;
-                padding: 2px 6px;
-            }
-            QToolButton:hover { background-color: rgba(185, 230, 64, 200); color: #141414; border-color: #B9E640; }
-            QToolButton::menu-indicator { image: none; }
-        """)
-        self.audio_track_menu = QMenu(self.btn_audio_track)
-        self.btn_audio_track.setMenu(self.audio_track_menu)
-        self.btn_audio_track.setVisible(False)
-        self.btn_audio_track.move(6, 6)
-        self.btn_audio_track.adjustSize()
-        self.btn_audio_track.raise_()
-
-        timeline_waveform_col.addWidget(wave_wrapper)
+        timeline_waveform_col.addWidget(self.scroll_area)
         wave_container.addLayout(timeline_waveform_col, 1)
 
         self.scroll_area.viewport().installEventFilter(self)
@@ -1063,6 +1073,7 @@ class MediaTrimPlayerWidget(QWidget):
         self._first_frame_rendered = False
         self._active_audio_track = 0
         self.btn_audio_track.setVisible(False)
+        self.chk_all_tracks.setVisible(False)
         self.audio_track_menu.clear()
 
         # Calidad de previsualización: se reinicia por archivo, pero el modo elegido por el
@@ -1115,6 +1126,10 @@ class MediaTrimPlayerWidget(QWidget):
         self.waveform_widget.set_audio_path("")
         self.waveform_widget.set_saved_subclip_ratios([])
         self.lbl_time_info.setText("00:00:00 / 00:00:00")
+        if hasattr(self, "btn_audio_track"):
+            self.btn_audio_track.setVisible(False)
+        if hasattr(self, "chk_all_tracks"):
+            self.chk_all_tracks.setVisible(False)
 
     def set_fps(self, fps: float):
         if fps and fps > 0:
@@ -1400,12 +1415,15 @@ class MediaTrimPlayerWidget(QWidget):
     # Selección de pista de audio (medios multipista)
     # ------------------------------------------------------------------
     def _rebuild_audio_track_menu(self):
-        """Reconstruye el menú de pistas de audio disponibles; el botón solo se muestra
-        cuando el medio tiene más de una pista (caso normal: se queda oculto)."""
+        """Reconstruye el menú de pistas de audio disponibles; los controles multipista
+        solo se muestran cuando el medio tiene más de una pista (caso normal: quedan ocultos)."""
         tracks = self.media_player.audioTracks()
         count = len(tracks)
         if count <= 1:
-            self.btn_audio_track.setVisible(False)
+            if hasattr(self, "btn_audio_track"):
+                self.btn_audio_track.setVisible(False)
+            if hasattr(self, "chk_all_tracks"):
+                self.chk_all_tracks.setVisible(False)
             return
 
         active = self.media_player.activeAudioTrack()
@@ -1424,7 +1442,7 @@ class MediaTrimPlayerWidget(QWidget):
         self.btn_audio_track.setText(f"{self.tr('Pista')} {active + 1} ▾")
         self.btn_audio_track.adjustSize()
         self.btn_audio_track.setVisible(True)
-        self.btn_audio_track.raise_()
+        self.chk_all_tracks.setVisible(True)
         if track_changed:
             # QMediaPlayer tarda en detectar las pistas del medio (tracksChanged es
             # asíncrono), así que load_waveform() ya pudo haber pedido la extracción para la
@@ -1459,6 +1477,22 @@ class MediaTrimPlayerWidget(QWidget):
             action.setChecked(i == index)
         # La waveform y el medidor reflejan la pista seleccionada: volver a extraerla.
         self.load_waveform()
+
+    def get_audio_track_selection(self) -> str | int | None:
+        """Retorna la selección de pistas de audio para el trabajo de recodificación:
+        - None: Si el medio tiene solo 1 pista o no es multipista.
+        - 'all': Si tiene multipista y 'Procesar todas las pistas' está marcado.
+        - int (0-based): Si tiene multipista y se debe procesar solo la pista activa seleccionada.
+        """
+        if not hasattr(self, "chk_all_tracks") or not self.chk_all_tracks.isVisible():
+            return None
+        if self.chk_all_tracks.isChecked():
+            return "all"
+        return self._active_audio_track
+
+    def has_multiple_audio_tracks(self) -> bool:
+        """Indica si el medio actualmente cargado tiene 2 o más pistas de audio."""
+        return hasattr(self, "chk_all_tracks") and self.chk_all_tracks.isVisible()
 
     def eventFilter(self, obj, event):
         if not hasattr(self, "scroll_area") or self.scroll_area is None:

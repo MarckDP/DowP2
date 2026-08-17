@@ -225,7 +225,8 @@ def load_stylesheet(theme_name: str = "dark") -> str:
     tokens["icono_spinbox_plus"] = _generate_spinbox_symbol_svg("plus", triangle_color)
     tokens["icono_spinbox_minus"] = _generate_spinbox_symbol_svg("minus", triangle_color)
     tokens["icono_radio_checked"] = _generate_radio_checked_svg(triangle_color)
-    tokens["icono_checkbox_checked"] = _generate_checkbox_checked_svg(triangle_color)
+    check_icon_color = tokens.get("boton_texto", "#000000")
+    tokens["icono_checkbox_checked"] = _generate_checkbox_checked_svg(check_icon_color)
     
     # 4. Reemplazar todas las {{variables}}
     result = template

@@ -525,7 +525,14 @@ class QueueWorker(QThread):
             return
 
         # Construir comando FFmpeg
-        cmd = [ffmpeg_exe, "-y", "-i", input_file]
+        cmd = [ffmpeg_exe, "-y"]
+        trim_in = settings.get("trim_in_sec")
+        trim_out = settings.get("trim_out_sec")
+        if trim_in is not None and trim_in > 0:
+            cmd.extend(["-ss", f"{trim_in:.3f}"])
+        if trim_out is not None and trim_out > 0:
+            cmd.extend(["-to", f"{trim_out:.3f}"])
+        cmd.extend(["-i", input_file])
 
         stream_mode = settings.get("stream_mode", "video+audio")
 

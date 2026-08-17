@@ -33,6 +33,18 @@ QLineEdit, QPushButton, QFrame, QListWidget, QComboBox, QSpinBox, QDoubleSpinBox
 }
 
 /* ═══════════════════════════════════════════
+   TOOLTIPS GLOBALES
+   ═══════════════════════════════════════════ */
+QToolTip {
+    background-color: {{fondo_terciario}};
+    color: {{texto_activo}};
+    border: 1px solid {{borde_sutil}};
+    border-radius: 6px;
+    padding: 5px 9px;
+    font-size: 11px;
+}
+
+/* ═══════════════════════════════════════════
    INPUT — URL / Texto
    ═══════════════════════════════════════════ */
 
@@ -504,14 +516,14 @@ QCheckBox::indicator:hover {
 }
 
 QCheckBox::indicator:checked {
-    border: 1.5px solid {{acento_primario}};
-    background-color: {{fondo_elemento}};
+    border: 1.5px solid {{checkbox_checked}};
+    background-color: {{checkbox_checked}};
     image: url({{icono_checkbox_checked}});
 }
 
 QCheckBox::indicator:checked:hover {
-    border-color: {{acento_primario}};
-    background-color: {{fondo_elemento}};
+    border: 1.5px solid {{acento_primario}};
+    background-color: {{checkbox_checked}};
     image: url({{icono_checkbox_checked}});
 }
 
@@ -891,29 +903,6 @@ QProgressBar#downloadProgressBar[status="running"]::chunk {
     border-radius: 6px;
 }
 
-/* ═══════════════════════════════════════════
-   CHECKBOX (Casillas)
-   ═══════════════════════════════════════════ */
-
-QCheckBox {
-    spacing: 8px;
-    color: {{texto_principal}};
-    padding-right: 8px;
-}
-
-QCheckBox::indicator {
-    width: 18px;
-    height: 18px;
-    background-color: {{checkbox_fondo}};
-    border: 1px solid {{checkbox_borde}};
-    border-radius: 4px;
-}
-
-QCheckBox::indicator:checked {
-    background-color: {{checkbox_checked}};
-    border: 1px solid {{checkbox_checked}};
-    /* Un pequeño punto o check dibujado por qt, o simplemente un bloque de color */
-}
 
 /* ═══════════════════════════════════════════
    MODE SELECTOR (Selector animado)

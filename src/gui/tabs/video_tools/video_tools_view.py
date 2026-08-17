@@ -403,10 +403,27 @@ class VideoToolsTab(QWidget):
             meta = FFprobeMetadataManager.get_instance().get_metadata_instant(filepath, media_type)
             duration_sec = self._parse_duration_to_seconds(meta.get("duración", "0"))
             
+            file_settings = dict(settings)
+            
+            # Selección de pistas para medios multipista (definida antes del preset en la fuente):
+            if filepath == self.current_preview_file:
+                track_sel = self.preview_widget.get_audio_track_selection()
+                if track_sel is not None:
+                    file_settings["audio_track_selection"] = track_sel
+                in_sec, out_sec = self.preview_widget.get_in_out()
+                if in_sec > 0.05 or (duration_sec > 0 and out_sec < (duration_sec - 0.05)):
+                    file_settings["trim_in_sec"] = in_sec
+                    file_settings["trim_out_sec"] = out_sec
+            else:
+                streams = meta.get("audio_streams", [])
+                if len(streams) > 1:
+                    preview_sel = self.preview_widget.get_audio_track_selection()
+                    file_settings["audio_track_selection"] = preview_sel if preview_sel is not None else "all"
+
             config = {
                 "input_path": filepath,
                 "output_path": out_file,
-                "settings": settings,
+                "settings": file_settings,
                 "duration_sec": duration_sec,
                 "title": f"Recode: {base_name}"
             }

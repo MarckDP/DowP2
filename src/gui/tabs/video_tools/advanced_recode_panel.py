@@ -335,6 +335,77 @@ class AdvancedRecodePanel(QWidget):
         cq_spin.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
         custom_layout.addWidget(cq_spin)
 
+        if is_video:
+            gif_container = QWidget(custom_container)
+            gif_layout = QVBoxLayout(gif_container)
+            gif_layout.setContentsMargins(0, 0, 0, 0)
+            gif_layout.setSpacing(4)
+
+            lbl_dither = QLabel(self.tr("Difuminado (Dither):"), gif_container)
+            lbl_dither.setObjectName("menuLabel")
+            gif_layout.addWidget(lbl_dither)
+
+            combo_dither = QComboBox(gif_container)
+            self._setup_fixed_combo(combo_dither)
+            combo_dither.addItem(self.tr("Floyd-Steinberg (Suave, estándar)"), "floyd_steinberg")
+            combo_dither.addItem(self.tr("Bayer (Geométrico, liviano)"), "bayer")
+            combo_dither.addItem(self.tr("Sierra2_4a (Equilibrado)"), "sierra2_4a")
+            combo_dither.addItem(self.tr("Sierra2"), "sierra2")
+            combo_dither.addItem(self.tr("Sin Difuminado (Colores planos)"), "none")
+            gif_layout.addWidget(combo_dither)
+
+            lbl_stats = QLabel(self.tr("Generación de Paleta:"), gif_container)
+            lbl_stats.setObjectName("menuLabel")
+            gif_layout.addWidget(lbl_stats)
+
+            combo_stats = QComboBox(gif_container)
+            self._setup_fixed_combo(combo_stats)
+            combo_stats.addItem(self.tr("Global / Todo el clip (full)"), "full")
+            combo_stats.addItem(self.tr("Zonas en movimiento (diff)"), "diff")
+            combo_stats.addItem(self.tr("Por Fotograma (single)"), "single")
+            gif_layout.addWidget(combo_stats)
+
+            lbl_colors = QLabel(self.tr("Máximo de Colores:"), gif_container)
+            lbl_colors.setObjectName("menuLabel")
+            gif_layout.addWidget(lbl_colors)
+
+            combo_colors = QComboBox(gif_container)
+            self._setup_fixed_combo(combo_colors)
+            combo_colors.addItem(self.tr("256 colores (Máximo)"), 256)
+            combo_colors.addItem(self.tr("128 colores"), 128)
+            combo_colors.addItem(self.tr("64 colores"), 64)
+            combo_colors.addItem(self.tr("32 colores"), 32)
+            combo_colors.addItem(self.tr("16 colores"), 16)
+            gif_layout.addWidget(combo_colors)
+
+            lbl_fps = QLabel(self.tr("Cuadros por Segundo (FPS):"), gif_container)
+            lbl_fps.setObjectName("menuLabel")
+            gif_layout.addWidget(lbl_fps)
+
+            combo_fps = QComboBox(gif_container)
+            self._setup_fixed_combo(combo_fps)
+            combo_fps.addItem(self.tr("Original (Sin cambios)"), None)
+            combo_fps.addItem(self.tr("30 FPS (Fluido)"), 30)
+            combo_fps.addItem(self.tr("24 FPS (Cinemático)"), 24)
+            combo_fps.addItem(self.tr("20 FPS"), 20)
+            combo_fps.addItem(self.tr("15 FPS (Recomendado para GIF)"), 15)
+            combo_fps.addItem(self.tr("12 FPS (Ligero)"), 12)
+            combo_fps.addItem(self.tr("10 FPS (Máximo ahorro)"), 10)
+            gif_layout.addWidget(combo_fps)
+
+            custom_layout.addWidget(gif_container)
+            gif_container.setVisible(False)
+            self.widget_video_gif_custom = gif_container
+            self.combo_video_gif_dither = combo_dither
+            self.combo_video_gif_stats = combo_stats
+            self.combo_video_gif_colors = combo_colors
+            self.combo_video_gif_fps = combo_fps
+
+            combo_dither.currentIndexChanged.connect(self._update_size_estimate)
+            combo_stats.currentIndexChanged.connect(self._update_size_estimate)
+            combo_colors.currentIndexChanged.connect(self._update_size_estimate)
+            combo_fps.currentIndexChanged.connect(self._update_size_estimate)
+
         v.addWidget(custom_container)
         custom_container.setVisible(False)
 
@@ -427,6 +498,31 @@ class AdvancedRecodePanel(QWidget):
             self.widget_audio_channels = channels_container
             self.lbl_audio_channels = lbl_channels
             self.combo_audio_channels = channels_combo
+
+            samplerate_container = QWidget(frame)
+            samplerate_layout = QVBoxLayout(samplerate_container)
+            samplerate_layout.setContentsMargins(0, 0, 0, 4)
+            samplerate_layout.setSpacing(8)
+
+            lbl_samplerate = QLabel(self.tr("Velocidad de muestreo:"), samplerate_container)
+            lbl_samplerate.setObjectName("menuLabel")
+            samplerate_layout.addWidget(lbl_samplerate)
+
+            samplerate_combo = QComboBox(samplerate_container)
+            self._setup_fixed_combo(samplerate_combo)
+            samplerate_combo.addItem(self.tr("Igual al original"), "")
+            samplerate_combo.addItem("48000 Hz", "48000")
+            samplerate_combo.addItem("44100 Hz", "44100")
+            samplerate_combo.addItem("32000 Hz", "32000")
+            samplerate_combo.addItem("24000 Hz", "24000")
+            samplerate_combo.addItem("22050 Hz", "22050")
+            samplerate_combo.addItem("16000 Hz", "16000")
+            samplerate_layout.addWidget(samplerate_combo)
+
+            v.addWidget(samplerate_container)
+            self.widget_audio_samplerate = samplerate_container
+            self.lbl_audio_samplerate = lbl_samplerate
+            self.combo_audio_samplerate = samplerate_combo
 
         v.addStretch(1)
         return frame
@@ -593,6 +689,8 @@ class AdvancedRecodePanel(QWidget):
         self.combo_audio_profile.setEnabled(audio_recode)
         if hasattr(self, "combo_audio_channels"):
             self.combo_audio_channels.setEnabled(audio_recode)
+        if hasattr(self, "combo_audio_samplerate"):
+            self.combo_audio_samplerate.setEnabled(audio_recode)
 
         self._relayout_cards()
         self._update_engine_label()
@@ -687,16 +785,34 @@ class AdvancedRecodePanel(QWidget):
         bitrate_spin = getattr(self, f"spin_{prefix}_bitrate")
         cq_spin = getattr(self, f"spin_{prefix}_cq")
         lbl_custom = getattr(self, f"lbl_{prefix}_custom")
+        widget_gif_custom = getattr(self, "widget_video_gif_custom", None)
 
+        is_gif_custom = (prefix == "video" and custom_type == "gif")
         custom_container.setVisible(bool(custom_type))
-        if custom_type == "cq":
+
+        if is_gif_custom:
+            lbl_custom.setVisible(False)
+            bitrate_spin.setVisible(False)
+            cq_spin.setVisible(False)
+            if widget_gif_custom:
+                widget_gif_custom.setVisible(True)
+        elif custom_type == "cq":
+            lbl_custom.setVisible(True)
             lbl_custom.setText(self.tr("Nivel de calidad (CRF/CQ):"))
             bitrate_spin.setVisible(False)
             cq_spin.setVisible(True)
+            if widget_gif_custom:
+                widget_gif_custom.setVisible(False)
         elif custom_type in ("vbr", "cbr", "audio_bitrate"):
+            lbl_custom.setVisible(True)
             lbl_custom.setText(self.tr("Bitrate objetivo:"))
             bitrate_spin.setVisible(True)
             cq_spin.setVisible(False)
+            if widget_gif_custom:
+                widget_gif_custom.setVisible(False)
+        else:
+            if widget_gif_custom:
+                widget_gif_custom.setVisible(False)
 
         if prefix == "video":
             self._update_two_pass_visibility()
@@ -733,7 +849,14 @@ class AdvancedRecodePanel(QWidget):
         args = []
         if custom_type:
             encoder = self._effective_encoder(prefix, codec_id)
-            if custom_type == "cq":
+            if custom_type == "gif":
+                from core.tabs.video_tools.codec_profiles import build_custom_gif_args
+                dither = self.combo_video_gif_dither.currentData() if hasattr(self, "combo_video_gif_dither") else "floyd_steinberg"
+                stats = self.combo_video_gif_stats.currentData() if hasattr(self, "combo_video_gif_stats") else "full"
+                colors = self.combo_video_gif_colors.currentData() if hasattr(self, "combo_video_gif_colors") else 256
+                fps = self.combo_video_gif_fps.currentData() if hasattr(self, "combo_video_gif_fps") else None
+                args = build_custom_gif_args(dither=dither or "floyd_steinberg", stats_mode=stats or "full", max_colors=colors or 256, fps=fps)
+            elif custom_type == "cq":
                 from core.tabs.video_tools.codec_profiles import build_custom_quality_args
                 cq_val = getattr(self, f"spin_{prefix}_cq").value()
                 args = build_custom_quality_args(encoder, cq_val)
@@ -748,10 +871,15 @@ class AdvancedRecodePanel(QWidget):
         else:
             args = list(profile["args"])
             
-        if prefix == "audio" and hasattr(self, "combo_audio_channels"):
-            channels = self.combo_audio_channels.currentData()
-            if channels:
-                args.extend(["-ac", channels])
+        if prefix == "audio":
+            if hasattr(self, "combo_audio_channels"):
+                channels = self.combo_audio_channels.currentData()
+                if channels:
+                    args.extend(["-ac", channels])
+            if hasattr(self, "combo_audio_samplerate"):
+                sr = self.combo_audio_samplerate.currentData()
+                if sr:
+                    args.extend(["-ar", sr])
                 
         return args
 
@@ -1110,18 +1238,20 @@ class AdvancedRecodePanel(QWidget):
 
     def get_settings(self) -> dict:
         stream_mode = self._current_stream_mode()
+        v_codec = self._current_video_codec()
+        is_gif = (v_codec == "gif" and self.rb_video_recode.isChecked())
         video_args = self._effective_args("video") if (stream_mode != "audio_only" and self.rb_video_recode.isChecked()) else None
-        passes = 2 if (video_args and self.rb_video_pass2.isChecked() and self.rb_video_pass2.isEnabled() and stream_mode != "audio_only") else 1
+        passes = 2 if (video_args and self.rb_video_pass2.isChecked() and self.rb_video_pass2.isEnabled() and stream_mode != "audio_only" and not is_gif) else 1
 
         settings = {
             "stream_mode": stream_mode,
             "video_mode": "copy" if self.rb_video_copy.isChecked() else "recode",
-            "video_codec": self._current_video_codec(),
+            "video_codec": v_codec,
             "video_args": video_args,
             "video_passes": passes,
             "audio_mode": "copy" if self.rb_audio_copy.isChecked() else "recode",
-            "audio_codec": self._current_audio_codec(),
-            "audio_args": self._effective_args("audio") if (stream_mode != "video_only" and self.rb_audio_recode.isChecked()) else None,
+            "audio_codec": self._current_audio_codec() if not is_gif else None,
+            "audio_args": self._effective_args("audio") if (stream_mode != "video_only" and self.rb_audio_recode.isChecked() and not is_gif) else None,
             "container": self.combo_container.currentData(),
         }
         if passes == 2:

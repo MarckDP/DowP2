@@ -164,6 +164,13 @@ VIDEO_ENCODER_PROFILES = {
         {"label": "DNxHR HQX (10-bit 4:2:2)", "args": ["-c:v", "dnxhd", "-profile:v", "dnxhr_hqx", "-pix_fmt", "yuv422p10le"]},
         {"label": "DNxHR 444 (10-bit 4:4:4)", "args": ["-c:v", "dnxhd", "-profile:v", "dnxhr_444", "-pix_fmt", "yuv444p10le"]},
     ],
+    "gif": [
+        {"label": "Calidad Alta", "args": ["-vf", "split[s0][s1];[s0]palettegen=stats_mode=full:max_colors=256[p];[s1][p]paletteuse=dither=floyd_steinberg", "-c:v", "gif", "-loop", "0"]},
+        {"label": "Calidad Media", "args": ["-vf", "split[s0][s1];[s0]palettegen=stats_mode=full:max_colors=256[p];[s1][p]paletteuse=dither=bayer:bayer_scale=2", "-c:v", "gif", "-loop", "0"]},
+        {"label": "Calidad Baja", "args": ["-vf", "fps=15,scale=480:-1:flags=lanczos,split[s0][s1];[s0]palettegen=stats_mode=full:max_colors=128[p];[s1][p]paletteuse=dither=bayer:bayer_scale=2", "-c:v", "gif", "-loop", "0"]},
+        {"label": "Calidad Rápida", "args": ["-vf", "fps=12,scale=480:-1:flags=lanczos", "-c:v", "gif", "-loop", "0"]},
+        {"label": "Personalizado (GIF)", "custom": "gif"},
+    ],
 }
 
 AUDIO_ENCODER_PROFILES = {
@@ -309,6 +316,21 @@ def build_custom_audio_bitrate_args(encoder: str, bitrate_kbps: int) -> list[str
     Arma los flags de ffmpeg para un bitrate de audio elegido a mano.
     """
     return ["-c:a", encoder, "-b:a", f"{bitrate_kbps}k"]
+
+
+def build_custom_gif_args(dither: str = "floyd_steinberg", stats_mode: str = "full", max_colors: int = 256, fps: int | float | None = None) -> list[str]:
+    """
+    Arma los flags de ffmpeg para un GIF animado con paleta, dithering y FPS personalizados.
+    """
+    max_colors = max(2, min(256, int(max_colors)))
+    palettegen_opts = f"stats_mode={stats_mode}:max_colors={max_colors}"
+    paletteuse_opts = f"dither={dither}"
+    if dither == "bayer":
+        paletteuse_opts += ":bayer_scale=2"
+    
+    fps_prefix = f"fps={fps}," if (fps and float(fps) > 0) else ""
+    vf_filter = f"{fps_prefix}split[s0][s1];[s0]palettegen={palettegen_opts}[p];[s1][p]paletteuse={paletteuse_opts}"
+    return ["-vf", vf_filter, "-c:v", "gif", "-loop", "0"]
 
 
 def extract_bitrate_kbps(args: list[str], flag: str = "-b:v") -> float | None:

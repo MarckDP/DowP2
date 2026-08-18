@@ -565,7 +565,8 @@ class QueueWorker(QThread):
                     cmd.extend(["-c:v", "libx264", "-crf", "23"])
 
         # Opciones de Audio
-        if stream_mode == "video_only":
+        is_gif = (settings.get("video_codec") == "gif" or settings.get("container") == "gif")
+        if stream_mode == "video_only" or is_gif:
             cmd.append("-an")
         else:
             if audio_track_selection == "all":

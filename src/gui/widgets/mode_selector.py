@@ -6,8 +6,8 @@ from core.logger.logger_manager import logger
 class ModeSelector(QFrame):
     mode_changed = Signal(str)
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, parent=None):
+        super().__init__(parent)
         self.init_ui()
 
     def init_ui(self):
@@ -24,9 +24,9 @@ class ModeSelector(QFrame):
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(0)
         
-        self.btn_video_audio = QPushButton(self.tr("Video + Audio"))
-        self.btn_audio = QPushButton(self.tr("Solo Audio"))
-        self.btn_video = QPushButton(self.tr("Solo Video"))
+        self.btn_video_audio = QPushButton(self.tr("Video + Audio"), self)
+        self.btn_audio = QPushButton(self.tr("Solo Audio"), self)
+        self.btn_video = QPushButton(self.tr("Solo Video"), self)
 
         self.buttons = [self.btn_video_audio, self.btn_audio, self.btn_video]
         for btn in self.buttons:

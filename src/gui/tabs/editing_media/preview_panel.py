@@ -69,7 +69,7 @@ class PreviewContainerWidget(QFrame):
         
         if MULTIMEDIA_AVAILABLE:
             try:
-                self.video_widget = QVideoWidget()
+                self.video_widget = QVideoWidget(self)
                 self.video_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
                 self.video_widget.setVisible(False)
                 self.layout.addWidget(self.video_widget)

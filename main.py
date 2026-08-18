@@ -26,50 +26,55 @@ __version__ = "2.0.0"
 from PySide6.QtCore import QObject, QEvent, Qt
 from PySide6.QtWidgets import QPushButton, QCheckBox, QRadioButton, QComboBox, QTabBar, QStyledItemDelegate
 
+
 class _ComboPopupMaskFilter(QObject):
     """Mantiene la máscara del contenedor del popup (QComboBoxPrivateContainer) sincronizada
-    con su tamaño en cada resize.
+    con su tamaño en cada resize o show.
 
     Qt solo pinta el panel nativo opaco de menú (QStyle::PE_PanelMenu, reservado para los
-    indicadores de scroll arriba/abajo) cuando `mask().isEmpty()` es verdadero — ver
-    QComboBoxPrivateContainer::paintEvent en qcombobox.cpp. Ese panel se dibuja directamente
-    con QPainter, así que ignora el `background: transparent` del QSS y WA_TranslucentBackground,
-    y aparece como una franja opaca sobre/bajo la lista. Asignarle cualquier máscara no vacía
-    (aquí, su propio rect) hace que Qt se salte ese dibujado por completo."""
+    indicadores de scroll arriba/abajo) cuando `mask().isEmpty()` es verdadero.
+    Asignarle cualquier máscara no vacía (su propio rect) hace que Qt se salte ese dibujado por completo."""
 
     def eventFilter(self, obj, event):
-        if event.type() == QEvent.Type.Resize:
+        if event.type() in (QEvent.Type.Resize, QEvent.Type.Show):
             obj.setMask(obj.rect())
         return False
 
 
+_DEFAULT_COMBO_DELEGATE_TYPE = None
+
 class HandCursorInstaller(QObject):
     """Instala cursor pointer en widgets interactivos y garantiza QStyledItemDelegate
-    en QComboBoxes para soporte de hover y selección visual vía QSS."""
+    y máscara de recorte sin bordes nativos en QComboBoxes para soporte de hover y selección visual vía QSS."""
     _TARGET_TYPES = (QPushButton, QCheckBox, QRadioButton, QComboBox, QTabBar)
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        global _DEFAULT_COMBO_DELEGATE_TYPE
+        if _DEFAULT_COMBO_DELEGATE_TYPE is None:
+            _DEFAULT_COMBO_DELEGATE_TYPE = type(QComboBox().itemDelegate())
         self._mask_filter = _ComboPopupMaskFilter(self)
 
+    def _setup_combo(self, combo: QComboBox):
+        if type(combo.itemDelegate()) is _DEFAULT_COMBO_DELEGATE_TYPE:
+            combo.setItemDelegate(QStyledItemDelegate(combo))
+        if combo.view() and combo.view().window():
+            container = combo.view().window()
+            container.setAttribute(Qt.WA_TranslucentBackground, True)
+            container.setWindowFlags(Qt.Popup | Qt.FramelessWindowHint | Qt.NoDropShadowWindowHint)
+            container.installEventFilter(self._mask_filter)
+
     def eventFilter(self, obj, event):
-        if event.type() == QEvent.Type.ChildAdded:
+        ev_type = event.type()
+        if ev_type == QEvent.Type.ChildAdded:
             child = event.child()
             if isinstance(child, QComboBox):
-                # Si no tiene un delegate customizado (ej: RichTextDelegate), asignar QStyledItemDelegate
-                # para habilitar feedback visual de hover/selección en el menú desplegable QSS.
-                if child.itemDelegate().__class__ == QComboBox().itemDelegate().__class__:
-                    child.setItemDelegate(QStyledItemDelegate(child))
-                # Transparencia y frameless en la ventana popup del menú desplegable
-                # para eliminar bordes y filos cuadrados nativos detrás del border-radius QSS
-                if child.view() and child.view().window():
-                    container = child.view().window()
-                    container.setAttribute(Qt.WA_TranslucentBackground, True)
-                    container.setWindowFlags(Qt.Popup | Qt.FramelessWindowHint | Qt.NoDropShadowWindowHint)
-                    container.installEventFilter(self._mask_filter)
-                    container.setMask(container.rect())
+                self._setup_combo(child)
             if isinstance(child, self._TARGET_TYPES):
                 child.setCursor(Qt.PointingHandCursor)
+        elif ev_type in (QEvent.Type.Show, QEvent.Type.Polish):
+            if isinstance(obj, QComboBox):
+                self._setup_combo(obj)
         return False
 
 def main():

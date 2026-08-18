@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QSpinBox,
     QSizePolicy,
     QPushButton,
+    QStyledItemDelegate,
 )
 from PySide6.QtCore import Signal, Qt
 
@@ -156,26 +157,26 @@ class AdvancedRecodePanel(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-        scroll = QScrollArea()
+        scroll = QScrollArea(self)
         scroll.setObjectName("advancedScroll")
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         scroll.viewport().setAutoFillBackground(False)
 
-        content = QWidget()
+        content = QWidget(scroll)
         content.setObjectName("advancedContent")
         layout = QVBoxLayout(content)
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(10)
 
         # 0. Selector de Modo (Video + Audio / Solo Audio / Solo Video)
-        self.mode_selector = ModeSelector()
+        self.mode_selector = ModeSelector(content)
         self.mode_selector.mode_changed.connect(self._on_mode_changed)
         layout.addWidget(self.mode_selector)
 
         # 1. Tarjeta de Estado de Compatibilidad
-        layout.addWidget(self._build_messages_section())
+        layout.addWidget(self._build_messages_section(content))
 
         # 2. Cuadrícula dinámica de Tarjetas (2 columnas adaptables)
         self.cards_grid = QGridLayout()
@@ -183,18 +184,18 @@ class AdvancedRecodePanel(QWidget):
         self.cards_grid.setColumnStretch(0, 1)
         self.cards_grid.setColumnStretch(1, 1)
 
-        self._build_stream_section(self.tr("Video"), "video", is_video=True)
-        self._build_stream_section(self.tr("Audio"), "audio", is_video=False)
-        self._build_container_section()
-        self._build_size_estimate_section()
+        self._build_stream_section(self.tr("Video"), "video", is_video=True, parent=content)
+        self._build_stream_section(self.tr("Audio"), "audio", is_video=False, parent=content)
+        self._build_container_section(content)
+        self._build_size_estimate_section(content)
 
         layout.addLayout(self.cards_grid)
 
         # Preajustes: va debajo de todo el panel (no es una tarjeta más de la
         # cuadrícula) - ver conversación sobre el sistema de presets.
-        preset_card, preset_card_layout = self._card_frame(self.tr("Preajustes"))
+        preset_card, preset_card_layout = self._card_frame(self.tr("Preajustes"), parent=content)
         self.preset_bar = PresetBar(
-            _PRESET_NAMESPACE, self.get_settings, self,
+            _PRESET_NAMESPACE, self.get_settings, preset_card,
             show_picker=False, show_save_button=True,
         )
         preset_card_layout.addWidget(self.preset_bar)
@@ -205,9 +206,9 @@ class AdvancedRecodePanel(QWidget):
         scroll.setWidget(content)
         outer.addWidget(scroll)
 
-    def _card_frame(self, title: str | None = None) -> tuple[QFrame, QVBoxLayout]:
+    def _card_frame(self, title: str | None = None, parent=None) -> tuple[QFrame, QVBoxLayout]:
         """Crea una tarjeta con fondo transparente y borde sutil mediante ID selector para no afectar popups."""
-        frame = QFrame()
+        frame = QFrame(parent or self)
         frame.setObjectName("advancedCard")
         border_color = get_theme_token('borde_sutil', '#2d2d2d')
         frame.setStyleSheet(f"""
@@ -222,10 +223,7 @@ class AdvancedRecodePanel(QWidget):
         v.setContentsMargins(12, 10, 12, 12)
         v.setSpacing(8)
         if title:
-            # NOTA: `title` debe llegar ya traducido (self.tr("literal") en el call site) -
-            # lupdate no puede extraer texto que pasa por una variable, solo strings
-            # literales pasados directamente a .tr().
-            lbl = QLabel(title)
+            lbl = QLabel(title, frame)
             lbl.setObjectName("sectionTitle")
             v.addWidget(lbl)
         return frame, v
@@ -236,22 +234,22 @@ class AdvancedRecodePanel(QWidget):
         combo.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
         combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
         combo.setMinimumContentsLength(1)
+        combo.setItemDelegate(QStyledItemDelegate(combo))
 
-    def _build_stream_section(self, title: str, prefix: str, is_video: bool) -> QFrame:
-        frame, v = self._card_frame()
+    def _build_stream_section(self, title: str, prefix: str, is_video: bool, parent=None) -> QFrame:
+        frame, v = self._card_frame(parent=parent)
 
         # Cabecera de la columna (Título + Badge CPU/GPU si es video)
         header_row = QHBoxLayout()
         header_row.setContentsMargins(0, 0, 0, 2)
         header_row.setSpacing(8)
 
-        # `title` ya llega traducido desde el call site (ver nota en _card_frame).
-        lbl_title = QLabel(title)
+        lbl_title = QLabel(title, frame)
         lbl_title.setObjectName("sectionTitle")
         header_row.addWidget(lbl_title)
         header_row.addStretch(1)
 
-        engine_badge = QPushButton("")
+        engine_badge = QPushButton("", frame)
         engine_badge.setObjectName(f"{prefix}EngineBadge")
         engine_badge.setCursor(Qt.PointingHandCursor)
         engine_badge.setVisible(False)
@@ -263,13 +261,13 @@ class AdvancedRecodePanel(QWidget):
         mode_row.setContentsMargins(0, 2, 0, 4)
         mode_row.setSpacing(14)
 
-        rb_recode = QRadioButton(self.tr("Recodificar"))
-        rb_copy = QRadioButton(self.tr("Copiar original"))
+        rb_recode = QRadioButton(self.tr("Recodificar"), frame)
+        rb_copy = QRadioButton(self.tr("Copiar original"), frame)
         rb_recode.setChecked(True)
         rb_recode.setCursor(Qt.PointingHandCursor)
         rb_copy.setCursor(Qt.PointingHandCursor)
 
-        group = QButtonGroup(self)
+        group = QButtonGroup(frame)
         group.addButton(rb_recode)
         group.addButton(rb_copy)
         mode_row.addWidget(rb_recode)
@@ -278,45 +276,45 @@ class AdvancedRecodePanel(QWidget):
         v.addLayout(mode_row)
 
         # Códec
-        lbl_codec = QLabel(self.tr("Códec:"))
+        lbl_codec = QLabel(self.tr("Códec:"), frame)
         lbl_codec.setObjectName("menuLabel")
         v.addWidget(lbl_codec)
 
-        codec_combo = QComboBox()
+        codec_combo = QComboBox(frame)
         self._setup_fixed_combo(codec_combo)
         v.addWidget(codec_combo)
 
         # Variante / Motor (Opcional)
-        lbl_variant = QLabel(self.tr("Motor / Variante:"))
+        lbl_variant = QLabel(self.tr("Motor / Variante:"), frame)
         lbl_variant.setObjectName("menuLabel")
         v.addWidget(lbl_variant)
         lbl_variant.setVisible(False)
 
-        variant_combo = QComboBox()
+        variant_combo = QComboBox(frame)
         self._setup_fixed_combo(variant_combo)
         v.addWidget(variant_combo)
         variant_combo.setVisible(False)
 
         # Perfil de Calidad
-        lbl_profile = QLabel(self.tr("Perfil de calidad:"))
+        lbl_profile = QLabel(self.tr("Perfil de calidad:"), frame)
         lbl_profile.setObjectName("menuLabel")
         v.addWidget(lbl_profile)
 
-        profile_combo = QComboBox()
+        profile_combo = QComboBox(frame)
         self._setup_fixed_combo(profile_combo)
         v.addWidget(profile_combo)
 
         # Valor Personalizado (Bitrate o CQ)
-        custom_container = QWidget()
+        custom_container = QWidget(frame)
         custom_layout = QVBoxLayout(custom_container)
         custom_layout.setContentsMargins(0, 0, 0, 0)
         custom_layout.setSpacing(4)
 
-        lbl_custom = QLabel(self.tr("Valor:"))
+        lbl_custom = QLabel(self.tr("Valor:"), custom_container)
         lbl_custom.setObjectName("menuLabel")
         custom_layout.addWidget(lbl_custom)
 
-        bitrate_spin = QSpinBox()
+        bitrate_spin = QSpinBox(custom_container)
         if is_video:
             bitrate_spin.setRange(64, 500000)
             bitrate_spin.setSingleStep(500)
@@ -329,7 +327,7 @@ class AdvancedRecodePanel(QWidget):
         bitrate_spin.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
         custom_layout.addWidget(bitrate_spin)
 
-        cq_spin = QSpinBox()
+        cq_spin = QSpinBox(custom_container)
         cq_spin.setRange(0, 63)
         cq_spin.setSingleStep(1)
         cq_spin.setValue(23)
@@ -353,7 +351,6 @@ class AdvancedRecodePanel(QWidget):
         setattr(self, f"widget_{prefix}_custom", custom_container)
         setattr(self, f"lbl_{prefix}_custom", lbl_custom)
         setattr(self, f"spin_{prefix}_bitrate", bitrate_spin)
-        setattr(self, f"spin_{prefix}_bitrate", bitrate_spin)
         setattr(self, f"spin_{prefix}_cq", cq_spin)
         setattr(self, f"frame_{prefix}", frame)
 
@@ -372,12 +369,12 @@ class AdvancedRecodePanel(QWidget):
 
         # Pasadas (Solo Video)
         if is_video:
-            pass_container = QWidget()
+            pass_container = QWidget(frame)
             pass_layout = QVBoxLayout(pass_container)
             pass_layout.setContentsMargins(0, 0, 0, 4)
             pass_layout.setSpacing(8)
 
-            lbl_passes = QLabel(self.tr("Pasadas:"))
+            lbl_passes = QLabel(self.tr("Pasadas:"), pass_container)
             lbl_passes.setObjectName("menuLabel")
             pass_layout.addWidget(lbl_passes)
 
@@ -385,14 +382,14 @@ class AdvancedRecodePanel(QWidget):
             pass_radios_row.setContentsMargins(0, 0, 0, 0)
             pass_radios_row.setSpacing(16)
 
-            rb_pass1 = QRadioButton(self.tr("1 pasada"))
-            rb_pass2 = QRadioButton(self.tr("2 pasadas"))
+            rb_pass1 = QRadioButton(self.tr("1 pasada"), pass_container)
+            rb_pass2 = QRadioButton(self.tr("2 pasadas"), pass_container)
             rb_pass1.setCursor(Qt.PointingHandCursor)
             rb_pass2.setCursor(Qt.PointingHandCursor)
             rb_pass2.setToolTip(self.tr("2 pasadas: más precisión de bitrate objetivo, tarda el doble."))
             rb_pass1.setChecked(True)
 
-            pass_group = QButtonGroup(self)
+            pass_group = QButtonGroup(pass_container)
             pass_group.addButton(rb_pass1)
             pass_group.addButton(rb_pass2)
             pass_radios_row.addWidget(rb_pass1)
@@ -409,16 +406,16 @@ class AdvancedRecodePanel(QWidget):
             rb_pass1.toggled.connect(self._update_size_estimate)
 
         if not is_video:
-            channels_container = QWidget()
+            channels_container = QWidget(frame)
             channels_layout = QVBoxLayout(channels_container)
             channels_layout.setContentsMargins(0, 0, 0, 4)
             channels_layout.setSpacing(8)
 
-            lbl_channels = QLabel(self.tr("Canales:"))
+            lbl_channels = QLabel(self.tr("Canales:"), channels_container)
             lbl_channels.setObjectName("menuLabel")
             channels_layout.addWidget(lbl_channels)
 
-            channels_combo = QComboBox()
+            channels_combo = QComboBox(channels_container)
             self._setup_fixed_combo(channels_combo)
             channels_combo.addItem(self.tr("Igual al original"), "")
             channels_combo.addItem(self.tr("Mono (1 canal)"), "1")
@@ -434,14 +431,14 @@ class AdvancedRecodePanel(QWidget):
         v.addStretch(1)
         return frame
 
-    def _build_container_section(self) -> QFrame:
-        frame, v = self._card_frame(self.tr("Contenedor de salida"))
+    def _build_container_section(self, parent=None) -> QFrame:
+        frame, v = self._card_frame(self.tr("Contenedor de salida"), parent=parent)
 
-        self.combo_container = QComboBox()
+        self.combo_container = QComboBox(frame)
         self._setup_fixed_combo(self.combo_container)
         v.addWidget(self.combo_container)
 
-        lbl_hint = QLabel(self.tr("Se muestran únicamente los contenedores compatibles con los códecs seleccionados."))
+        lbl_hint = QLabel(self.tr("Se muestran únicamente los contenedores compatibles con los códecs seleccionados."), frame)
         lbl_hint.setObjectName("mutedLabel")
         lbl_hint.setWordWrap(True)
         v.addWidget(lbl_hint)
@@ -450,15 +447,15 @@ class AdvancedRecodePanel(QWidget):
         self.frame_container = frame
         return frame
 
-    def _build_size_estimate_section(self) -> QFrame:
-        frame, v = self._card_frame(self.tr("Peso final estimado"))
+    def _build_size_estimate_section(self, parent=None) -> QFrame:
+        frame, v = self._card_frame(self.tr("Peso final estimado"), parent=parent)
 
-        self.lbl_source_info = QLabel(self.tr("Seleccioná un archivo en la cola para estimar el peso."))
+        self.lbl_source_info = QLabel(self.tr("Seleccioná un archivo en la cola para estimar el peso."), frame)
         self.lbl_source_info.setObjectName("mutedLabel")
         self.lbl_source_info.setWordWrap(True)
         v.addWidget(self.lbl_source_info)
 
-        self.lbl_size_estimate = QLabel("")
+        self.lbl_size_estimate = QLabel("", frame)
         self.lbl_size_estimate.setWordWrap(True)
         self.lbl_size_estimate.setObjectName("sectionTitle")
         v.addWidget(self.lbl_size_estimate)
@@ -466,8 +463,8 @@ class AdvancedRecodePanel(QWidget):
         self.frame_size = frame
         return frame
 
-    def _build_messages_section(self) -> QFrame:
-        frame, v = self._card_frame(self.tr("Estado de compatibilidad"))
+    def _build_messages_section(self, parent=None) -> QFrame:
+        frame, v = self._card_frame(self.tr("Estado de compatibilidad"), parent=parent)
         self.messages_layout = QVBoxLayout()
         self.messages_layout.setContentsMargins(0, 2, 0, 2)
         self.messages_layout.setSpacing(6)

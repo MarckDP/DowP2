@@ -15,7 +15,8 @@ def _get_os_name() -> str:
     try:
         if os_system == "Windows":
             cmd = 'powershell -NoProfile -Command "(Get-CimInstance Win32_OperatingSystem).Caption"'
-            res = subprocess.run(cmd, capture_output=True, text=True, shell=True, timeout=3)
+            flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=3, creationflags=flags)
             caption = res.stdout.strip()
             if caption:
                 clean_name = caption.replace("Microsoft ", "").strip()
@@ -51,7 +52,8 @@ def _get_cpu_name() -> str:
     try:
         if os_system == "Windows":
             cmd = 'powershell -NoProfile -Command "(Get-CimInstance Win32_Processor).Name"'
-            res = subprocess.run(cmd, capture_output=True, text=True, shell=True, timeout=3)
+            flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=3, creationflags=flags)
             name = res.stdout.strip()
             if name:
                 return name.split('\n')[0].strip()
@@ -77,7 +79,8 @@ def _get_gpu_name() -> str:
     try:
         if os_system == "Windows":
             cmd = 'powershell -NoProfile -Command "(Get-CimInstance Win32_VideoController).Name"'
-            res = subprocess.run(cmd, capture_output=True, text=True, shell=True, timeout=3)
+            flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=3, creationflags=flags)
             lines = [line.strip() for line in res.stdout.strip().split('\n') if line.strip()]
             if lines:
                 return " / ".join(lines)
@@ -155,7 +158,8 @@ def _probe_encoder(ffmpeg_exe: str, env, encoder_code: str, backend: str) -> boo
             ffmpeg_exe, "-v", "error", "-f", "lavfi", "-i", "color=c=black:s=256x256:d=0.1",
             "-frames:v", "2", "-c:v", encoder_code, "-f", "null", "-",
         ]
-        res = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=6)
+        flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+        res = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=6, creationflags=flags)
         return res.returncode == 0
     except Exception as e:
         logger.debug(f"HardwareDetector: Probe fallido para {encoder_code}: {e}")
@@ -172,7 +176,8 @@ def _get_codec_support_map() -> dict:
     codec_support: dict = {}
 
     try:
-        res = subprocess.run([ffmpeg_exe, "-encoders"], capture_output=True, text=True, env=env, timeout=4)
+        flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+        res = subprocess.run([ffmpeg_exe, "-encoders"], capture_output=True, text=True, env=env, timeout=4, creationflags=flags)
         stdout = res.stdout
     except Exception as e:
         logger.warning(f"HardwareDetector: Error al ejecutar ffmpeg -encoders: {e}")
@@ -390,9 +395,10 @@ def _generate_ffmpeg_log_files(codec_support: dict, codec_status: dict, supporte
         "colors": ["ffmpeg", "-colors"]
     }
 
+    flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
     for key, cmd in sections.items():
         try:
-            res = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=5)
+            res = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=5, creationflags=flags)
             output = res.stdout or res.stderr or ""
             full_log_data["capabilities"][key] = [line for line in output.split("\n") if line.strip()]
         except Exception as e:

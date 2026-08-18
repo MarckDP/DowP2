@@ -91,7 +91,7 @@ class CustomTitleBar(QWidget):
         # ── Logo ──────────────────────────────────────────────────────────────
         logo_path = os.path.abspath(os.path.join(_APP_ICONS_DIR, "DowP_Logo.ico"))
         if os.path.exists(logo_path):
-            logo_label = QLabel()
+            logo_label = QLabel(self)
             logo_label.setPixmap(
                 QIcon(logo_path).pixmap(18, 18)
             )
@@ -115,7 +115,7 @@ class CustomTitleBar(QWidget):
         radius = 6
 
         # Minimizar
-        self.btn_min = QPushButton()
+        self.btn_min = QPushButton(self)
         self.btn_min.setObjectName("titleBarMinimize")
         self.btn_min.setIcon(_icon("minus.svg"))
         self.btn_min.setToolTip("Minimizar")
@@ -128,7 +128,7 @@ class CustomTitleBar(QWidget):
         self.btn_min.clicked.connect(self._on_minimize)
 
         # Maximizar / Restaurar
-        self.btn_max = QPushButton()
+        self.btn_max = QPushButton(self)
         self.btn_max.setObjectName("titleBarMaximize")
         self.btn_max.setIcon(_icon("maximize.svg"))
         self.btn_max.setToolTip("Maximizar")
@@ -141,7 +141,7 @@ class CustomTitleBar(QWidget):
         self.btn_max.clicked.connect(self._on_maximize_restore)
 
         # Cerrar
-        self.btn_close = QPushButton()
+        self.btn_close = QPushButton(self)
         self.btn_close.setObjectName("titleBarClose")
         self.btn_close.setIcon(_icon("close.svg"))
         self.btn_close.setToolTip("Cerrar")

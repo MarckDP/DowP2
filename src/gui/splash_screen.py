@@ -172,7 +172,7 @@ class SplashScreen(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
 
         # ── Contenedor principal con borde redondeado ──
-        container = QFrame()
+        container = QFrame(self)
         container.setObjectName("splashContainer")
         container.setStyleSheet(f"""
             QFrame#splashContainer {{
@@ -203,7 +203,7 @@ class SplashScreen(QWidget):
         base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         logo_path = os.path.join(base_dir, "src", "assets", "icons", "app", "DowP_Logo.svg")
 
-        logo_widget = QSvgWidget(logo_path)
+        logo_widget = QSvgWidget(logo_path, container)
         logo_widget.setFixedSize(QSize(68, 68))
         logo_widget.setStyleSheet("background: transparent; border: none;")
         header.addWidget(logo_widget, 0, Qt.AlignVCenter)
@@ -214,7 +214,7 @@ class SplashScreen(QWidget):
         text_col.setContentsMargins(0, 0, 0, 0)
 
         # "DowP 2.0.0" — nombre grande en negrita
-        title_lbl = QLabel("DowP 2.0.0")
+        title_lbl = QLabel("DowP 2.0.0", container)
         title_lbl.setStyleSheet(f"""
             color: {text_main};
             font-family: 'Raleway', 'Segoe UI', sans-serif;
@@ -227,7 +227,7 @@ class SplashScreen(QWidget):
         text_col.addWidget(title_lbl, 0, Qt.AlignLeft | Qt.AlignBottom)
 
         # "Cargando..." — texto delgado y pequeño
-        self.status_label = QLabel("Cargando...")
+        self.status_label = QLabel("Cargando...", container)
         self.status_label.setStyleSheet(f"""
             color: {text_sec};
             font-family: 'Raleway', 'Segoe UI', sans-serif;
@@ -252,7 +252,7 @@ class SplashScreen(QWidget):
         # ═══════════════════════════════════════════════════════
         # Contenedor de dependencias (oculto hasta que se necesite)
         # ═══════════════════════════════════════════════════════
-        self.deps_container = QFrame()
+        self.deps_container = QFrame(container)
         self.deps_container.setObjectName("depsContainer")
         self.deps_container.setStyleSheet(f"""
             QFrame#depsContainer {{
@@ -282,7 +282,7 @@ class SplashScreen(QWidget):
         container_layout.addWidget(self.deps_container)
 
         # ── Barra de progreso mínima (pulsante) — pegada abajo ──
-        self.loading_bar = QProgressBar()
+        self.loading_bar = QProgressBar(container)
         self.loading_bar.setRange(0, 0)  # Modo indeterminado
         self.loading_bar.setTextVisible(False)
         self.loading_bar.setFixedHeight(3)
@@ -313,14 +313,14 @@ class SplashScreen(QWidget):
         row.setSpacing(8)
 
         # Dot indicador
-        dot = QLabel("●")
+        dot = QLabel("●", self.deps_container)
         dot.setFixedWidth(14)
         dot.setStyleSheet(f"color: {colors['text_sec']}; font-size: 10px;")
         dot.setAlignment(Qt.AlignCenter | Qt.AlignVCenter)
         row.addWidget(dot)
 
         # Nombre
-        name_lbl = QLabel(f"<b>{name}</b>")
+        name_lbl = QLabel(f"<b>{name}</b>", self.deps_container)
         name_lbl.setStyleSheet(f"""
             color: #cccccc;
             font-family: 'Raleway', 'Segoe UI', sans-serif;
@@ -330,7 +330,7 @@ class SplashScreen(QWidget):
         row.addWidget(name_lbl)
 
         # Barra de progreso
-        bar = QProgressBar()
+        bar = QProgressBar(self.deps_container)
         bar.setRange(0, 100)
         bar.setValue(0)
         bar.setTextVisible(False)
@@ -339,7 +339,7 @@ class SplashScreen(QWidget):
         row.addWidget(bar, 1)
 
         # Status
-        status = QLabel("Esperando...")
+        status = QLabel("Esperando...", self.deps_container)
         status.setStyleSheet(f"""
             color: {colors['text_sec']};
             font-family: 'Raleway', 'Segoe UI', sans-serif;

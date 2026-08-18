@@ -12,7 +12,7 @@ from core.logger.logger_manager import logger
 from core.utils.config_manager import get_config, save_config
 
 # Versión fija recomendada de FFmpeg para DowP (máxima estabilidad con yt-dlp)
-FFMPEG_RECOMMENDED_VERSION = "8.0.1"
+FFMPEG_RECOMMENDED_VERSION = "9.0.1"
 GYAND_RELEASES_API = "https://api.github.com/repos/GyanD/codexffmpeg/releases"
 
 

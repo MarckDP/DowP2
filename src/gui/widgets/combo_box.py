@@ -1,7 +1,6 @@
-# src/gui/widgets/combo_box.py
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPainter
-from PySide6.QtWidgets import QComboBox, QStyle, QStyleOptionComboBox
+from PySide6.QtWidgets import QComboBox, QStyle, QStyleOptionComboBox, QStyledItemDelegate
 
 
 class AutoPopupComboBox(QComboBox):
@@ -18,6 +17,7 @@ class AutoPopupComboBox(QComboBox):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setSizeAdjustPolicy(QComboBox.AdjustToContents)
+        self.setItemDelegate(QStyledItemDelegate(self))
 
     def _widest_item_text_width(self) -> int:
         fm = self.fontMetrics()

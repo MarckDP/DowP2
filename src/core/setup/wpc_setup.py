@@ -52,9 +52,10 @@ def get_local_version(force_check: bool = False) -> str | None:
         return _cached_local_version
 
     try:
+        flags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
         result = subprocess.run(
             [_get_python_executable(), "-m", "pip", "show", PACKAGE_NAME],
-            capture_output=True, text=True, timeout=10
+            capture_output=True, text=True, timeout=10, creationflags=flags
         )
         for line in result.stdout.splitlines():
             if line.startswith("Version:"):
@@ -94,11 +95,13 @@ def install_wpc(progress_callback=None) -> tuple:
         progress_callback(10)
 
     try:
+        flags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
         result = subprocess.run(
             [python_exe, "-m", "pip", "install", "--upgrade", PACKAGE_NAME],
             capture_output=True,
             text=True,
-            timeout=120
+            timeout=120,
+            creationflags=flags
         )
 
         if progress_callback:

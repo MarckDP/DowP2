@@ -701,7 +701,3 @@ SRMD_MODELS = {
         "scales": ["2x", "3x", "4x"]
     }
 }
-
-# --- DEPENDENCIAS CORE (BINARIOS) ---
-FFMPEG_SAFE_VERSION = "8.0.1"
-FFMPEG_SAFE_URL = "https://github.com/GyanD/codexffmpeg/releases/download/8.0.1/ffmpeg-8.0.1-full_build.zip"

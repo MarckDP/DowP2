@@ -411,7 +411,7 @@ QComboBox QAbstractItemView {
     outline: none;
     padding: 3px;
     color: {{texto_principal}};
-    min-width: 220px;
+    min-width: 50px;
 }
 
 QComboBox QAbstractItemView::item {

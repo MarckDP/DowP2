@@ -158,7 +158,7 @@ class FFmpegOptionsPanel(QFrame):
     _TOOLTIP_FFMPEG = (
         "FFmpeg es el motor multimedia que DowP utiliza para unir video y audio de alta\n"
         "resolución, extraer pistas de audio, generar ondas de sonido y recodificar medios.\n\n"
-        "  • Versión Recomendada (8.0.1): Probada a fondo para máxima estabilidad con yt-dlp y fragmentos.\n"
+        f"  • Versión Recomendada ({FFMPEG_RECOMMENDED_VERSION}): Probada a fondo para máxima estabilidad con yt-dlp y fragmentos.\n"
         "  • Variante Essentials: Más ligera (~30 MB) con códecs y aceleración por hardware estándar.\n"
         "  • Variante Full: Incluye códecs adicionales (SVT-AV1, libvpx, libplacebo, filtros avanzados).\n"
         "  • Personalizado: Usa un FFmpeg existente instalado en tu sistema."
@@ -269,7 +269,7 @@ class FFmpegOptionsPanel(QFrame):
         managed_grid.addWidget(c_lbl, 1, 0)
 
         self._group_channel = QButtonGroup(self)
-        self._radio_recommended = self._make_radio(self.tr("Recomendada (8.0.1 Oficial DowP)"), "recommended")
+        self._radio_recommended = self._make_radio(self.tr("Recomendada ({0} Oficial DowP)").format(FFMPEG_RECOMMENDED_VERSION), "recommended")
         self._radio_latest = self._make_radio(self.tr("Última Release Oficial"), "latest")
         self._radio_nightly = self._make_radio(self.tr("Nightly (Git Master)"), "nightly")
         self._group_channel.addButton(self._radio_recommended, 0)
@@ -295,9 +295,9 @@ class FFmpegOptionsPanel(QFrame):
         actions_row = QHBoxLayout()
         actions_row.addStretch()
 
-        self._btn_restore = QPushButton(self.tr("Restaurar (8.0.1 Essentials)"))
+        self._btn_restore = QPushButton(self.tr("Restaurar ({0} Essentials)").format(FFMPEG_RECOMMENDED_VERSION))
         self._btn_restore.setCursor(Qt.PointingHandCursor)
-        self._btn_restore.setToolTip(self.tr("Descarga y restaura la versión base recomendada y probada de DowP (8.0.1 Essentials)"))
+        self._btn_restore.setToolTip(self.tr("Descarga y restaura la versión base recomendada y probada de DowP ({0} Essentials)").format(FFMPEG_RECOMMENDED_VERSION))
         self._btn_restore.clicked.connect(self._on_restore_clicked)
         actions_row.addWidget(self._btn_restore)
 
@@ -440,15 +440,15 @@ class FFmpegOptionsPanel(QFrame):
                 self._btn_download.setText(self.tr("Descargar"))
                 self._btn_download.setStyleSheet("background-color: #007BFF; color: white; border: none; font-weight: bold;")
 
-            # Restaurar button state (habilita volver a 8.0.1 Essentials si está en Full, Nightly o Custom)
+            # Restaurar button state (habilita volver a Essentials recomendada si está en Full, Nightly o Custom)
             local_ver = ffmpeg_local() or ""
             if FFMPEG_RECOMMENDED_VERSION in local_ver and "essentials" in local_ver.lower():
                 self._btn_restore.setDisabled(True)
-                self._btn_restore.setText(self.tr("Recomendada Activa (8.0.1)"))
+                self._btn_restore.setText(self.tr("Recomendada Activa ({0})").format(FFMPEG_RECOMMENDED_VERSION))
                 self._btn_restore.setStyleSheet("")
             else:
                 self._btn_restore.setDisabled(False)
-                self._btn_restore.setText(self.tr("Restaurar (8.0.1 Essentials)"))
+                self._btn_restore.setText(self.tr("Restaurar ({0} Essentials)").format(FFMPEG_RECOMMENDED_VERSION))
                 self._btn_restore.setStyleSheet("background-color: #28A745; color: white; border: none; padding: 6px 14px; border-radius: 6px; font-weight: bold;")
 
     def _on_mode_changed(self, btn_id):
@@ -476,7 +476,7 @@ class FFmpegOptionsPanel(QFrame):
         cfg = get_config()
         cfg["ffmpeg_channel"] = channel
         save_config(cfg)
-        logger.info(f"FFmpeg: Canal de versión cambiado a '{channel.upper()}' (Recomendada 8.0.1 / Latest / Nightly)")
+        logger.info(f"FFmpeg: Canal de versión cambiado a '{channel.upper()}' (Recomendada {FFMPEG_RECOMMENDED_VERSION} / Latest / Nightly)")
         self._refresh_status()
         self.ffmpeg_changed.emit()
 

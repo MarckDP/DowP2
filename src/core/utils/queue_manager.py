@@ -613,14 +613,19 @@ class QueueWorker(QThread):
 
             time_regex = re.compile(r"time=\s*(\d+):(\d+):(\d+\.\d+|\d+)")
             speed_regex = re.compile(r"speed=\s*([\d\.]+)x")
+            last_log_time = 0.0
             
             for line in proc.stderr:
                 if cancellation_event.is_set():
                     proc.terminate()
                     break
+
+                clean_line = line.strip()
+                if not clean_line:
+                    continue
                     
-                time_match = time_regex.search(line)
-                speed_match = speed_regex.search(line)
+                time_match = time_regex.search(clean_line)
+                speed_match = speed_regex.search(clean_line)
                 
                 if time_match and duration_sec > 0:
                     h, m, s = float(time_match.group(1)), float(time_match.group(2)), float(time_match.group(3))
@@ -641,11 +646,25 @@ class QueueWorker(QThread):
                     job.eta = eta_str
                     self.job_progress_changed.emit(job.job_id, percent, f"Velocidad: {speed_str}", f"ETA: {eta_str}")
 
+                    # Registrar en consola con cadencia controlada (cada 1.0s) para progreso claro
+                    now = time.time()
+                    if now - last_log_time >= 1.0 or percent >= 100.0:
+                        last_log_time = now
+                        logger.info(f"QueueWorker: [RECODE] {percent:.1f}% | Velocidad: {speed_str} | ETA: {eta_str} ({job.title})")
+                else:
+                    # Registrar líneas clave de mapeo, inicio o advertencias de FFmpeg
+                    lower_line = clean_line.lower()
+                    if any(kw in lower_line for kw in ["error", "warning", "output #", "input #", "stream mapping", "mapping:"]):
+                        logger.info(f"[FFmpeg] {clean_line}")
+                    else:
+                        logger.debug(f"[FFmpeg] {clean_line}")
+
             proc.wait()
             
             if cancellation_event.is_set():
                 job.status = JobStatus.CANCELLED
                 self.job_status_changed.emit(job.job_id, JobStatus.CANCELLED)
+                logger.info(f"QueueWorker: [RECODE] Trabajo cancelado por el usuario: {job.title}")
                 if os.path.exists(output_file):
                     try:
                         os.remove(output_file)
@@ -659,10 +678,12 @@ class QueueWorker(QThread):
                 job.final_filepath = output_file
                 self.job_progress_changed.emit(job.job_id, 100.0, "Completado", "")
                 self.job_status_changed.emit(job.job_id, JobStatus.COMPLETED)
+                logger.info(f"QueueWorker: [RECODE] Recodificación finalizada exitosamente: {output_file}")
             else:
                 job.status = JobStatus.FAILED
                 job.error_message = f"FFmpeg terminó con código {proc.returncode}"
                 self.job_status_changed.emit(job.job_id, JobStatus.FAILED)
+                logger.error(f"QueueWorker: [RECODE] FFmpeg falló con código {proc.returncode} ({job.title})")
                 
         except Exception as e:
             logger.error(f"QueueWorker: Error en RECODE: {e}")

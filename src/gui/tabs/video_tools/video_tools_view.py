@@ -99,13 +99,13 @@ class VideoToolsTab(QWidget):
         right_layout.addWidget(self.options_widget, 1)
 
         # 2. Cubo Inferior de Opciones de Salida y Ejecución
-        self.output_card = QFrame()
+        self.output_card = QFrame(self.right_container)
         self.output_card.setObjectName("outputOptionsContainer")
         out_layout = QVBoxLayout(self.output_card)
         out_layout.setContentsMargins(14, 12, 14, 12)
         out_layout.setSpacing(10)
 
-        lbl_out_title = QLabel(self.tr("Opciones de Salida y Procesamiento"))
+        lbl_out_title = QLabel(self.tr("Opciones de Salida y Procesamiento"), self.output_card)
         lbl_out_title.setObjectName("sectionTitle")
         out_layout.addWidget(lbl_out_title)
 
@@ -114,12 +114,12 @@ class VideoToolsTab(QWidget):
         grid_out.setColumnStretch(1, 1)
 
         # Checkbox "Guardar en misma ruta"
-        self.chk_same_path = QCheckBox(self.tr("Guardar en la misma ruta del medio original"))
+        self.chk_same_path = QCheckBox(self.tr("Guardar en la misma ruta del medio original"), self.output_card)
         self.chk_same_path.setObjectName("menuLabel")
         grid_out.addWidget(self.chk_same_path, 0, 0, 1, 3)
 
         # Fila 1: Ruta + Selector de Etiquetas + Botones de Examinar/Abrir
-        self.lbl_dest = QLabel(self.tr("Ruta:"))
+        self.lbl_dest = QLabel(self.tr("Ruta:"), self.output_card)
         self.lbl_dest.setObjectName("menuLabel")
         grid_out.addWidget(self.lbl_dest, 1, 0)
 
@@ -127,25 +127,25 @@ class VideoToolsTab(QWidget):
         path_row.setSpacing(6)
         path_row.setContentsMargins(0, 0, 0, 0)
 
-        self.txt_output_dir = QLineEdit()
+        self.txt_output_dir = QLineEdit(self.output_card)
         self.txt_output_dir.setPlaceholderText(self.tr("Seleccionar carpeta de destino..."))
         path_row.addWidget(self.txt_output_dir, 1)
 
         # ComboBox de Etiquetas
-        self.combo_tags = AutoPopupComboBox()
+        self.combo_tags = AutoPopupComboBox(self.output_card)
         self.combo_tags.setObjectName("tagsComboBox")
         self.combo_tags.setPlaceholderText(self.tr("Etiqueta"))
         self.combo_tags.currentIndexChanged.connect(self._on_label_changed)
 
         # Botón para examinar carpeta
-        self.btn_browse_output = QPushButton()
+        self.btn_browse_output = QPushButton(self.output_card)
         self.btn_browse_output.setFixedSize(32, 32)
         self.btn_browse_output.setCursor(Qt.PointingHandCursor)
         apply_folder_browse_button_style(self.btn_browse_output, self.tr("Seleccionar carpeta de salida"))
         self.btn_browse_output.clicked.connect(self._on_browse_output_clicked)
         
         # Botón para abrir la carpeta
-        self.btn_open_output = QPushButton()
+        self.btn_open_output = QPushButton(self.output_card)
         self.btn_open_output.setFixedSize(32, 32)
         self.btn_open_output.setCursor(Qt.PointingHandCursor)
         apply_folder_open_button_style(self.btn_open_output, self.tr("Abrir carpeta de salida en el explorador"))
@@ -158,7 +158,7 @@ class VideoToolsTab(QWidget):
         grid_out.addLayout(path_row, 1, 1, 1, 2)
 
         # Fila 2: Prefijo y Sufijo
-        self.lbl_prefix = QLabel(self.tr("Prefijo:"))
+        self.lbl_prefix = QLabel(self.tr("Prefijo:"), self.output_card)
         self.lbl_prefix.setObjectName("menuLabel")
         grid_out.addWidget(self.lbl_prefix, 2, 0)
 
@@ -166,12 +166,12 @@ class VideoToolsTab(QWidget):
         affixes_row.setSpacing(10)
         affixes_row.setContentsMargins(0, 0, 0, 0)
 
-        self.txt_prefix = QLineEdit()
+        self.txt_prefix = QLineEdit(self.output_card)
         self.txt_prefix.setPlaceholderText("")
 
-        self.lbl_suffix = QLabel(self.tr("Sufijo:"))
+        self.lbl_suffix = QLabel(self.tr("Sufijo:"), self.output_card)
         self.lbl_suffix.setObjectName("menuLabel")
-        self.txt_suffix = QLineEdit("_recoded")
+        self.txt_suffix = QLineEdit("_recoded", self.output_card)
 
         affixes_row.addWidget(self.txt_prefix, 1)
         affixes_row.addWidget(self.lbl_suffix)
@@ -184,7 +184,7 @@ class VideoToolsTab(QWidget):
         out_layout.addLayout(grid_out)
 
         # Barra de Progreso Global
-        self.progress_bar = BouncingProgressBar()
+        self.progress_bar = BouncingProgressBar(self.output_card)
         self.progress_bar.setObjectName("downloadProgressBar")
         self.progress_bar.setProperty("status", "wait")
         self.progress_bar.setRange(0, 100)
@@ -194,7 +194,7 @@ class VideoToolsTab(QWidget):
         out_layout.addWidget(self.progress_bar)
 
         # Botón Acción Principal Iniciar Recodificación
-        self.btn_start = AnimatedButton(self.tr("Iniciar Recodificación"))
+        self.btn_start = AnimatedButton(self.tr("Iniciar Recodificación"), self.output_card)
         self.btn_start.setProperty("variant", "primary")
         self.btn_start.setObjectName("downloadButton")
         self.btn_start.setFixedHeight(36)

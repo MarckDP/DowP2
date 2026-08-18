@@ -294,6 +294,24 @@ def apply_folder_open_button_style(btn, tooltip=None, icon_size=18):
         btn.setToolTip(tooltip)
 
 
+def apply_download_action_button_style(btn, tooltip=None, icon_size=18):
+    """
+    Aplica el estilo unificado al botón de acción de descargar medio.
+    - Icono: download.svg en negro (#000000) habilitado y gris (#777777) deshabilitado.
+    - Variante: 'accent-solid' (verde plano reactivo).
+    """
+    from gui.tabs.editing_media.editing_media_icons import get_colored_svg_icon
+    from PySide6.QtCore import QSize
+    dis_color = get_theme_token("texto_deshabilitado", "#777777")
+    btn.setIcon(get_colored_svg_icon("download.svg", "#000000", size=icon_size, disabled_color_hex=dis_color))
+    btn.setIconSize(QSize(icon_size, icon_size))
+    if not btn.objectName():
+        btn.setObjectName("pathToolButton")
+    set_button_variant(btn, "accent-solid")
+    if tooltip:
+        btn.setToolTip(tooltip)
+
+
 def apply_cut_button_style(btn, status="normal", icon_size=18, shape="circular"):
     """
     Aplica el estilo unificado del botón de recorte de fragmentos

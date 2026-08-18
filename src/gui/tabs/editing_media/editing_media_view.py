@@ -35,7 +35,14 @@ except ImportError:
     MULTIMEDIA_AVAILABLE = False
 
 from core.logger.logger_manager import logger
-from gui.styles import get_theme_token, apply_player_play_button_style, apply_player_loop_button_style, apply_edit_subclip_button_style
+from gui.styles import (
+    get_theme_token,
+    apply_player_play_button_style,
+    apply_player_loop_button_style,
+    apply_edit_subclip_button_style,
+    apply_folder_open_button_style,
+    apply_download_action_button_style,
+)
 from gui.widgets.animated_button import AnimatedButton
 from gui.widgets.send_state_button import SendButtonState
 from core.tabs.editing_media.editing_media_logic import EditingMediaController
@@ -981,13 +988,8 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
 
         # Botón para revelar/abrir en el explorador de archivos
         self.btn_reveal = AnimatedButton("")
-        self.btn_reveal.setToolTip(self.tr("Abrir en Explorador"))
-        self.btn_reveal.setObjectName("pathToolButton")
         self.btn_reveal.setFixedSize(34, 34)
-        reveal_icon = get_svg_icon("folder_open.svg")
-        if not reveal_icon.isNull():
-            self.btn_reveal.setIcon(reveal_icon)
-            self.btn_reveal.setIconSize(QSize(20, 20))
+        apply_folder_open_button_style(self.btn_reveal, self.tr("Abrir en Explorador"), icon_size=20)
         self.btn_reveal.setEnabled(False)
         self.btn_reveal.clicked.connect(self._on_reveal_clicked)
         buttons_layout.addWidget(self.btn_reveal)
@@ -1047,14 +1049,8 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
 
         # Botón para descargar archivo de Freesound (medios web) — solo ícono, como btn_reveal
         self.btn_download = AnimatedButton("")
-        self.btn_download.setToolTip(self.tr("Descargar Medio"))
-
-        self.btn_download.setObjectName("pathToolButton")
         self.btn_download.setFixedSize(34, 34)
-        dl_icon = get_svg_icon("download.svg")
-        if not dl_icon.isNull():
-            self.btn_download.setIcon(dl_icon)
-            self.btn_download.setIconSize(QSize(20, 20))
+        apply_download_action_button_style(self.btn_download, self.tr("Descargar Medio"), icon_size=20)
         self.btn_download.setEnabled(False)
         self.btn_download.setVisible(False)
         self.btn_download.clicked.connect(self._on_download_clicked)

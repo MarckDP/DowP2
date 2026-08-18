@@ -783,6 +783,15 @@ QPushButton#soloButton:hover {
 QPushButton#soloButton:checked {
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
         stop:0 {{boton_solo_inicio}}, stop:1 {{boton_solo_fin}});
+    color: {{boton_solo_texto}};
+    border: 1px solid {{boton_solo_inicio}};
+}
+
+QPushButton#soloButton:checked:hover {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 {{boton_solo_fin}}, stop:1 {{boton_solo_inicio}});
+    color: {{boton_solo_texto}};
+    border: 1px solid {{boton_solo_fin}};
 }
 
 /* ═══════════════════════════════════════════

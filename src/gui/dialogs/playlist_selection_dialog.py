@@ -290,7 +290,7 @@ class PlaylistSelectionDialog(QDialog):
 
         controls.addWidget(QLabel(self.tr("Calidad")))
         self.quality_combo = RichComboBox()
-        self.quality_combo.setItemDelegate(RichTextDelegate())
+        self.quality_combo.setItemDelegate(RichTextDelegate(self.quality_combo))
         controls.addWidget(self.quality_combo)
         content_layout.addLayout(controls)
 

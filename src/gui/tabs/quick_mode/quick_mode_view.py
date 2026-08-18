@@ -150,7 +150,7 @@ class QuickModeTab(QWidget):
 
         layout.addWidget(QLabel(self.tr("Calidad:")))
         self.quality_combo = RichComboBox()
-        self.quality_combo.setItemDelegate(RichTextDelegate())
+        self.quality_combo.setItemDelegate(RichTextDelegate(self.quality_combo))
         layout.addWidget(self.quality_combo)
 
         self.chk_playlist_selector = QCheckBox(self.tr("Seleccionar playlist"))

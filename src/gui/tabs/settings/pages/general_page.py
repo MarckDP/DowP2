@@ -5,13 +5,6 @@ from core.utils.config_manager import get_config, save_config
 from gui.widgets.toggle_switch import ToggleSwitch
 from gui.widgets.combo_box import AutoPopupComboBox
 
-class PaddingDelegate(QStyledItemDelegate):
-    """Adds padding to QComboBox items for a modern feel."""
-    def sizeHint(self, option, index):
-        size = super().sizeHint(option, index)
-        size.setHeight(size.height() + 15) # More vertical space
-        return size
-
 class GeneralPage(QWidget):
     language_changed = Signal(str)
     theme_changed = Signal(str)
@@ -69,7 +62,6 @@ class GeneralPage(QWidget):
         
         self.lang_combo = AutoPopupComboBox()
         self.lang_combo.setFixedWidth(180) # Smaller
-        self.lang_combo.setItemDelegate(PaddingDelegate())
         self.lang_combo.addItem("Español", "es")
         self.lang_combo.addItem("English", "en")
         
@@ -85,7 +77,6 @@ class GeneralPage(QWidget):
         
         self.theme_combo = AutoPopupComboBox()
         self.theme_combo.setFixedWidth(180) # Smaller
-        self.theme_combo.setItemDelegate(PaddingDelegate())
         self.theme_combo.addItem(self.tr("Modo Oscuro"), "dark")
         self.theme_combo.addItem(self.tr("Modo Claro"), "light")
         

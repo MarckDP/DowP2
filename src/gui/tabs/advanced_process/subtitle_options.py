@@ -16,13 +16,6 @@ from gui.widgets.toggle_switch import ToggleSwitch
 from gui.widgets.combo_box import AutoPopupComboBox
 
 
-class PaddingDelegate(QStyledItemDelegate):
-    def sizeHint(self, option, index):
-        size = super().sizeHint(option, index)
-        size.setHeight(size.height() + 6)
-        return size
-
-
 class SubtitleOptionsWidget(QFrame):
     COMPACT_WIDTH = 350
     PANEL_HEIGHT = 210
@@ -54,7 +47,6 @@ class SubtitleOptionsWidget(QFrame):
         self.lbl_subtitle_language.setObjectName("menuLabel")
         self.lbl_subtitle_language.setFixedWidth(58)
         self.combo_subtitle_language = AutoPopupComboBox()
-        self.combo_subtitle_language.setItemDelegate(PaddingDelegate())
         self.combo_subtitle_language.setSizeAdjustPolicy(QComboBox.AdjustToContents)
         self.combo_subtitle_language.addItem(self.tr("Seleccionar idioma..."))
 
@@ -70,7 +62,6 @@ class SubtitleOptionsWidget(QFrame):
         self.lbl_subtitle_format.setObjectName("menuLabel")
         self.lbl_subtitle_format.setFixedWidth(58)
         self.combo_subtitle_format = AutoPopupComboBox()
-        self.combo_subtitle_format.setItemDelegate(PaddingDelegate())
         self.combo_subtitle_format.setSizeAdjustPolicy(QComboBox.AdjustToContents)
         self.combo_subtitle_format.addItem("-")
         self.combo_subtitle_format.setEnabled(False)

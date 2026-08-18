@@ -20,6 +20,7 @@ from PySide6.QtCore import Signal, Qt
 from gui.styles import get_theme_token
 from gui.widgets.mode_selector import ModeSelector
 from gui.widgets.preset_bar import PresetBar
+from gui.widgets.combo_box import CheckmarkComboDelegate
 from core.logger.logger_manager import logger
 from core.utils.recode_guard import evaluate_recode, get_video_codecs, get_audio_codecs, get_compatible_containers, resolve_encoder, get_channel_support
 from core.utils.hardware_detector import detect_hardware
@@ -234,7 +235,7 @@ class AdvancedRecodePanel(QWidget):
         combo.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
         combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
         combo.setMinimumContentsLength(1)
-        combo.setItemDelegate(QStyledItemDelegate(combo))
+        combo.setItemDelegate(CheckmarkComboDelegate(combo))
 
     def _build_stream_section(self, title: str, prefix: str, is_video: bool, parent=None) -> QFrame:
         frame, v = self._card_frame(parent=parent)

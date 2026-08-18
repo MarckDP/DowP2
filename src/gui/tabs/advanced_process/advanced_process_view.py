@@ -216,7 +216,7 @@ class AdvancedProcessTab(QWidget):
         layout.addWidget(self.combo_global_mode)
 
         self.combo_global_quality = RichComboBox()
-        self.combo_global_quality.setItemDelegate(RichTextDelegate())
+        self.combo_global_quality.setItemDelegate(RichTextDelegate(self.combo_global_quality))
         self.combo_global_quality.setSizeAdjustPolicy(QComboBox.AdjustToContents)
         layout.addWidget(self.combo_global_quality)
 

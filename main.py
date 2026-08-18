@@ -27,6 +27,9 @@ from PySide6.QtCore import QObject, QEvent, Qt
 from PySide6.QtWidgets import QPushButton, QCheckBox, QRadioButton, QComboBox, QTabBar, QStyledItemDelegate
 
 
+from gui.widgets.combo_box import CheckmarkComboDelegate
+
+
 class _ComboPopupMaskFilter(QObject):
     """Mantiene la máscara del contenedor del popup (QComboBoxPrivateContainer) sincronizada
     con su tamaño en cada resize o show.
@@ -44,7 +47,7 @@ class _ComboPopupMaskFilter(QObject):
 _DEFAULT_COMBO_DELEGATE_TYPE = None
 
 class HandCursorInstaller(QObject):
-    """Instala cursor pointer en widgets interactivos y garantiza QStyledItemDelegate
+    """Instala cursor pointer en widgets interactivos y garantiza CheckmarkComboDelegate
     y máscara de recorte sin bordes nativos en QComboBoxes para soporte de hover y selección visual vía QSS."""
     _TARGET_TYPES = (QPushButton, QCheckBox, QRadioButton, QComboBox, QTabBar)
 
@@ -56,8 +59,8 @@ class HandCursorInstaller(QObject):
         self._mask_filter = _ComboPopupMaskFilter(self)
 
     def _setup_combo(self, combo: QComboBox):
-        if type(combo.itemDelegate()) is _DEFAULT_COMBO_DELEGATE_TYPE:
-            combo.setItemDelegate(QStyledItemDelegate(combo))
+        if type(combo.itemDelegate()) is _DEFAULT_COMBO_DELEGATE_TYPE or type(combo.itemDelegate()) is QStyledItemDelegate:
+            combo.setItemDelegate(CheckmarkComboDelegate(combo))
         if combo.view() and combo.view().window():
             container = combo.view().window()
             container.setAttribute(Qt.WA_TranslucentBackground, True)

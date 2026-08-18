@@ -2,14 +2,15 @@
 import os
 import requests
 from PySide6.QtWidgets import (
-    QWidget, QLabel, QPushButton, QSizePolicy, QComboBox, QStyledItemDelegate, QStyle, QStyleOptionComboBox
+    QWidget, QLabel, QPushButton, QSizePolicy, QComboBox, QStyledItemDelegate, QStyle, QStyleOptionComboBox,
+    QStyleOptionViewItem, QApplication
 )
-from PySide6.QtCore import Qt, Signal, QThread, QSize
-from PySide6.QtGui import QPixmap, QImage, QIcon, QPainter, QColor, QFontMetrics
+from PySide6.QtCore import Qt, Signal, QThread, QSize, QRect
+from PySide6.QtGui import QPixmap, QImage, QIcon, QPainter, QColor, QFontMetrics, QPalette
 from PySide6.QtSvg import QSvgRenderer
 from gui.styles import get_theme_token, apply_cut_button_style
 from gui.tabs.editing_media.editing_media_icons import get_colored_svg_icon
-from gui.widgets.combo_box import AutoPopupComboBox
+from gui.widgets.combo_box import AutoPopupComboBox, CheckmarkComboDelegate
 
 class ThumbnailLoaderThread(QThread):
     finished = Signal(bytes, str) # content, error
@@ -24,23 +25,23 @@ class ThumbnailLoaderThread(QThread):
         last_error = ""
         for url in urls_to_try:
             try:
-                resp = requests.get(url, timeout=10)
-                resp.raise_for_status()
-                if resp.content:
+                resp = requests.get(url, timeout=4)
+                if resp.status_code == 200:
                     self.finished.emit(resp.content, "")
                     return
             except Exception as e:
                 last_error = str(e)
         self.finished.emit(b"", last_error)
 
-class RichTextDelegate(QStyledItemDelegate):
+class RichTextDelegate(CheckmarkComboDelegate):
     """
-    Delegate avanzado que permite pintar etiquetas con colores específicos.
+    Delegate avanzado que permite pintar etiquetas con colores específicos y
+    el icono de verificación verde de DowP a la derecha en el elemento seleccionado.
     [Combinado] -> Azul
     [Multi-Idioma] -> Violeta
     """
-    def __init__(self, parent=None):
-        super().__init__(parent)
+    def __init__(self, combo=None, parent=None):
+        super().__init__(combo, parent)
         self.tag_colors = {
             self.tr("[Combinado]"): get_theme_token("etiqueta_combinado", "#3498db"),
             self.tr("[Multi-Idioma]"): get_theme_token("etiqueta_multi_idioma", "#9b59b6"),
@@ -67,68 +68,108 @@ class RichTextDelegate(QStyledItemDelegate):
         return pixmap
 
     def paint(self, painter, option, index):
+        opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+
+        combo = self._get_combo(option)
+        is_current = (combo is not None and index.row() == combo.currentIndex())
+        is_hovered = bool(opt.state & QStyle.StateFlag.State_Selected)
+
+        raw_text = opt.text
+        opt.text = ""  # Limpiar para controlar el dibujado de fondo
+
+        widget = option.widget
+        style = widget.style() if widget else QApplication.style()
+
+        # 1. Dibujar Fondo
+        if is_hovered:
+            style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt, painter, widget)
+        elif is_current:
+            painter.save()
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            bg_rect = opt.rect.adjusted(2, 1, -2, -1)
+            painter.setBrush(QColor(255, 255, 255, 22))
+            painter.setPen(Qt.NoPen)
+            painter.drawRoundedRect(bg_rect, 4, 4)
+            painter.restore()
+        else:
+            style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt, painter, widget)
+
+        # 2. Dibujar texto enriquecido, iconos y etiquetas
+        rect = opt.rect
+        current_x = rect.left() + 10
+        check_reserved_space = 36
+        max_x = rect.right() - check_reserved_space
+
         painter.save()
-        
-        # Dibujar fondo de selección/hover estándar sin el texto
-        self.initStyleOption(option, index)
-        text = option.text  # Guardar el texto original
-        option.text = ""    # Limpiar para que el estilo base no lo dibuje
-        
-        option.widget.style().drawControl(QStyle.ControlElement.CE_ItemViewItem, option, painter, option.widget)
-        
-        rect = option.rect
-        rect.setLeft(rect.left() + 10) # Margen izquierdo
-        
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        
-        # Dividir el texto por espacios para buscar etiquetas
-        parts = text.split(' ')
-        current_x = rect.left()
-        
+
+        parts = raw_text.split(' ')
         font = painter.font()
-        
-        for part in parts:
+
+        for i, part in enumerate(parts):
             if not part: continue
-            
-            # Limpiar posibles caracteres pegados para la comparación
             clean_part = part.strip()
-            
+
             # ¿Es un icono especial?
             icon = None
             if "✨" in clean_part: icon = self.star_pixmap
             elif "⚠️" in clean_part: icon = self.warning_pixmap
-            
+
             if icon:
-                # Dibujar icono en lugar de texto
-                painter.drawPixmap(current_x, rect.top() + (rect.height()-16)//2, icon)
-                current_x += 20
+                if current_x + 20 <= max_x:
+                    painter.drawPixmap(current_x, rect.top() + (rect.height()-16)//2, icon)
+                    current_x += 20
                 continue
 
             # ¿Es una etiqueta con color?
             color = self.tag_colors.get(clean_part, None)
-            
             if color:
-                painter.setPen(QIcon().theme().color(color) if hasattr(QIcon(), 'theme') else color)
+                painter.setPen(QColor(color))
                 font.setBold(True)
                 painter.setFont(font)
             else:
-                # Color de texto normal según el estado de la opción (seleccionada o no)
-                if option.state & QStyle.StateFlag.State_Selected:
-                    painter.setPen(option.palette.highlightedText().color())
+                if is_hovered:
+                    text_color = opt.palette.color(QPalette.ColorGroup.Normal, QPalette.ColorRole.HighlightedText)
+                    if text_color.lightness() < 40:
+                        text_color = QColor("#ffffff")
+                elif is_current:
+                    text_color = QColor("#ffffff")
                 else:
-                    painter.setPen(option.palette.text().color())
+                    text_color = QColor("#c5c5c5")
+                painter.setPen(text_color)
                 font.setBold(False)
                 painter.setFont(font)
-            
-            # Dibujar la parte
-            painter.drawText(current_x, rect.top(), rect.width(), rect.height(), 
-                             Qt.AlignVCenter, part)
-            
-            # Avanzar X según el ancho del texto dibujado
+
             fm = QFontMetrics(font)
-            current_x += fm.horizontalAdvance(part + " ")
-            
+            part_str = part + (" " if i < len(parts) - 1 else "")
+            part_w = fm.horizontalAdvance(part_str)
+
+            if current_x + part_w <= max_x:
+                painter.drawText(current_x, rect.top(), part_w, rect.height(), Qt.AlignmentFlag.AlignVCenter, part_str)
+                current_x += part_w
+            else:
+                avail_w = max(0, max_x - current_x)
+                if avail_w > 10:
+                    elided = fm.elidedText(part_str, Qt.TextElideMode.ElideRight, avail_w)
+                    painter.drawText(current_x, rect.top(), avail_w, rect.height(), Qt.AlignmentFlag.AlignVCenter, elided)
+                break
+
         painter.restore()
+
+        # 3. Dibujar el checkmark verde si es el ítem seleccionado
+        if is_current and self._cached_check_pixmap:
+            painter.save()
+            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+            icon_display_size = 18
+            margin_right = 10
+            x = option.rect.right() - margin_right - icon_display_size
+            y = option.rect.top() + (option.rect.height() - icon_display_size) // 2
+
+            painter.drawPixmap(x, y, icon_display_size, icon_display_size, self._cached_check_pixmap)
+            painter.restore()
 
     def sizeHint(self, option, index):
         size = super().sizeHint(option, index)

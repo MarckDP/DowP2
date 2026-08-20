@@ -16,9 +16,10 @@ import os
 import json
 import tempfile
 from core.logger.logger_manager import logger
+from core.utils.paths import get_src_dir
 
 # Directorio base de temas
-_THEMES_DIR = os.path.join(os.path.dirname(__file__), "themes")
+_THEMES_DIR = os.path.join(get_src_dir(), "gui", "themes")
 _BASE_QSS = os.path.join(_THEMES_DIR, "_base.qss")
 
 # Directorio temporal para assets generados (SVGs, etc.)

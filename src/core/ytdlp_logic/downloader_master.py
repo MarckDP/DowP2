@@ -5,7 +5,6 @@ import traceback
 from core.logger.logger_manager import logger
 from core.setup.setup_manager import get_dependency_env
 from core.setup.ytdlp_setup import get_ytdlp_path
-from core.utils.config_manager import get_config
 
 from core.ytdlp_logic.analyzer import get_base_ydl_opts
 from core.utils.cleanup_manager import DownloadCancelledError
@@ -33,6 +32,13 @@ class DownloaderMaster:
         if request_data.get("title"):
             request_data["title"] = self._sanitize_filename(request_data["title"])
 
+        # En modo "solo subtítulos" sin "Recortar subtítulo al fragmento" activo, se
+        # ignoran los fragmentos seleccionados: debe bajar el subtítulo completo del
+        # video, no un recorte por fragmento. El recorte solo aplica si el usuario
+        # activó esa opción explícitamente (cut_subtitles).
+        if request_data.get("mode") == "subtitle_only" and not request_data.get("cut_subtitles"):
+            request_data["selected_fragments"] = []
+
         # 1. Preparar Opciones (Heredando base del analizador)
         ydl_opts = self._prepare_opts(request_data, progress_callback)
         
@@ -50,17 +56,15 @@ class DownloaderMaster:
         if ytdlp_path not in sys.path:
             sys.path.insert(0, ytdlp_path)
 
-        # Inyectar plugin del PO Token Provider solo si bgutil es el provider activo.
+        # Inyectar siempre la carpeta de plugins si al menos uno (bgutil o wpc) está
+        # presente, para que yt_dlp los registre ambos en su primera ejecución y
+        # evitar el bug de caché de módulos al retirarla/reinsertarla según el provider.
         from core.setup.potprovider_setup import get_plugin_dir, check_plugin
+        from core.setup.wpc_setup import check_wpc
         plugin_dir = get_plugin_dir()
-        pot_provider = get_config().get("pot_provider", "bgutil")
-        if pot_provider == "bgutil" and check_plugin():
-            if plugin_dir not in sys.path:
-                sys.path.insert(0, plugin_dir)
-                logger.debug(f"DownloaderMaster: plugin dir inyectado en sys.path -> {plugin_dir}")
-        else:
-            if plugin_dir in sys.path:
-                sys.path.remove(plugin_dir)
+        if (check_plugin() or check_wpc()) and plugin_dir not in sys.path:
+            sys.path.insert(0, plugin_dir)
+            logger.debug(f"DownloaderMaster: plugin dir inyectado en sys.path -> {plugin_dir}")
 
         from core.ytdlp_logic.resilient_downloader import is_youtube_access_error, make_fallback_ydl_opts
 

@@ -4,6 +4,7 @@ from PySide6.QtCore import Qt, QSize, Signal
 from PySide6.QtGui import QIcon, QPixmap
 from core.services.editor_integration_manager import EditorIntegrationManager
 from core.utils.config_manager import get_config, save_config
+from core.utils.paths import get_src_dir
 from gui.styles import apply_folder_browse_button_style
 import os
 
@@ -320,7 +321,7 @@ class IntegrationsPage(QWidget):
     def set_icon(self, label, icon_name, opacity=1.0, size=32):
         # Asegurar que el icono existe
         label.setProperty("icon_name", icon_name) # Guardar nombre para restaurar luego
-        icon_path = os.path.join("src", "assets", "icons", "svg", icon_name)
+        icon_path = os.path.join(get_src_dir(), "assets", "icons", "svg", icon_name)
         if os.path.exists(icon_path):
             pixmap = QPixmap(icon_path).scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             label.setPixmap(pixmap)

@@ -5,6 +5,25 @@ import shutil
 import platform
 from core.logger.logger_manager import logger
 
+
+def get_src_dir() -> str:
+    """
+    Devuelve el equivalente de '<repo_root>/src' tanto en modo fuente como en
+    el .exe compilado (--onedir). Es el ancla correcta para cualquier ruta a
+    assets, iconos, temas, etc.
+
+    No usar conteos de os.path.dirname(__file__) para esto: el número de
+    niveles a subir depende de dónde vive cada módulo bajo src/, y en el .exe
+    congelado PyInstaller aplana los paquetes fuera del árbol 'src'
+    (_internal/gui/... en vez de _internal/src/gui/...), así que ese cálculo
+    da un resultado distinto — y roto — según el módulo.
+    """
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        return os.path.join(sys._MEIPASS, "src")
+    # Este archivo vive en <repo_root>/src/core/utils/paths.py
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+
+
 def get_app_data_dir() -> str:
     r"""
     Retorna la ruta absoluta del directorio AppData del sistema para DowP2.

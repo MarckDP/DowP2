@@ -23,6 +23,7 @@ from PySide6.QtSvgWidgets import QSvgWidget
 
 from gui.styles import get_theme_token
 from core.logger.logger_manager import logger
+from core.utils.paths import get_src_dir
 
 
 class DependencyCheckWorker(QThread):
@@ -200,8 +201,7 @@ class SplashScreen(QWidget):
         header.addStretch()
 
         # ── Logo (SVG) ──
-        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        logo_path = os.path.join(base_dir, "src", "assets", "icons", "app", "DowP_Logo.svg")
+        logo_path = os.path.join(get_src_dir(), "assets", "icons", "app", "DowP_Logo.svg")
 
         logo_widget = QSvgWidget(logo_path, container)
         logo_widget.setFixedSize(QSize(68, 68))

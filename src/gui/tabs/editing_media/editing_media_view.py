@@ -35,6 +35,7 @@ except ImportError:
     MULTIMEDIA_AVAILABLE = False
 
 from core.logger.logger_manager import logger
+from core.utils.paths import get_src_dir
 from gui.styles import (
     get_theme_token,
     apply_player_play_button_style,
@@ -1188,7 +1189,7 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         self.media_list.setStyleSheet(list_style)
 
         # Obtener rutas absolutas para las imágenes del árbol
-        src_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+        src_dir = get_src_dir()
         closed_arrow = os.path.join(src_dir, "assets", "icons", "svg", "tree_closed.svg").replace("\\", "/")
         open_arrow = os.path.join(src_dir, "assets", "icons", "svg", "tree_open.svg").replace("\\", "/")
 

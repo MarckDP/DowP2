@@ -11,6 +11,7 @@ from PySide6.QtSvg import QSvgRenderer
 from gui.styles import get_theme_token, apply_cut_button_style
 from gui.tabs.editing_media.editing_media_icons import get_colored_svg_icon
 from gui.widgets.combo_box import AutoPopupComboBox, CheckmarkComboDelegate
+from core.utils.paths import get_src_dir
 
 class ThumbnailLoaderThread(QThread):
     finished = Signal(bytes, str) # content, error
@@ -47,7 +48,7 @@ class RichTextDelegate(CheckmarkComboDelegate):
             self.tr("[Multi-Idioma]"): get_theme_token("etiqueta_multi_idioma", "#9b59b6"),
         }
         # Cargar Iconos
-        _icon_dir = os.path.join(os.path.dirname(__file__), "..", "..", "..", "assets", "icons", "svg")
+        _icon_dir = os.path.join(get_src_dir(), "assets", "icons", "svg")
         self.star_pixmap = self._get_colored_icon(os.path.join(_icon_dir, "star.svg"), "#58cf5c") # Verde
         self.warning_pixmap = self._get_colored_icon(os.path.join(_icon_dir, "warning.svg"), "#ddb745") # Ámbar/Amarillo
 
@@ -279,7 +280,7 @@ class RichComboBox(AutoPopupComboBox):
             self.tr("[Combinado]"): get_theme_token("etiqueta_combinado", "#3498db"),
             self.tr("[Multi-Idioma]"): get_theme_token("etiqueta_multi_idioma", "#9b59b6"),
         }
-        _icon_dir = os.path.join(os.path.dirname(__file__), "..", "..", "..", "assets", "icons", "svg")
+        _icon_dir = os.path.join(get_src_dir(), "assets", "icons", "svg")
         self.star_pixmap = self._get_colored_icon(os.path.join(_icon_dir, "star.svg"), "#4CAF50")
         self.warning_pixmap = self._get_colored_icon(os.path.join(_icon_dir, "warning.svg"), "#FFC107")
 

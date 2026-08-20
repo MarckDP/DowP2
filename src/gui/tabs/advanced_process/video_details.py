@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QLabel,
 from PySide6.QtCore import Qt, QPropertyAnimation, QParallelAnimationGroup, QEasingCurve, Signal, QThread
 from PySide6.QtGui import QPixmap, QImage, QIcon, QFontMetrics, QPainter
 from core.logger.logger_manager import logger
+from core.utils.paths import get_src_dir
 from gui.widgets.mode_selector import ModeSelector
 from gui.widgets.toggle_switch import ToggleSwitch
 from gui.dialogs.fragment_dialog import FragmentDialog
@@ -515,8 +516,7 @@ class VideoDetailsWidget(QFrame):
 
     def _set_fallback_icon(self, is_audio=False):
         icon_name = "music_note.svg" if is_audio else "movie.svg"
-        icon_path = os.path.join(os.path.dirname(__file__), "..", "..", "..", "assets", "icons", "svg", icon_name)
-        icon_path = os.path.normpath(icon_path)
+        icon_path = os.path.join(get_src_dir(), "assets", "icons", "svg", icon_name)
         
         if os.path.exists(icon_path):
             pixmap = QIcon(icon_path).pixmap(128, 128)

@@ -31,9 +31,9 @@ import os
 
 from core.logger.logger_manager import logger
 from core.utils.hardware_detector import detect_hardware
+from core.utils.paths import get_src_dir
 
-_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-_DATA_DIR = os.path.join(_REPO_ROOT, "src", "assets", "data")
+_DATA_DIR = os.path.join(get_src_dir(), "assets", "data")
 _MATRIX_PATH = os.path.join(_DATA_DIR, "ffmpeg_codec_matrix.json")
 _WIKI_PATH = os.path.join(_DATA_DIR, "codec_container_compatibility.json")
 # NOTA: rutas relativas al arbol de codigo fuente. Cuando el proyecto tenga empaquetador

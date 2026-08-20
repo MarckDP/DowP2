@@ -2,6 +2,7 @@ import os
 from PySide6.QtCore import Qt, QSize, QTimer, QRectF
 from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor, QPen
 from PySide6.QtWidgets import QWidget
+from core.utils.paths import get_src_dir
 
 class LoadingSpinnerWidget(QWidget):
     """Widget vectorial de spinner de carga animado a 30 FPS dibujado dinámicamente con QPainter."""
@@ -43,9 +44,7 @@ class LoadingSpinnerWidget(QWidget):
         painter.setPen(pen)
         painter.drawArc(rect, int(-self._angle * 16), int(270 * 16))
 
-_SVG_DIR = os.path.normpath(os.path.join(
-    os.path.dirname(__file__), "..", "..", "..", "assets", "icons", "svg"
-))
+_SVG_DIR = os.path.join(get_src_dir(), "assets", "icons", "svg")
 
 def get_colored_svg_icon(name: str, color_hex: str, size=16, disabled_color_hex: str = "#666666") -> QIcon:
     """Carga y tintura un icono SVG con el color especificado y soporte para estado deshabilitado."""

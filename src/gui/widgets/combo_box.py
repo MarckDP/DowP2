@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtSvg import QSvgRenderer
 
 from gui.styles import get_theme_token
+from core.utils.paths import get_src_dir
 
 
 class CheckmarkComboDelegate(QStyledItemDelegate):
@@ -39,8 +40,7 @@ class CheckmarkComboDelegate(QStyledItemDelegate):
 
     @staticmethod
     def _create_check_pixmap():
-        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        svg_path = os.path.join(base_dir, "assets", "icons", "svg", "check_small.svg")
+        svg_path = os.path.join(get_src_dir(), "assets", "icons", "svg", "check_small.svg")
         if not os.path.exists(svg_path):
             return None
         # Renderizado en alta resolución (36x36) para nitidez vectorial perfecta

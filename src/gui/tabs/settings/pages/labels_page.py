@@ -4,6 +4,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, Signal, QSize
 from core.utils.config_manager import get_config, save_config
+from core.utils.paths import get_src_dir
 from gui.styles import get_theme_token
 
 class LabelRow(QFrame):
@@ -38,7 +39,7 @@ class LabelRow(QFrame):
 
         # Icon paths
         import os
-        _icon_dir = os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "assets", "icons", "svg")
+        _icon_dir = os.path.join(get_src_dir(), "assets", "icons", "svg")
         from gui.widgets.queue_panel import get_colored_icon
 
         # Edit button (SVG icon)

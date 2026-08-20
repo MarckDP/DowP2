@@ -14,6 +14,7 @@ from PySide6.QtGui import QIcon
 
 from gui.styles import get_theme_token
 from gui.tabs.quick_mode.download_row import QuickDownloadRow
+from core.utils.paths import get_src_dir
 
 
 class ActivityPanel(QFrame):
@@ -60,9 +61,7 @@ class ActivityPanel(QFrame):
         
         header_layout.addStretch(1)
 
-        icon_dir = os.path.normpath(os.path.join(
-            os.path.dirname(__file__), "..", "..", "..", "assets", "icons", "svg"
-        ))
+        icon_dir = os.path.join(get_src_dir(), "assets", "icons", "svg")
 
         # Botón "Cancelar todo"
         self.btn_cancel_all = QPushButton(self.tr("Cancelar todo") if hasattr(self, "tr") else "Cancelar todo")

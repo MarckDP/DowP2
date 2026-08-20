@@ -3,6 +3,7 @@ import os
 import json
 import random
 from core.utils.config_manager import get_config, save_config
+from core.utils.paths import get_src_dir
 
 def get_theme_color(token_key: str, default_value: str = None) -> str:
     """Resuelve un color de tema directamente desde los archivos de tema en la GUI sin importar módulos GUI."""
@@ -10,8 +11,7 @@ def get_theme_color(token_key: str, default_value: str = None) -> str:
     theme_name = config.get("theme", "dark")
     
     # Localizar la ruta de temas de forma correcta
-    base_dir = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", ".."))
-    json_path = os.path.join(base_dir, "src", "gui", "themes", f"{theme_name}.json")
+    json_path = os.path.join(get_src_dir(), "gui", "themes", f"{theme_name}.json")
     
     if os.path.exists(json_path):
         try:

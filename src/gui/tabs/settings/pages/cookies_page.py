@@ -4,12 +4,10 @@ from PySide6.QtGui import QDesktopServices, QIcon
 from core.utils.i18n import logger
 from core.utils.config_manager import get_config, save_config
 from core.setup.ytdlp_setup import get_ytdlp_path
-from core.setup.setup_manager import get_ytdlp_base_args
+from core.setup.ffmpeg_setup import check_ffmpeg, get_ffmpeg_dir
 from gui.widgets.combo_box import AutoPopupComboBox
 from gui.styles import apply_folder_browse_button_style
 import sys
-import subprocess
-import os
 
 class CookieTestWorker(QThread):
     finished = Signal(bool, str)
@@ -22,42 +20,54 @@ class CookieTestWorker(QThread):
         self.profile = profile
 
     def run(self):
+        # No usa subprocess.run([sys.executable, ytdlp_path, ...]): en el .exe
+        # compilado sys.executable es el propio DowP.exe (no un intérprete
+        # genérico), así que esa llamada lanzaba una segunda instancia
+        # completa de la app en vez de ejecutar yt-dlp. En su lugar se
+        # importa yt_dlp en este mismo proceso, igual que el resto de la app.
         logger.info(f"CookieTestWorker: Iniciando prueba de cookies. Modo: {self.mode}, Browser: {self.browser}, Perfil: {self.profile}")
         ytdlp_path = get_ytdlp_path()
         if not ytdlp_path:
             logger.error("CookieTestWorker: yt-dlp no encontrado.")
             self.finished.emit(False, "yt-dlp no encontrado")
             return
-            
-        cmd = [sys.executable, ytdlp_path] + get_ytdlp_base_args()
-        
+
+        ydl_opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'skip_download': True,
+            'noplaylist': True,
+        }
+        if check_ffmpeg():
+            ydl_opts['ffmpeg_location'] = get_ffmpeg_dir()
+
         if self.mode == "file":
             if not self.file_path:
                 logger.error("CookieTestWorker: Archivo de cookies no especificado.")
                 self.finished.emit(False, "Archivo no especificado")
                 return
-            cmd.extend(["--cookies", self.file_path])
+            ydl_opts['cookiefile'] = self.file_path
         elif self.mode == "browser":
-            arg = self.browser
-            if self.profile:
-                arg += f":{self.profile}"
-            cmd.extend(["--cookies-from-browser", arg])
-            
-        # Quick test without downloading
-        cmd.extend(["--dump-json", "--no-playlist", "--skip-download", "https://www.youtube.com/watch?v=dQw4w9WgXcQ"])
-        
-        try:
-            startupinfo = None
-            if os.name == 'nt':
-                startupinfo = subprocess.STARTUPINFO()
-                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            # Formato exacto que usa yt-dlp internamente: (browser, profile, keyring, container)
+            ydl_opts['cookiesfrombrowser'] = (self.browser.lower(), self.profile or None, None, None)
 
-            result = subprocess.run(cmd, capture_output=True, text=True, startupinfo=startupinfo)
-            if result.returncode == 0:
+        try:
+            if ytdlp_path not in sys.path:
+                if 'yt_dlp' in sys.modules:
+                    for mod in list(sys.modules.keys()):
+                        if mod.startswith('yt_dlp'):
+                            del sys.modules[mod]
+                sys.path.insert(0, ytdlp_path)
+
+            import yt_dlp
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info("https://www.youtube.com/watch?v=dQw4w9WgXcQ", download=False)
+
+            if info:
                 logger.info("CookieTestWorker: Prueba de cookies exitosa.")
                 self.finished.emit(True, "Correcto")
             else:
-                logger.error(f"CookieTestWorker: Falló la prueba de cookies. yt-dlp error: {result.stderr.strip()}")
+                logger.error("CookieTestWorker: Falló la prueba de cookies (sin información extraída).")
                 self.finished.emit(False, "Falló")
         except Exception as e:
             logger.error(f"CookieTestWorker: Error de ejecución: {e}")

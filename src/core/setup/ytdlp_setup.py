@@ -90,33 +90,46 @@ def download_ytdlp(progress_callback=None):
         logger.error(f"Error downloading yt-dlp: {e}")
         return False, str(e)
 
-import subprocess
 import sys
 from core.utils.config_manager import get_config, save_config
 
 def get_local_version(force_check=False):
-    """Runs the local yt-dlp to get its version, caching it in config.json to avoid lag."""
+    """
+    Lee la versión de yt-dlp importándolo en el mismo proceso (via sys.path
+    sobre el .zip), cacheándola en config.json para evitar reimportar.
+
+    No usa subprocess.run([sys.executable, ...]) — eso asume que
+    sys.executable es un intérprete genérico capaz de ejecutar un script
+    pasado como argumento, cierto en modo fuente (python.exe) pero falso en
+    el .exe compilado, donde sys.executable es el propio DowP.exe: esa
+    llamada terminaba lanzando una segunda instancia completa de la app en
+    vez de imprimir la versión.
+    """
     if not check_ytdlp():
         return None
-        
+
     config = get_config()
     versions = config.get("dependency_versions", {})
     if not force_check and "ytdlp" in versions:
         return versions["ytdlp"]
-        
+
     try:
-        flags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
-        result = subprocess.run(
-            [sys.executable, get_ytdlp_path(), "--version"], 
-            capture_output=True, text=True, check=True, creationflags=flags
-        )
-        version = result.stdout.strip()
-        
+        ytdlp_path = get_ytdlp_path()
+        if ytdlp_path not in sys.path:
+            if 'yt_dlp' in sys.modules:
+                for mod in list(sys.modules.keys()):
+                    if mod.startswith('yt_dlp'):
+                        del sys.modules[mod]
+            sys.path.insert(0, ytdlp_path)
+
+        import yt_dlp
+        version = yt_dlp.version.__version__
+
         # Save to config
         versions["ytdlp"] = version
         config["dependency_versions"] = versions
         save_config(config)
-        
+
         return version
     except Exception as e:
         logger.error(f"Error getting local yt-dlp version: {e}")

@@ -5,6 +5,7 @@ from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QTabWidget, QAp
 from PySide6.QtCore import Qt, QPoint, QSize
 from PySide6.QtGui import QIcon
 from core.logger.logger_manager import logger
+from core.utils.paths import get_src_dir
 from gui.styles import load_stylesheet
 from gui.widgets.title_bar import CustomTitleBar
 from core.utils.i18n import load_language
@@ -48,8 +49,7 @@ class EditorStatusCornerWidget(QWidget):
         self.btn_settings.setCursor(Qt.PointingHandCursor)
         self.btn_settings.setToolTip("Ajustes")
         
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-        self.icons_dir = os.path.join(os.path.dirname(base_dir), "assets", "icons", "svg")
+        self.icons_dir = os.path.join(get_src_dir(), "assets", "icons", "svg")
         self.btn_settings.setIcon(QIcon(os.path.join(self.icons_dir, "settings.svg")))
 
         self._icon_green = QIcon(os.path.join(self.icons_dir, "check_circle_green.svg"))
@@ -234,8 +234,7 @@ class EditorStatusCornerWidget(QWidget):
         elif app_id == "davinci": svg_name = "davinci resolve.svg"
         
         if svg_name:
-            base_dir = os.path.dirname(os.path.abspath(__file__))
-            icons_dir = os.path.join(os.path.dirname(base_dir), "assets", "icons", "svg")
+            icons_dir = os.path.join(get_src_dir(), "assets", "icons", "svg")
             icon_path = os.path.join(icons_dir, svg_name)
             
             # Achicar

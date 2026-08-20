@@ -17,11 +17,10 @@ from gui.styles import get_theme_token
 from gui.widgets.range_slider import RangeSlider
 from gui.widgets.volume_control import VolumeControlWidget
 from core.tabs.advanced_process.fragment_logic import FragmentManager, FragmentState
+from core.utils.paths import get_src_dir
 
 # ── Icon helpers ────────────────────────────────────────────
-_SVG_DIR = os.path.normpath(os.path.join(
-    os.path.dirname(__file__), "..", "..", "assets", "icons", "svg"
-))
+_SVG_DIR = os.path.join(get_src_dir(), "assets", "icons", "svg")
 
 def _icon(name, color_hex=None, size=None):
     path = os.path.join(_SVG_DIR, name)

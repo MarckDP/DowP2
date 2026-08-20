@@ -207,17 +207,15 @@ def get_video_info(url, extra_opts=None, progress_callback=None):
                     del sys.modules[mod]
         sys.path.insert(0, ytdlp_path)
 
-    # Inyectar el plugin del PO Token Provider solo si bgutil es el provider activo.
+    # Inyectar siempre la carpeta de plugins si al menos uno (bgutil o wpc) está
+    # presente, para que yt_dlp los registre ambos en su primera ejecución y
+    # evitar el bug de caché de módulos al retirarla/reinsertarla según el provider.
     from core.setup.potprovider_setup import get_plugin_dir, check_plugin
+    from core.setup.wpc_setup import check_wpc
     plugin_dir = get_plugin_dir()
-    pot_provider = get_config().get("pot_provider", "bgutil")
-    if pot_provider == "bgutil" and check_plugin():
-        if plugin_dir not in sys.path:
-            sys.path.insert(0, plugin_dir)
-            logger.debug(f"Analyzer: plugin dir inyectado en sys.path -> {plugin_dir}")
-    else:
-        if plugin_dir in sys.path:
-            sys.path.remove(plugin_dir)
+    if (check_plugin() or check_wpc()) and plugin_dir not in sys.path:
+        sys.path.insert(0, plugin_dir)
+        logger.debug(f"Analyzer: plugin dir inyectado en sys.path -> {plugin_dir}")
 
     try:
         import yt_dlp

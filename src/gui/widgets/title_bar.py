@@ -9,10 +9,11 @@ from PySide6.QtWidgets import QWidget, QHBoxLayout, QLabel, QPushButton, QSizePo
 from PySide6.QtCore import Qt, QPoint, Signal
 from PySide6.QtGui import QIcon, QPixmap
 from core.logger.logger_manager import logger
+from core.utils.paths import get_src_dir
 
 # Ruta base de iconos SVG
-_ICONS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "assets", "icons", "svg")
-_APP_ICONS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "assets", "icons", "app")
+_ICONS_DIR = os.path.join(get_src_dir(), "assets", "icons", "svg")
+_APP_ICONS_DIR = os.path.join(get_src_dir(), "assets", "icons", "app")
 
 
 def _icon(name: str) -> QIcon:

@@ -11,6 +11,7 @@ Cuando el idioma es otro (ej: inglés), se carga el archivo .qm correspondiente.
 import os
 from PySide6.QtCore import QTranslator, QCoreApplication
 from core.logger.logger_manager import logger
+from core.utils.paths import get_src_dir
 
 _translator = None
 
@@ -34,7 +35,7 @@ def load_language(app, lang_code):
         return True
 
     # Para otros idiomas, buscar el archivo .qm correspondiente
-    trans_dir = os.path.join("src", "assets", "translations")
+    trans_dir = os.path.join(get_src_dir(), "assets", "translations")
     possible_names = [
         f"{lang_code}_{lang_code.upper()}.qm",  # en_EN.qm (no existe pero por si acaso)
         f"{lang_code}_US.qm",                     # en_US.qm

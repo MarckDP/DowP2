@@ -14,6 +14,7 @@ from PySide6.QtCore import Qt, QSize, Signal
 from PySide6.QtGui import QImage, QPixmap, QIcon
 
 from core.logger.logger_manager import logger
+from core.utils.paths import get_src_dir
 from gui.styles import get_theme_token
 from gui.tabs.advanced_process.video_details_components import ThumbnailLoaderThread
 from core.tabs.quick_mode.quick_mode_logic import reveal_in_file_manager
@@ -51,8 +52,7 @@ class QuickThumbnailWidget(QWidget):
         self._set_default_thumbnail()
         
     def _set_default_thumbnail(self):
-        icon_path = os.path.join(os.path.dirname(__file__), "..", "..", "..", "assets", "icons", "svg", "movie.svg")
-        icon_path = os.path.normpath(icon_path)
+        icon_path = os.path.join(get_src_dir(), "assets", "icons", "svg", "movie.svg")
         
         bg_color = get_theme_token('fondo_principal', '#121212')
         borde_color = get_theme_token('borde', '#2d2d2d')
@@ -180,9 +180,7 @@ class QuickDownloadRow(QFrame):
         actions_layout.setSpacing(4)
         actions_layout.setAlignment(Qt.AlignCenter)
 
-        icon_dir = os.path.normpath(os.path.join(
-            os.path.dirname(__file__), "..", "..", "..", "assets", "icons", "svg"
-        ))
+        icon_dir = os.path.join(get_src_dir(), "assets", "icons", "svg")
         _action_btn_style = f"""
             QPushButton {{
                 background-color: transparent;

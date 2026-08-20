@@ -5,6 +5,7 @@ from PySide6.QtCore import Qt, QUrl, QSize
 from PySide6.QtGui import QPixmap, QIcon, QPainter, QColor
 
 from core.logger.logger_manager import logger
+from core.utils.paths import get_src_dir
 from gui.styles import (
     get_theme_token,
     apply_player_play_button_style,
@@ -23,9 +24,7 @@ except ImportError as e:
     MULTIMEDIA_AVAILABLE = False
     logger.warning(f"PreviewPanel: QtMultimedia no está disponible en este sistema: {e}")
 
-_SVG_DIR = os.path.normpath(os.path.join(
-    os.path.dirname(__file__), "..", "..", "..", "assets", "icons", "svg"
-))
+_SVG_DIR = os.path.join(get_src_dir(), "assets", "icons", "svg")
 
 def get_svg_icon(name: str) -> QIcon:
     path = os.path.join(_SVG_DIR, name)

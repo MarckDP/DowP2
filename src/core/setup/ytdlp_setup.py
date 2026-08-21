@@ -1,9 +1,12 @@
 # src/core/setup/ytdlp_setup.py
 import os
+import sys
 import requests
 from core.logger.logger_manager import logger
+from core.utils.config_manager import get_config, save_config
 
-YTDLP_URL = "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest"
+YTDLP_STABLE_URL = "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest"
+YTDLP_NIGHTLY_URL = "https://api.github.com/repos/yt-dlp/yt-dlp-nightly-builds/releases/latest"
 FILENAME = "yt-dlp.zip"
 
 def get_ytdlp_dir():
@@ -19,6 +22,16 @@ def get_ytdlp_path():
     """Returns the full path of the yt-dlp.zip file."""
     return os.path.join(get_ytdlp_dir(), FILENAME)
 
+def get_release_url(channel=None):
+    """Devuelve la URL de la API de GitHub según el canal especificado ('stable' o 'nightly')."""
+    if not channel:
+        config = get_config()
+        channel = config.get("ytdlp_channel", "stable")
+    
+    if str(channel).lower() == "nightly":
+        return YTDLP_NIGHTLY_URL
+    return YTDLP_STABLE_URL
+
 _ytdlp_checked = False
 
 def check_ytdlp():
@@ -29,12 +42,43 @@ def check_ytdlp():
         logger.debug(f"Checking yt-dlp.zip existence: {exists}")
         _ytdlp_checked = True
     return exists
-
-def download_ytdlp(progress_callback=None):
-    """Downloads the latest version of yt-dlp and cleans shebang."""
+def purge_ytdlp_cache():
+    """
+    Invalida el caché de zipimport y limpia sys.modules para yt_dlp
+    garantizando que la nueva versión se cargue en caliente sin reiniciar.
+    """
     try:
-        logger.info(f"Fetching latest release info from {YTDLP_URL}")
-        response = requests.get(YTDLP_URL)
+        import zipimport
+        ytdlp_path = get_ytdlp_path()
+        if hasattr(zipimport, '_zip_directory_cache'):
+            zipimport._zip_directory_cache.pop(ytdlp_path, None)
+            zipimport._zip_directory_cache.pop(os.path.normpath(ytdlp_path), None)
+            zipimport._zip_directory_cache.pop(os.path.abspath(ytdlp_path), None)
+    except Exception as e:
+        logger.debug(f"No se pudo limpiar zipimport cache: {e}")
+
+    try:
+        import importlib
+        importlib.invalidate_caches()
+    except Exception:
+        pass
+
+    for mod in list(sys.modules.keys()):
+        if mod == 'yt_dlp' or mod.startswith('yt_dlp.'):
+            del sys.modules[mod]
+
+def download_ytdlp(channel=None, progress_callback=None):
+    """Downloads the version of yt-dlp according to the specified channel and cleans shebang."""
+    try:
+        config = get_config()
+        if channel is None:
+            channel = config.get("ytdlp_channel", "stable")
+
+        release_url = get_release_url(channel)
+        logger.info(f"Fetching {channel.upper()} release info from {release_url}")
+        
+        headers = {"User-Agent": "DowP2"}
+        response = requests.get(release_url, headers=headers, timeout=15)
         response.raise_for_status()
         data = response.json()
         
@@ -52,12 +96,12 @@ def download_ytdlp(progress_callback=None):
                     break
 
         if not download_url:
-            logger.error("yt-dlp asset not found in latest release")
-            return False, "yt-dlp asset not found."
+            logger.error(f"yt-dlp asset not found in {channel} release")
+            return False, f"yt-dlp ({channel}) asset not found."
 
         target_path = get_ytdlp_path()
-        logger.info(f"Downloading yt-dlp from {download_url}")
-        r = requests.get(download_url, stream=True)
+        logger.info(f"Downloading yt-dlp ({channel}) from {download_url}")
+        r = requests.get(download_url, headers=headers, stream=True, timeout=30)
         r.raise_for_status()
         
         total_size = int(r.headers.get('content-length', 0))
@@ -84,26 +128,26 @@ def download_ytdlp(progress_callback=None):
         except Exception as e:
             logger.error(f"No se pudo limpiar el shebang: {e}")
         
-        logger.info(f"yt-dlp.zip listo en {target_path}")
-        return True, "yt-dlp descargado y procesado correctamente."
-    except Exception as e:
-        logger.error(f"Error downloading yt-dlp: {e}")
-        return False, str(e)
+        # Purgar caché en memoria para recarga en caliente
+        purge_ytdlp_cache()
 
-import sys
-from core.utils.config_manager import get_config, save_config
+        # Guardar canal en config
+        config["ytdlp_channel"] = channel
+        save_config(config)
+
+        # Actualizar versión cacheada
+        get_local_version(force_check=True)
+
+        logger.info(f"yt-dlp.zip ({channel}) listo en {target_path}")
+        return True, f"yt-dlp ({channel}) descargado y procesado correctamente."
+    except Exception as e:
+        logger.error(f"Error downloading yt-dlp ({channel}): {e}")
+        return False, str(e)
 
 def get_local_version(force_check=False):
     """
     Lee la versión de yt-dlp importándolo en el mismo proceso (via sys.path
     sobre el .zip), cacheándola en config.json para evitar reimportar.
-
-    No usa subprocess.run([sys.executable, ...]) — eso asume que
-    sys.executable es un intérprete genérico capaz de ejecutar un script
-    pasado como argumento, cierto en modo fuente (python.exe) pero falso en
-    el .exe compilado, donde sys.executable es el propio DowP.exe: esa
-    llamada terminaba lanzando una segunda instancia completa de la app en
-    vez de imprimir la versión.
     """
     if not check_ytdlp():
         return None
@@ -115,11 +159,9 @@ def get_local_version(force_check=False):
 
     try:
         ytdlp_path = get_ytdlp_path()
+        purge_ytdlp_cache()
+
         if ytdlp_path not in sys.path:
-            if 'yt_dlp' in sys.modules:
-                for mod in list(sys.modules.keys()):
-                    if mod.startswith('yt_dlp'):
-                        del sys.modules[mod]
             sys.path.insert(0, ytdlp_path)
 
         import yt_dlp
@@ -135,18 +177,21 @@ def get_local_version(force_check=False):
         logger.error(f"Error getting local yt-dlp version: {e}")
         return None
 
-def get_latest_remote_version():
-    """Fetches the latest version string from GitHub API."""
+def get_latest_remote_version(channel=None):
+    """Fetches the latest version string from GitHub API for specified channel."""
     try:
-        response = requests.get(YTDLP_URL, timeout=10)
+        release_url = get_release_url(channel)
+        headers = {"User-Agent": "DowP2"}
+        response = requests.get(release_url, headers=headers, timeout=10)
         response.raise_for_status()
         data = response.json()
         return data.get("tag_name", "").lstrip("v")
     except Exception as e:
-        logger.error(f"Error getting remote yt-dlp version: {e}")
+        logger.error(f"Error getting remote yt-dlp version ({channel}): {e}")
         return None
 
 if __name__ == "__main__":
     if not check_ytdlp():
         download_ytdlp()
+
 

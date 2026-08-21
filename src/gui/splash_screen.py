@@ -47,7 +47,8 @@ class DependencyCheckWorker(QThread):
             from core.setup.setup_manager import verify_all_dependencies
             from core.setup.ytdlp_setup import (
                 check_ytdlp, download_ytdlp,
-                get_local_version as get_ytdlp_version
+                get_local_version as get_ytdlp_version,
+                get_latest_remote_version as get_ytdlp_remote_version
             )
             from core.setup.ffmpeg_setup import (
                 check_ffmpeg, download_ffmpeg,
@@ -62,48 +63,74 @@ class DependencyCheckWorker(QThread):
                 download_potprovider,
                 get_local_version as get_potprovider_version,
             )
+            from core.utils.config_manager import get_config
 
             self.status_update.emit("Verificando dependencias...")
 
             status = verify_all_dependencies()
 
-            if all(status.values()):
-                # Todas las dependencias están instaladas
-                self.status_update.emit("Todo listo")
-                self.all_ready.emit()
-                return
+            # 1. Si faltan dependencias, descargarlas
+            if not all(status.values()):
+                deps = [
+                    ("ytdlp",        "yt-dlp",      check_ytdlp,       download_ytdlp,       get_ytdlp_version),
+                    ("ffmpeg",       "FFmpeg",       check_ffmpeg,      download_ffmpeg,      get_ffmpeg_version),
+                    ("deno",         "Deno",         check_deno,        download_deno,        get_deno_version),
+                    ("potprovider",  "PO Provider",  check_potprovider, download_potprovider, get_potprovider_version),
+                ]
 
-            # Hay dependencias faltantes — descargar
-            deps = [
-                ("ytdlp",        "yt-dlp",      check_ytdlp,       download_ytdlp,       get_ytdlp_version),
-                ("ffmpeg",       "FFmpeg",       check_ffmpeg,      download_ffmpeg,      get_ffmpeg_version),
-                ("deno",         "Deno",         check_deno,        download_deno,        get_deno_version),
-                ("potprovider",  "PO Provider",  check_potprovider, download_potprovider, get_potprovider_version),
-            ]
+                for dep_id, name, check_fn, download_fn, version_fn in deps:
+                    if check_fn():
+                        version = version_fn() or "OK"
+                        self.dependency_finished.emit(dep_id, True, version)
+                        continue
 
-            for dep_id, name, check_fn, download_fn, version_fn in deps:
-                if check_fn():
-                    version = version_fn() or "OK"
+                    self.dependency_started.emit(dep_id, name)
+                    self.status_update.emit(f"Descargando {name}...")
+
+                    def make_callback(did):
+                        def cb(pct):
+                            self.dependency_progress.emit(did, pct)
+                        return cb
+
+                    success, msg = download_fn(progress_callback=make_callback(dep_id))
+
+                    if not success:
+                        self.dependency_finished.emit(dep_id, False, msg)
+                        self.failed.emit(f"Error al instalar {name}: {msg}")
+                        return
+
+                    version = version_fn(force_check=True) or "OK"
                     self.dependency_finished.emit(dep_id, True, version)
-                    continue
 
-                self.dependency_started.emit(dep_id, name)
-                self.status_update.emit(f"Descargando {name}...")
-
-                def make_callback(did):
-                    def cb(pct):
-                        self.dependency_progress.emit(did, pct)
-                    return cb
-
-                success, msg = download_fn(progress_callback=make_callback(dep_id))
-
-                if not success:
-                    self.dependency_finished.emit(dep_id, False, msg)
-                    self.failed.emit(f"Error al instalar {name}: {msg}")
-                    return
-
-                version = version_fn(force_check=True) or "OK"
-                self.dependency_finished.emit(dep_id, True, version)
+            # 2. Auto-actualización transparente de yt-dlp si hay nueva versión en el canal activo
+            try:
+                cfg = get_config()
+                channel = cfg.get("ytdlp_channel", "stable")
+                self.status_update.emit(f"Verificando actualización de yt-dlp ({channel})...")
+                
+                remote_ver = get_ytdlp_remote_version(channel=channel)
+                local_ver = get_ytdlp_version()
+                
+                if remote_ver and local_ver:
+                    r_clean = str(remote_ver).strip().lstrip('v')
+                    l_clean = str(local_ver).strip().lstrip('v')
+                    
+                    if r_clean != l_clean and r_clean not in l_clean:
+                        logger.info(f"SplashScreen: Auto-actualizando yt-dlp ({channel}): {local_ver} -> {remote_ver}")
+                        self.status_update.emit(f"Actualizando yt-dlp ({channel}) a {remote_ver}...")
+                        self.dependency_started.emit("ytdlp", "yt-dlp")
+                        
+                        def ytdlp_cb(pct):
+                            self.dependency_progress.emit("ytdlp", pct)
+                        
+                        success, msg = download_ytdlp(channel=channel, progress_callback=ytdlp_cb)
+                        if success:
+                            self.dependency_finished.emit("ytdlp", True, remote_ver)
+                            logger.info(f"SplashScreen: yt-dlp auto-actualizado a {remote_ver}")
+                        else:
+                            logger.warning(f"SplashScreen: No se pudo auto-actualizar yt-dlp: {msg}")
+            except Exception as update_err:
+                logger.debug(f"SplashScreen: Verificación de actualización de yt-dlp omitida ({update_err})")
 
             self.status_update.emit("Todo listo")
             self.all_ready.emit()

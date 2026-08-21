@@ -44,7 +44,10 @@ class UpdateCheckWorker(QThread):
         for config in self.configs:
             dep_id = config["id"]
             try:
-                remote_ver = config["remote_func"]()
+                if "channel" in config:
+                    remote_ver = config["remote_func"](channel=config["channel"])
+                else:
+                    remote_ver = config["remote_func"]()
             except Exception as e:
                 logger.error(f"Error fetching remote version for {dep_id}: {e}")
                 remote_ver = None
@@ -56,6 +59,23 @@ class UpdateCheckWorker(QThread):
                 
             results[dep_id] = {"local": local_ver, "remote": remote_ver}
         self.finished_signal.emit(results)
+
+
+class YTDLPUpdateCheckWorker(QThread):
+    """Consulta en segundo plano la última versión remota de yt-dlp según el canal."""
+    finished_signal = Signal(object)  # remote_version (str) o None
+
+    def __init__(self, channel, parent=None):
+        super().__init__(parent)
+        self.channel = channel
+
+    def run(self):
+        try:
+            remote_ver = ytdlp_remote(channel=self.channel)
+        except Exception as e:
+            logger.error(f"Error obteniendo la versión remota de yt-dlp ({self.channel}): {e}")
+            remote_ver = None
+        self.finished_signal.emit(remote_ver)
 
 
 class WPCUpdateCheckWorker(QThread):
@@ -89,11 +109,12 @@ class DependencyDownloadWorker(QThread):
     progress_signal = Signal(str, str) # current phase message, dep_id
     numeric_progress_signal = Signal(int, str) # percentage, dep_id
 
-    def __init__(self, dep_id, download_func, version=None, parent=None):
+    def __init__(self, dep_id, download_func, version=None, channel=None, parent=None):
         super().__init__(parent)
         self.dep_id = dep_id
         self.download_func = download_func
         self.version = version
+        self.channel = channel
 
     def run(self):
         try:
@@ -104,6 +125,8 @@ class DependencyDownloadWorker(QThread):
             
             if self.dep_id == "ffmpeg":
                 success, msg = self.download_func(version=self.version, progress_callback=progress_cb)
+            elif self.dep_id == "ytdlp":
+                success, msg = self.download_func(channel=self.channel, progress_callback=progress_cb)
             else:
                 success, msg = self.download_func(progress_callback=progress_cb)
                 
@@ -629,12 +652,14 @@ class YTDLPAndPOTPanel(QFrame):
     Tarjeta unificada que contiene a yt-dlp (motor principal) en la parte superior
     y a los PO Token Providers (plugins anti-bot) en la parte inferior.
     """
-    ytdlp_download_requested = Signal(str, object)  # "ytdlp", version
+    ytdlp_download_requested = Signal(str, object)  # "ytdlp", channel
     provider_changed = Signal(str)
 
     _TOOLTIP_YTDLP = (
         "yt-dlp es el motor central de DowP para la extracción de metadatos, análisis de formatos\n"
-        "y descarga de transmisiones de video y audio desde YouTube y más de 1000 sitios soportados."
+        "y descarga de transmisiones de video y audio desde YouTube y más de 1000 sitios soportados.\n\n"
+        "  • Canal Estable: Compilación oficial probada y validada de yt-dlp.\n"
+        "  • Canal Nightly: Compilación diaria automática con los últimos parches y correcciones anti-bot de YouTube."
     )
 
     _TOOLTIP_POT = (
@@ -661,6 +686,7 @@ class YTDLPAndPOTPanel(QFrame):
         self.setObjectName("ytdlpPotPanel")
         self.is_ytdlp_installed = False
         self.ytdlp_local_ver = None
+        self._ytdlp_update_worker = None
         self._wpc_worker = None
         self._bgutil_worker = None
         self._build_ui()
@@ -703,6 +729,31 @@ class YTDLPAndPOTPanel(QFrame):
         ytdlp_top_row.addWidget(self._ytdlp_version_summary)
 
         root.addLayout(ytdlp_top_row)
+
+        # Selector de canal para yt-dlp
+        ytdlp_channel_grid = QGridLayout()
+        ytdlp_channel_grid.setContentsMargins(0, 0, 0, 0)
+        ytdlp_channel_grid.setHorizontalSpacing(16)
+        ytdlp_channel_grid.setVerticalSpacing(6)
+
+        c_lbl = QLabel(self.tr("Canal:"))
+        c_lbl.setFixedWidth(70)
+        c_lbl.setStyleSheet("color: #CCC; font-size: 12px; font-weight: bold;")
+        ytdlp_channel_grid.addWidget(c_lbl, 0, 0)
+
+        self._group_ytdlp_channel = QButtonGroup(self)
+        self._radio_ytdlp_stable = self._make_radio(self.tr("Estable (Última Release Oficial)"), "stable")
+        self._radio_ytdlp_nightly = self._make_radio(self.tr("Nightly (Git / Parches Diarios Recomendados)"), "nightly")
+        self._group_ytdlp_channel.addButton(self._radio_ytdlp_stable, 0)
+        self._group_ytdlp_channel.addButton(self._radio_ytdlp_nightly, 1)
+        self._group_ytdlp_channel.idClicked.connect(self._on_ytdlp_channel_changed)
+
+        ytdlp_channel_grid.addWidget(self._radio_ytdlp_stable, 0, 1)
+        ytdlp_channel_grid.addWidget(self._radio_ytdlp_nightly, 0, 2)
+        ytdlp_channel_grid.setColumnMinimumWidth(1, 230)
+        ytdlp_channel_grid.setColumnMinimumWidth(2, 280)
+        ytdlp_channel_grid.setColumnStretch(3, 1)
+        root.addLayout(ytdlp_channel_grid)
 
         ytdlp_desc_row = QHBoxLayout()
         ytdlp_desc_row.setSpacing(12)
@@ -865,6 +916,12 @@ class YTDLPAndPOTPanel(QFrame):
         self.check_ytdlp_status()
         
         cfg = get_config()
+        channel = cfg.get("ytdlp_channel", "stable")
+        if channel == "nightly":
+            self._radio_ytdlp_nightly.setChecked(True)
+        else:
+            self._radio_ytdlp_stable.setChecked(True)
+
         provider = cfg.get("pot_provider", "bgutil")
         browser_path = cfg.get("pot_wpc_browser_path", "")
 
@@ -882,6 +939,18 @@ class YTDLPAndPOTPanel(QFrame):
         self._refresh_pot_status()
 
     # ── Métodos de yt-dlp ───────────────────────────────────────────────────
+    def _on_ytdlp_channel_changed(self, btn_id):
+        channel = "nightly" if btn_id == 1 else "stable"
+        cfg = get_config()
+        cfg["ytdlp_channel"] = channel
+        save_config(cfg)
+        logger.info(f"yt-dlp: Canal de versión cambiado a '{channel.upper()}'")
+        
+        self.set_ytdlp_searching_updates()
+        self._ytdlp_update_worker = YTDLPUpdateCheckWorker(channel)
+        self._ytdlp_update_worker.finished_signal.connect(self.set_ytdlp_update_available)
+        self._ytdlp_update_worker.start()
+
     def check_ytdlp_status(self):
         self.is_ytdlp_installed = check_ytdlp()
         if self.is_ytdlp_installed:
@@ -923,12 +992,26 @@ class YTDLPAndPOTPanel(QFrame):
             self._ytdlp_version_summary.setText(f"Versión: {self.ytdlp_local_ver}")
             self._ytdlp_version_summary.setStyleSheet("color: #AAAAAA; font-size: 12px;")
             return
+
         r_ver = str(remote_ver).strip().lstrip('v')
-        l_ver = str(self.ytdlp_local_ver).strip().lstrip('v')
+        l_ver = str(self.ytdlp_local_ver).strip().lstrip('v') if self.ytdlp_local_ver else ""
+        
+        cfg = get_config()
+        channel = cfg.get("ytdlp_channel", "stable")
+
         if r_ver != l_ver and r_ver not in l_ver:
             self._ytdlp_version_summary.setText(f"Versión: {self.ytdlp_local_ver} (Nueva: {remote_ver})")
             self._ytdlp_version_summary.setStyleSheet("color: #FFC107; font-weight: bold; font-size: 12px;")
-            self._ytdlp_btn_action.setText(self.tr("Actualizar"))
+            
+            # Texto descriptivo según el canal
+            if channel == "nightly" and len(l_ver.split('.')) < 4:
+                btn_text = self.tr("Cambiar a Nightly")
+            elif channel == "stable" and len(l_ver.split('.')) >= 4:
+                btn_text = self.tr("Cambiar a Estable")
+            else:
+                btn_text = self.tr("Actualizar")
+
+            self._ytdlp_btn_action.setText(btn_text)
             self._ytdlp_btn_action.setDisabled(False)
             self._ytdlp_btn_action.setStyleSheet("background-color: #007BFF; color: white; border: none; font-weight: bold;")
         else:
@@ -939,9 +1022,10 @@ class YTDLPAndPOTPanel(QFrame):
             self._ytdlp_btn_action.setStyleSheet("")
 
     def _on_ytdlp_action_clicked(self):
-        version = "latest" if self._ytdlp_btn_action.text() == self.tr("Actualizar") else None
-        self.set_ytdlp_downloading_state(True)
-        self.ytdlp_download_requested.emit("ytdlp", version)
+        cfg = get_config()
+        channel = cfg.get("ytdlp_channel", "stable")
+        self.set_ytdlp_downloading_state(True, message=self.tr("Descargando yt-dlp ({0})...").format(channel.upper()))
+        self.ytdlp_download_requested.emit("ytdlp", channel)
 
     def set_ytdlp_downloading_state(self, is_downloading, message=""):
         self._ytdlp_btn_action.setDisabled(is_downloading)
@@ -1423,8 +1507,11 @@ class DependenciesPage(QWidget):
         self.ytdlp_pot_panel.set_ytdlp_searching_updates()
         self.deno_panel.set_searching_updates()
 
+        cfg = get_config()
+        ytdlp_channel = cfg.get("ytdlp_channel", "stable")
+
         update_configs = [
-            {"id": "ytdlp", "local_func": ytdlp_local, "remote_func": ytdlp_remote},
+            {"id": "ytdlp", "local_func": ytdlp_local, "remote_func": ytdlp_remote, "channel": ytdlp_channel},
             {"id": "deno",  "local_func": deno_local,  "remote_func": deno_remote},
         ]
         self.update_worker = UpdateCheckWorker(update_configs)
@@ -1460,14 +1547,20 @@ class DependenciesPage(QWidget):
                 self.deno_panel.set_update_available(results["deno"]["remote"])
 
     def start_download(self, dep_id, version=None):
+        channel = None
         if dep_id == "ytdlp":
             download_fn = download_ytdlp
+            if version in ["stable", "nightly"]:
+                channel = version
+                version = None
+            else:
+                channel = get_config().get("ytdlp_channel", "stable")
         elif dep_id == "deno":
             download_fn = download_deno
         else:
             return
 
-        worker = DependencyDownloadWorker(dep_id, download_fn, version=version)
+        worker = DependencyDownloadWorker(dep_id, download_fn, version=version, channel=channel)
         worker.progress_signal.connect(self.on_worker_progress)
         worker.numeric_progress_signal.connect(self.on_worker_numeric_progress)
         worker.finished_signal.connect(self.on_worker_finished)

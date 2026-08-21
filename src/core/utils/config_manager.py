@@ -48,6 +48,7 @@ def get_config():
         },
         "pot_provider": "bgutil",       # "bgutil" | "wpc" | "none"
         "pot_wpc_browser_path": "",     # ruta al ejecutable Chromium; vacío = auto-detect
+        "ytdlp_channel": "stable",      # "stable" | "nightly"
         "ffmpeg_mode": "managed",       # "managed" | "custom"
         "ffmpeg_variant": "essentials", # "essentials" | "full"
         "ffmpeg_channel": "recommended",# "recommended" | "latest" | "nightly"

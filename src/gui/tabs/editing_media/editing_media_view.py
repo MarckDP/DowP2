@@ -246,12 +246,12 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
     def init_ui(self):
         # Layout principal
         self.main_layout = QVBoxLayout(self)
-        self.main_layout.setContentsMargins(15, 15, 15, 15)
+        self.main_layout.setContentsMargins(10, 10, 10, 10)
         self.main_layout.setSpacing(8)
 
         # ── Splitter Horizontal Principal ─────────────────────────────────────
         self.splitter = QSplitter(Qt.Horizontal)
-        self.splitter.setHandleWidth(8)
+        self.splitter.setHandleWidth(6)
         self.main_layout.addWidget(self.splitter, 1)
 
         # 1. Columna Izquierda (20%): Carpetas Indexadas (Acordeón)
@@ -1092,19 +1092,6 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         self.col1_container.setStyleSheet(box_style)
         self.col2_container.setStyleSheet(box_style)
         self.col3_container.setStyleSheet(box_style)
-
-        # Estilo para el splitter horizontal (manejador transparente con línea vertical delgada en el centro)
-        self.splitter.setStyleSheet(f"""
-            QSplitter::handle:horizontal {{
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 transparent,
-                    stop:0.45 transparent,
-                    stop:0.5 {borde_color},
-                    stop:0.55 transparent,
-                    stop:1 transparent);
-                width: 8px;
-            }}
-        """)
 
         # Estilo para el panel de audio
         self.audio_panel.setStyleSheet(f"""

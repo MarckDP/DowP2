@@ -41,7 +41,7 @@ class VideoDetailsWidget(QFrame):
         self.fragment_mode = None
         main_layout = QHBoxLayout(self)
         main_layout.setContentsMargins(10, 10, 10, 10)
-        main_layout.setSpacing(10)
+        main_layout.setSpacing(8)
 
         # Contenedor para la columna izquierda (Miniatura + Controles)
         # Esto permite limitar el ancho de todo el bloque

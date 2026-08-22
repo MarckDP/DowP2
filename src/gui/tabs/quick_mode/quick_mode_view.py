@@ -44,7 +44,7 @@ class QuickModeTab(QWidget):
 
     def init_ui(self):
         self.main_layout = QVBoxLayout(self)
-        self.main_layout.setContentsMargins(15, 10, 15, 10)
+        self.main_layout.setContentsMargins(10, 10, 10, 10)
         self.main_layout.setSpacing(8)
 
         self.url_panel = self._build_url_panel()
@@ -92,7 +92,7 @@ class QuickModeTab(QWidget):
         panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         layout = QHBoxLayout(panel)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(10)
+        layout.setSpacing(8)
 
         self.url_input = QLineEdit()
         self.url_input.setPlaceholderText(self.tr("Pega una URL para descargar directamente"))

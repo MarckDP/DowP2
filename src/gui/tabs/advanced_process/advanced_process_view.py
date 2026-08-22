@@ -35,8 +35,8 @@ class AdvancedProcessTab(QWidget):
 
     def init_ui(self):
         self.main_layout = QVBoxLayout(self)
-        self.main_layout.setContentsMargins(15, 10, 15, 10)
-        self.main_layout.setSpacing(10)
+        self.main_layout.setContentsMargins(10, 10, 10, 10)
+        self.main_layout.setSpacing(8)
 
         # Initialize Widgets
         self.url_bar = URLBar()
@@ -52,13 +52,13 @@ class AdvancedProcessTab(QWidget):
         self.middle_container = QWidget()
         middle_layout = QHBoxLayout(self.middle_container)
         middle_layout.setContentsMargins(0, 0, 0, 0)
-        middle_layout.setSpacing(0)
+        middle_layout.setSpacing(8)
         
         # Middle content container for standard details/subtitles
         self.middle_content_container = QWidget()
         middle_content_layout = QVBoxLayout(self.middle_content_container)
         middle_content_layout.setContentsMargins(0, 0, 0, 0)
-        middle_content_layout.setSpacing(10)
+        middle_content_layout.setSpacing(8)
         
         middle_content_layout.addWidget(self.video_details)
         middle_content_layout.addWidget(self.subtitle_options)
@@ -67,7 +67,6 @@ class AdvancedProcessTab(QWidget):
         # Assemble middle container
         middle_layout.addWidget(self.queue_panel)
         middle_layout.addWidget(self.queue_trigger)
-        middle_layout.addSpacing(10)
         middle_layout.addWidget(self.middle_content_container)
 
         # Add to main vertical layout
@@ -675,12 +674,16 @@ class AdvancedProcessTab(QWidget):
             self.analysis_options_bar.setMaximumHeight(0)
             self.queue_trigger.setMinimumWidth(0)
             self.queue_trigger.setMaximumWidth(0)
-            self.queue_panel.setMinimumWidth(0)
-            self.queue_panel.setMaximumWidth(0)
 
-            self.queue_panel.show()
             self.queue_trigger.show()
             self.analysis_options_bar.show()
+
+            if self.queue_panel.is_expanded:
+                self.queue_panel.setMinimumWidth(0)
+                self.queue_panel.setMaximumWidth(0)
+                self.queue_panel.show()
+            else:
+                self.queue_panel.hide()
 
             anim_options = QPropertyAnimation(self.analysis_options_bar, b"maximumHeight")
             anim_options.setDuration(220)
@@ -703,21 +706,21 @@ class AdvancedProcessTab(QWidget):
             anim_trigger_max.setEasingCurve(QEasingCurve.Type.OutQuad)
             self._toggle_anim_group.addAnimation(anim_trigger_max)
 
-            panel_target = int(self.width() * 0.3) if self.queue_panel.is_expanded else 0
+            if self.queue_panel.is_expanded:
+                panel_target = int(self.width() * 0.3)
+                anim_panel_min = QPropertyAnimation(self.queue_panel, b"minimumWidth")
+                anim_panel_min.setDuration(220)
+                anim_panel_min.setStartValue(0)
+                anim_panel_min.setEndValue(panel_target)
+                anim_panel_min.setEasingCurve(QEasingCurve.Type.OutQuad)
+                self._toggle_anim_group.addAnimation(anim_panel_min)
 
-            anim_panel_min = QPropertyAnimation(self.queue_panel, b"minimumWidth")
-            anim_panel_min.setDuration(220)
-            anim_panel_min.setStartValue(0)
-            anim_panel_min.setEndValue(panel_target)
-            anim_panel_min.setEasingCurve(QEasingCurve.Type.OutQuad)
-            self._toggle_anim_group.addAnimation(anim_panel_min)
-
-            anim_panel_max = QPropertyAnimation(self.queue_panel, b"maximumWidth")
-            anim_panel_max.setDuration(220)
-            anim_panel_max.setStartValue(0)
-            anim_panel_max.setEndValue(panel_target)
-            anim_panel_max.setEasingCurve(QEasingCurve.Type.OutQuad)
-            self._toggle_anim_group.addAnimation(anim_panel_max)
+                anim_panel_max = QPropertyAnimation(self.queue_panel, b"maximumWidth")
+                anim_panel_max.setDuration(220)
+                anim_panel_max.setStartValue(0)
+                anim_panel_max.setEndValue(panel_target)
+                anim_panel_max.setEasingCurve(QEasingCurve.Type.OutQuad)
+                self._toggle_anim_group.addAnimation(anim_panel_max)
 
             def on_show_finished():
                 self.queue_panel.setMaximumWidth(16777215)
@@ -726,8 +729,10 @@ class AdvancedProcessTab(QWidget):
                 self.queue_trigger.setFixedWidth(24)
                 if self.queue_panel.is_expanded:
                     self.queue_panel.setFixedWidth(int(self.width() * 0.3))
+                    self.queue_panel.show()
                 else:
                     self.queue_panel.setFixedWidth(0)
+                    self.queue_panel.hide()
                 self.queue_panel.adjust_width(self.width())
 
             self._toggle_anim_group.finished.connect(on_show_finished)

@@ -392,6 +392,7 @@ class QueuePanel(QWidget):
         
         self.init_ui()
         self.content_widget.hide()
+        self.hide()
 
     def init_ui(self):
         # Layout principal de este widget (el cual se encoge/estira)
@@ -521,6 +522,7 @@ class QueuePanel(QWidget):
             self.is_expanded = False
         else:
             # Expandir
+            self.show()
             self.content_widget.show()
             self._anim.setStartValue(self.width())
             self._anim.setEndValue(target_width)
@@ -690,6 +692,7 @@ class QueuePanel(QWidget):
     def _on_animation_finished(self):
         if not self.is_expanded:
             self.content_widget.hide()
+            self.hide()
 
     def _on_clear_list_click(self):
         """Limpia trabajos inactivos y notifica al padre."""

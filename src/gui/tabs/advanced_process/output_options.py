@@ -62,7 +62,7 @@ class OutputOptionsWidget(QFrame):
         # set_conflict_policy_visible()).
         self.conflict_policy_container = QWidget()
         conflict_policy_layout = QHBoxLayout(self.conflict_policy_container)
-        conflict_policy_layout.setContentsMargins(0, 0, 0, 0)
+        conflict_policy_layout.setContentsMargins(0, 0, 8, 0)
         conflict_policy_layout.setSpacing(6)
 
         self.lbl_conflict_policy = QLabel(self.tr("Si existe:"))
@@ -84,7 +84,6 @@ class OutputOptionsWidget(QFrame):
         conflict_policy_layout.addWidget(self.conflict_policy_combo)
 
         controls_layout.addWidget(self.conflict_policy_container)
-        controls_layout.addSpacing(10)
 
         # --- PATH SECTION ---
         from core.tabs.advanced_process.output_logic import get_default_download_path
@@ -226,26 +225,35 @@ class OutputOptionsWidget(QFrame):
         modal por archivo) y mostrarlo en modo LOTES. Modo Rápido nunca llama a este
         método: el combo queda siempre visible ahí.
 
-        Anima minimumWidth/maximumWidth del contenedor a 0 <-> ancho natural, mismo
-        patrón que advanced_process_view.py usa para queue_trigger/queue_panel al
-        alternar SOLO/LOTES.
+        Anima minimumWidth/maximumWidth del contenedor a 0 <-> ancho natural.
         """
-        target_width = self.conflict_policy_container.sizeHint().width() if visible else 0
-
         if hasattr(self, "_conflict_anim_group") and self._conflict_anim_group.state() == QParallelAnimationGroup.State.Running:
             self._conflict_anim_group.stop()
 
         if not animated:
+            target_width = self.conflict_policy_container.sizeHint().width() if visible else 0
             self.conflict_policy_container.setMinimumWidth(target_width)
             self.conflict_policy_container.setMaximumWidth(target_width if visible else 0)
             self.conflict_policy_container.setVisible(visible)
             return
 
         if visible:
+            # Calcular ancho natural del contenido
+            target_width = self.conflict_policy_container.sizeHint().width()
+            if target_width <= 0:
+                target_width = 185
+            # Iniciar colapsado para animar la entrada
+            self.conflict_policy_container.setMinimumWidth(0)
+            self.conflict_policy_container.setMaximumWidth(0)
             self.conflict_policy_container.setVisible(True)
+            current_width = 0
+        else:
+            target_width = 0
+            current_width = self.conflict_policy_container.width()
+            if current_width <= 0:
+                current_width = self.conflict_policy_container.sizeHint().width()
 
         self._conflict_anim_group = QParallelAnimationGroup(self)
-        current_width = self.conflict_policy_container.width()
 
         anim_min = QPropertyAnimation(self.conflict_policy_container, b"minimumWidth")
         anim_min.setDuration(220)
@@ -262,9 +270,13 @@ class OutputOptionsWidget(QFrame):
         self._conflict_anim_group.addAnimation(anim_max)
 
         def on_finished():
-            self.conflict_policy_container.setMaximumWidth(16777215)
-            if not visible:
+            if visible:
+                self.conflict_policy_container.setMaximumWidth(16777215)
+                self.conflict_policy_container.setMinimumWidth(0)
+            else:
                 self.conflict_policy_container.setVisible(False)
+                self.conflict_policy_container.setMaximumWidth(0)
+                self.conflict_policy_container.setMinimumWidth(0)
 
         self._conflict_anim_group.finished.connect(on_finished)
         self._conflict_anim_group.start()

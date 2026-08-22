@@ -33,6 +33,7 @@ class DependencyCheckWorker(QThread):
     """
     # Señales
     status_update = Signal(str)                  # Mensaje de estado general
+    dependencies_init = Signal(list)             # [(dep_id, name, is_installed, version), ...]
     dependency_started = Signal(str, str)         # dep_id, nombre legible
     dependency_progress = Signal(str, int)        # dep_id, porcentaje
     dependency_finished = Signal(str, bool, str)  # dep_id, éxito, versión/msg
@@ -65,11 +66,11 @@ class DependencyCheckWorker(QThread):
             )
             from core.utils.config_manager import get_config
 
-            self.status_update.emit("Verificando dependencias...")
+            self.status_update.emit("Comprobando entorno...")
 
             status = verify_all_dependencies()
 
-            # 1. Si faltan dependencias, descargarlas
+            # 1. Si faltan dependencias, mostrarlas todas de una vez y descargar las faltantes
             if not all(status.values()):
                 deps = [
                     ("ytdlp",        "yt-dlp",      check_ytdlp,       download_ytdlp,       get_ytdlp_version),
@@ -78,11 +79,18 @@ class DependencyCheckWorker(QThread):
                     ("potprovider",  "PO Provider",  check_potprovider, download_potprovider, get_potprovider_version),
                 ]
 
+                # Pre-cargar estado inicial de todas las dependencias para mostrarlas juntas
+                initial_states = []
+                for dep_id, name, check_fn, _, version_fn in deps:
+                    installed = bool(check_fn())
+                    ver = (version_fn() or "OK") if installed else ""
+                    initial_states.append((dep_id, name, installed, ver))
+
+                self.dependencies_init.emit(initial_states)
+
                 for dep_id, name, check_fn, download_fn, version_fn in deps:
                     if check_fn():
-                        version = version_fn() or "OK"
-                        self.dependency_finished.emit(dep_id, True, version)
-                        continue
+                        continue  # Ya se mostró instalada con su versión
 
                     self.dependency_started.emit(dep_id, name)
                     self.status_update.emit(f"Descargando {name}...")
@@ -106,7 +114,7 @@ class DependencyCheckWorker(QThread):
             try:
                 cfg = get_config()
                 channel = cfg.get("ytdlp_channel", "stable")
-                self.status_update.emit(f"Verificando actualización de yt-dlp ({channel})...")
+                self.status_update.emit("Comprobando yt-dlp...")
                 
                 remote_ver = get_ytdlp_remote_version(channel=channel)
                 local_ver = get_ytdlp_version()
@@ -117,7 +125,7 @@ class DependencyCheckWorker(QThread):
                     
                     if r_clean != l_clean and r_clean not in l_clean:
                         logger.info(f"SplashScreen: Auto-actualizando yt-dlp ({channel}): {local_ver} -> {remote_ver}")
-                        self.status_update.emit(f"Actualizando yt-dlp ({channel}) a {remote_ver}...")
+                        self.status_update.emit(f"Actualizando yt-dlp a {remote_ver}...")
                         self.dependency_started.emit("ytdlp", "yt-dlp")
                         
                         def ytdlp_cb(pct):
@@ -154,17 +162,35 @@ class SplashScreen(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowFlags(
-            Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Window
+            Qt.FramelessWindowHint | Qt.Window
         )
         self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setFixedSize(420, 150)
+        self.setFixedSize(420, 120)
 
         self.worker = None
         self.dep_rows = {}
         self._main_window = None  # Pre-construida durante el splash
+        self._drag_active = False
+        self._drag_start_pos = None
 
         self._init_ui()
         self._center_on_screen()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._drag_active = True
+            self._drag_start_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if self._drag_active and (event.buttons() & Qt.LeftButton) and self._drag_start_pos is not None:
+            self.move(event.globalPosition().toPoint() - self._drag_start_pos)
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        self._drag_active = False
+        self._drag_start_pos = None
+        event.accept()
 
     def _center_on_screen(self):
         screen = QApplication.primaryScreen()
@@ -253,8 +279,8 @@ class SplashScreen(QWidget):
         """)
         text_col.addWidget(title_lbl, 0, Qt.AlignLeft | Qt.AlignBottom)
 
-        # "Cargando..." — texto delgado y pequeño
-        self.status_label = QLabel("Cargando...", container)
+        # "Iniciando..." — texto delgado y pequeño
+        self.status_label = QLabel("Iniciando...", container)
         self.status_label.setStyleSheet(f"""
             color: {text_sec};
             font-family: 'Raleway', 'Segoe UI', sans-serif;
@@ -276,8 +302,26 @@ class SplashScreen(QWidget):
         container_layout.addItem(self._bottom_spacer)
         self._container_layout = container_layout
 
+        # ── Barra de progreso mínima (pulsante) — debajo de logo y texto ──
+        self.loading_bar = QProgressBar(container)
+        self.loading_bar.setRange(0, 0)  # Modo indeterminado
+        self.loading_bar.setTextVisible(False)
+        self.loading_bar.setFixedHeight(3)
+        self.loading_bar.setStyleSheet(f"""
+            QProgressBar {{
+                background-color: {bg_dark};
+                border: none;
+                border-radius: 1px;
+            }}
+            QProgressBar::chunk {{
+                background-color: {accent};
+                border-radius: 1px;
+            }}
+        """)
+        container_layout.addWidget(self.loading_bar)
+
         # ═══════════════════════════════════════════════════════
-        # Contenedor de dependencias (oculto hasta que se necesite)
+        # Contenedor de dependencias (debajo de la barra general)
         # ═══════════════════════════════════════════════════════
         self.deps_container = QFrame(container)
         self.deps_container.setObjectName("depsContainer")
@@ -307,25 +351,6 @@ class SplashScreen(QWidget):
         self.deps_layout.setSpacing(6)
         self.deps_container.hide()
         container_layout.addWidget(self.deps_container)
-
-        # ── Barra de progreso mínima (pulsante) — pegada abajo ──
-        self.loading_bar = QProgressBar(container)
-        self.loading_bar.setRange(0, 0)  # Modo indeterminado
-        self.loading_bar.setTextVisible(False)
-        self.loading_bar.setFixedHeight(3)
-        self.loading_bar.setStyleSheet(f"""
-            QProgressBar {{
-                background-color: {bg_dark};
-                border: none;
-                border-radius: 1px;
-            }}
-            QProgressBar::chunk {{
-                background-color: {accent};
-                border-radius: 1px;
-            }}
-        """)
-        container_layout.addSpacing(8)
-        container_layout.addWidget(self.loading_bar)
 
     # ── Métodos de dependencias ──
 
@@ -391,13 +416,41 @@ class SplashScreen(QWidget):
             if self._bottom_spacer is not None:
                 self._container_layout.removeItem(self._bottom_spacer)
                 self._bottom_spacer = None
-            # Margen superior compacto en vez de stretch
+            # Margen superior compacto y espaciado entre header, barra y dependencias
             self._container_layout.setContentsMargins(32, 16, 32, 16)
+            self._container_layout.setSpacing(10)
             self.deps_container.show()
-            self.setFixedSize(420, 230)
+            self.setFixedSize(420, 245)
             self._center_on_screen()
 
     # ── Slots del worker ──
+
+    @Slot(list)
+    def _on_deps_init(self, dep_list):
+        """Muestra todas las dependencias juntas con su estado inicial."""
+        for dep_id, name, installed, version in dep_list:
+            self._ensure_dep_row(dep_id, name)
+            row = self.dep_rows[dep_id]
+            if installed:
+                row["dot"].setStyleSheet(f"color: {self._colors['success']}; font-size: 10px;")
+                row["bar"].hide()
+                v_str = str(version)
+                v_text = f"v{v_str}" if (v_str and not v_str.startswith("v") and v_str != "OK") else v_str
+                row["status"].setText(v_text or "OK")
+                row["status"].setStyleSheet(f"""
+                    color: {self._colors['success']};
+                    font-family: 'Raleway', 'Segoe UI', sans-serif;
+                    font-size: 10px; font-weight: 600;
+                """)
+            else:
+                row["dot"].setStyleSheet(f"color: {self._colors['text_sec']}; font-size: 10px;")
+                row["bar"].hide()
+                row["status"].setText("Pendiente")
+                row["status"].setStyleSheet(f"""
+                    color: {self._colors['text_sec']};
+                    font-family: 'Raleway', 'Segoe UI', sans-serif;
+                    font-size: 10px; font-weight: 600;
+                """)
 
     @Slot(str)
     def _on_status_update(self, msg):
@@ -442,7 +495,9 @@ class SplashScreen(QWidget):
 
         if success:
             row["dot"].setStyleSheet(f"color: {self._colors['success']}; font-size: 10px;")
-            row["status"].setText(f"v{version_or_msg}")
+            v_str = str(version_or_msg)
+            v_text = f"v{v_str}" if (v_str and not v_str.startswith("v") and v_str != "OK") else v_str
+            row["status"].setText(v_text or "OK")
             row["status"].setStyleSheet(f"""
                 color: {self._colors['success']};
                 font-family: 'Raleway', 'Segoe UI', sans-serif;
@@ -527,6 +582,7 @@ class SplashScreen(QWidget):
 
         self.worker = DependencyCheckWorker(self)
         self.worker.status_update.connect(self._on_status_update, Qt.QueuedConnection)
+        self.worker.dependencies_init.connect(self._on_deps_init, Qt.QueuedConnection)
         self.worker.dependency_started.connect(self._on_dep_started, Qt.QueuedConnection)
         self.worker.dependency_progress.connect(self._on_dep_progress, Qt.QueuedConnection)
         self.worker.dependency_finished.connect(self._on_dep_finished, Qt.QueuedConnection)

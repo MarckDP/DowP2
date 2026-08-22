@@ -236,6 +236,14 @@ class QueueWorker(QThread):
                 if d.get("filename"):
                     job.final_filepath = d.get("filename")
                 self.job_progress_changed.emit(job.job_id, 100.0, "", "Procesando final...")
+            elif d.get("status") == "fragment_progress":
+                idx = d.get("fragment_index")
+                total = d.get("fragment_count")
+                phase = d.get("phase", "downloading")
+                verb = "Cortando" if phase == "cutting" else "Descargando"
+                msg = f"{verb} fragmento {idx} de {total}"
+                job.speed = msg
+                self.job_progress_changed.emit(job.job_id, 0, msg, phase)
 
         # Iniciar la descarga
         config_to_use = job.request_data if job.request_data else job.config
@@ -379,6 +387,8 @@ class QueueWorker(QThread):
         quality = job.config.get("playlist_quality", "best_compatible")
         conflict_policy = job.config.get("conflict_policy", "conservar")
         skipped_count = 0
+        error_count = 0
+        completed_count = 0
 
         from core.utils.config_manager import get_config
         batch_thumb_mode = get_config().get("batch_thumbnail_mode", "manual")
@@ -462,6 +472,7 @@ class QueueWorker(QThread):
             )
             
             if success:
+                completed_count += 1
                 if should_download_thumb_file:
                     try:
                         self._download_best_thumb(entry, playlist_output, f"{prefix}{item_title}", force_png=True)
@@ -477,22 +488,31 @@ class QueueWorker(QThread):
                 if self._cancellation_event.is_set():
                     job.status = JobStatus.CANCELLED
                     self.job_status_changed.emit(job.job_id, JobStatus.CANCELLED)
-                else:
-                    job.status = JobStatus.FAILED
-                    from core.ytdlp_logic.analyzer import strip_ansi_codes
-                    job.error_message = strip_ansi_codes(message) if message else message
-                    self.job_status_changed.emit(job.job_id, JobStatus.FAILED)
-                return
+                    return
+                # Un ítem que falla de verdad (no cancelación) no debe frenar el
+                # resto de la playlist — se cuenta como error y se sigue.
+                logger.warning(f"QueueWorker: Ítem de playlist falló, se continúa con el resto: {item_title} -> {message}")
+                error_count += 1
+                continue
 
-        job.status = JobStatus.COMPLETED
         job.progress = 100.0
         job.final_filepath = playlist_output
+
+        summary_parts = [f"{completed_count} de {total} completados"]
+        if error_count:
+            summary_parts.append(f"{error_count} con error")
         if skipped_count:
-            job.error_message = (
-                self.tr("{0} de {1} ítems omitidos (ya existían)").format(skipped_count, total)
-                if hasattr(self, "tr") else f"{skipped_count} de {total} ítems omitidos (ya existían)"
-            )
-        self.job_status_changed.emit(job.job_id, JobStatus.COMPLETED)
+            summary_parts.append(f"{skipped_count} omitidos (ya existían)")
+        summary = ", ".join(summary_parts)
+
+        if completed_count == 0 and (error_count or skipped_count):
+            job.status = JobStatus.FAILED
+            job.error_message = summary
+        else:
+            job.status = JobStatus.COMPLETED
+            if error_count or skipped_count:
+                job.error_message = summary
+        self.job_status_changed.emit(job.job_id, job.status)
 
     @staticmethod
     def _sanitize_filename(filename):

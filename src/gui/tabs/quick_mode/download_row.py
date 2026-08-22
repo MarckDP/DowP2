@@ -264,6 +264,46 @@ class QuickDownloadRow(QFrame):
         """Marca este item como error."""
         self._is_error = True
 
+    # Mismo mapeo estado -> token de tema que usa QueueItemCard en queue_panel.py,
+    # para que Modo Rápido y LOTES se vean consistentes.
+    _STATUS_TOKENS = {
+        "Completado": ("estado_exito", "#40d66b"),
+        "Error": ("estado_error", "#ff6b5f"),
+        "Cancelado": ("estado_error", "#ff6b5f"),
+        "Omitido": ("estado_aviso", "#d8c94a"),
+        "Descargando": ("estado_progreso", "#3498db"),
+        "Analizando": ("estado_progreso", "#3498db"),
+        "Procesando": ("estado_progreso", "#3498db"),
+        "En espera": ("estado_espera", "#aaaaaa"),
+        "En cola": ("estado_espera", "#aaaaaa"),
+    }
+
+    def _apply_status_color(self, status):
+        token, default = self._STATUS_TOKENS.get(status, ("estado_espera", "#aaaaaa"))
+        color = get_theme_token(token, default)
+        self.status_lbl.setStyleSheet(f"color: {color}; font-size: 10px; font-weight: bold;")
+        self.setStyleSheet(f"""
+            QFrame#queueItemCard {{
+                background-color: {get_theme_token('fondo_principal', '#121212')};
+                border: 1px solid {color};
+                border-radius: 6px;
+            }}
+            QLabel {{
+                color: {get_theme_token('texto_principal', '#dddddd')};
+            }}
+            QProgressBar {{
+                background-color: {get_theme_token('progreso_fondo', '#0f0f0f')};
+                border: none;
+                border-radius: 3px;
+            }}
+            QProgressBar::chunk {{
+                background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 {get_theme_token('progreso_inicio', '#35d6b8')},
+                    stop:1 {get_theme_token('progreso_fin', '#138f7d')});
+                border-radius: 3px;
+            }}
+        """)
+
     def update_progress(self, percent, info="", status=None):
         percent = max(0, min(100, int(percent)))
         self.progress_bar.setRange(0, 100)
@@ -274,6 +314,22 @@ class QuickDownloadRow(QFrame):
             self.info_lbl.setToolTip(info)
         if status:
             self.status_lbl.setText(status)
+            self._apply_status_color(status)
+
+    def set_fragment_progress(self, fragment_index, fragment_count, phase="downloading"):
+        """
+        Estado especial para ítems con más de un fragmento: la barra queda
+        intermitente (no representa un % real) y el texto avisa en qué
+        fragmento va, en vez de un porcentaje engañoso.
+        """
+        self.progress_bar.setRange(0, 0)
+        self.percent_lbl.setText("")
+        verb = self.tr("Cortando") if phase == "cutting" else self.tr("Descargando")
+        msg = f"{verb} {self.tr('fragmento')} {fragment_index} {self.tr('de')} {fragment_count}"
+        self.info_lbl.setText(msg)
+        self.info_lbl.setToolTip(msg)
+        self.status_lbl.setText(self.tr("Procesando"))
+        self._apply_status_color("Procesando")
 
     def update_metadata_from_dict(self, info):
         if not info:

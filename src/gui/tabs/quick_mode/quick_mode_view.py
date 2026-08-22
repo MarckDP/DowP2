@@ -30,8 +30,9 @@ from core.tabs.quick_mode.quick_mode_logic import reveal_in_file_manager
 class QuickModeTab(QWidget):
     def __init__(self):
         super().__init__()
+        self.taskbar_manager = None
         self.init_ui()
-        
+
         # Inicializar el controlador
         self.controller = QuickDownloadController(self)
         
@@ -166,6 +167,19 @@ class QuickModeTab(QWidget):
 
         layout.addStretch(1)
         return panel
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        # Inicializamos el gestor en el showEvent para asegurar que window() sea válido
+        # (mismo patrón que AdvancedProcessTab).
+        if not self.taskbar_manager:
+            from core.utils.taskbar_progress import TaskbarProgressManager
+            try:
+                hwnd = int(self.window().winId())
+                self.taskbar_manager = TaskbarProgressManager(hwnd)
+                logger.info(f"QuickModeTab: TaskbarProgressManager vinculado a HWND {hwnd}")
+            except Exception as e:
+                logger.error(f"QuickModeTab: No se pudo inicializar TaskbarProgressManager: {e}")
 
     def _on_mode_changed(self, index):
         mode = self.mode_combo.itemData(index) or "video+audio"

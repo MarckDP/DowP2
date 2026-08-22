@@ -70,7 +70,9 @@ class DownloadController(QObject):
         self.cancellation_event.clear()
         self.solo_worker = DownloadWorker(req_data, self.cancellation_event)
         self.solo_request_data = req_data.copy()
-        
+
+        has_fragments = bool(req_data.get("selected_fragments"))
+
         self.is_downloading = True
         self.tab.url_bar.solo_btn.setEnabled(False)
         self.tab.output_options.set_download_state("running", self.tab.tr("Pausar Descarga"))
@@ -80,6 +82,24 @@ class DownloadController(QObject):
 
         def on_solo_progress(d):
             from core.ytdlp_logic.analyzer import strip_ansi_codes
+
+            if d.get("status") == "fragment_progress":
+                idx = d.get("fragment_index")
+                total = d.get("fragment_count")
+                verb = self.tab.tr("Cortando") if d.get("phase") == "cutting" else self.tab.tr("Descargando")
+                msg = f"{verb} {self.tab.tr('fragmento')} {idx} {self.tab.tr('de')} {total}"
+                self.tab.output_options.set_progress(-1, msg, "running")
+                if self.tab.taskbar_manager:
+                    self.tab.taskbar_manager.set_state("indeterminate")
+                return
+
+            # Mientras el job tenga fragmentos, el progreso numérico crudo de
+            # yt-dlp (downloading/finished) no representa el avance real del
+            # job completo (se dispara una vez por fragmento) — se ignora acá
+            # y la barra queda a cargo únicamente de fragment_progress.
+            if has_fragments:
+                return
+
             if d.get("status") == "downloading":
                 p_str = strip_ansi_codes(d.get('_percent_str', '0%')).replace('%','').strip()
                 try:
@@ -159,47 +179,73 @@ class DownloadController(QObject):
                 self.tab.output_options.btn_start_download.setEnabled(True)
 
     def update_queue_main_progress(self):
-        """Actualiza la barra de progreso principal evaluando toda la cola de forma global."""
+        """
+        Actualiza la barra de progreso principal evaluando toda la cola de forma
+        global. La cola soporta varios jobs corriendo en simultáneo
+        (max_concurrent_downloads, ver QueueWorker.run() en queue_manager.py),
+        así que "el progreso de un job en particular" deja de tener sentido en
+        cuanto hay más de uno activo — en ese caso se muestra cuántos de
+        cuántos ya terminaron ("X de Y completados"), igual que en Modo
+        Rápido. Solo se muestra el % real de un job cuando es el único
+        corriendo y no tiene fragmentos (ahí sí hay un solo número que
+        representa fielmente lo que está pasando).
+        """
         jobs = self.queue_mgr.get_all_jobs()
         if not jobs:
             if self.tab.taskbar_manager:
                 self.tab.taskbar_manager.stop()
             return
-            
+
         total = len(jobs)
         completed = 0
-        failed = 0
-        current_running = None
-        current_analyzing = None
-        
+        other_done = 0
+        running_jobs = []
+        analyzing_count = 0
+
         for j in jobs:
             if j.status == "COMPLETED":
                 completed += 1
-            elif j.status in ("FAILED", "CANCELLED"):
-                failed += 1
-            elif j.status == "RUNNING" and current_running is None:
-                current_running = j
-            elif j.status == "ANALYZING" and current_analyzing is None:
-                current_analyzing = j
-        
-        processed = completed + failed
-        
-        if current_running:
-            has_fragments = bool(current_running.request_data and current_running.request_data.get("selected_fragments"))
-            
-            if has_fragments:
-                msg = f"({processed + 1}/{total}) Cortando fragmentos..." if total > 1 else "Cortando fragmentos..."
-                percent = 0
-            else:
-                msg = f"({processed + 1}/{total}) {int(current_running.progress)}% — {current_running.speed} — ETA: {current_running.eta}" if total > 1 else f"{int(current_running.progress)}% — {current_running.speed} — ETA: {current_running.eta}"
-                percent = current_running.progress
+            elif j.status in ("FAILED", "CANCELLED", "SKIPPED"):
+                other_done += 1
+            elif j.status == "RUNNING":
+                running_jobs.append(j)
+            elif j.status == "ANALYZING":
+                analyzing_count += 1
+
+        processed = completed + other_done
+        taskbar_state = "stop"
+        taskbar_value = None
+
+        single_job = running_jobs[0] if len(running_jobs) == 1 else None
+        single_has_fragments = bool(
+            single_job and single_job.request_data and single_job.request_data.get("selected_fragments")
+        )
+
+        if single_job and not single_has_fragments:
+            msg = (
+                f"({processed + 1}/{total}) {int(single_job.progress)}% — {single_job.speed} — ETA: {single_job.eta}"
+                if total > 1 else
+                f"{int(single_job.progress)}% — {single_job.speed} — ETA: {single_job.eta}"
+            )
+            percent = single_job.progress
             state = "downloading"
-                
-        elif current_analyzing:
+            taskbar_state = "normal"
+            taskbar_value = int(percent)
+
+        elif running_jobs:
+            # Más de un job corriendo (o el único que corre tiene fragmentos):
+            # no hay un % único representativo del conjunto.
+            msg = f"{processed} de {total} completados"
+            percent = int(processed / total * 100) if total else 0
+            state = "downloading"
+            taskbar_state = "indeterminate"
+
+        elif analyzing_count:
             msg = self.tab.tr("Analizando...")
             percent = 0
             state = "running"
-            
+            taskbar_state = "indeterminate"
+
         else:
             if processed == total and total > 0:
                 msg = f"Proceso completado ({completed}/{total})"
@@ -211,18 +257,14 @@ class DownloadController(QObject):
                 state = "wait"
 
         self.tab.output_options.set_progress(int(percent), msg, state)
-        
+
         if self.tab.taskbar_manager:
-            if current_running:
-                if has_fragments:
-                    self.tab.taskbar_manager.set_state("indeterminate")
-                else:
-                    self.tab.taskbar_manager.set_state("normal")
-                    self.tab.taskbar_manager.set_value(int(percent))
-            elif current_analyzing:
-                self.tab.taskbar_manager.set_state("indeterminate")
-            else:
+            if taskbar_state == "stop":
                 self.tab.taskbar_manager.stop()
+            else:
+                self.tab.taskbar_manager.set_state(taskbar_state)
+                if taskbar_value is not None:
+                    self.tab.taskbar_manager.set_value(taskbar_value)
 
     def _on_queue_job_progress(self, job_id, percent, speed, eta):
         current_time = time.time()

@@ -90,7 +90,15 @@ class DownloaderMaster:
                     # Crear solicitud específica para este fragmento
                     frag_data = request_data.copy()
                     frag_data["selected_fragments"] = [frag]
-                    
+
+                    if progress_callback:
+                        progress_callback({
+                            "status": "fragment_progress",
+                            "phase": "downloading",
+                            "fragment_index": i + 1,
+                            "fragment_count": len(fragments),
+                        })
+
                     logger.debug(f"DownloaderMaster: Preparando fragmento {i+1} con data: "
                                  f"v_id={frag_data.get('video_format_id')}, a_id={frag_data.get('audio_format_id')}")
                     
@@ -181,8 +189,9 @@ class DownloaderMaster:
                     if needs_local_cut:
                         filename = ydl.prepare_filename(info)
                         self._handle_local_cuts(
-                            filename, fragments, 
-                            keep_original=(fragment_mode == FragmentState.KEEP_FULL)
+                            filename, fragments,
+                            keep_original=(fragment_mode == FragmentState.KEEP_FULL),
+                            progress_callback=progress_callback
                         )
                         
                         if request_data.get("cut_subtitles") and request_data.get("subtitle_lang"):
@@ -199,6 +208,24 @@ class DownloaderMaster:
                             self._handle_subtitle_standardization(filename, request_data)
 
                 file_conflict_manager.commit_backup(self._pending_backup)
+
+                # Con ignoreerrors='only_download' (ver _prepare_opts), una playlist
+                # con ítems fallidos igual termina "exitosa" a nivel de yt-dlp — mejor
+                # esfuerzo para avisar cuántos de verdad se descargaron. Los ítems
+                # fallidos suelen quedar como None/incompletos en 'entries'; si la
+                # estructura no da para contarlos con confianza, no se rompe el
+                # resultado, solo se pierde el detalle del resumen.
+                if request_data.get('is_playlist') and isinstance(info, dict) and 'entries' in info:
+                    try:
+                        entries = list(info.get('entries') or [])
+                        total_entries = len(entries)
+                        ok_entries = sum(1 for e in entries if e)
+                        failed_entries = total_entries - ok_entries
+                        if total_entries and failed_entries:
+                            return True, f"{ok_entries} de {total_entries} completados, {failed_entries} con error"
+                    except Exception as summary_err:
+                        logger.debug(f"DownloaderMaster: No se pudo armar el resumen de playlist: {summary_err}")
+
                 return True, "Download finished successfully"
 
         except DownloadCancelledError as e:
@@ -357,8 +384,19 @@ class DownloaderMaster:
         # Bloquear rígidamente la extracción de más de 1 item si no es una playlist autorizada
         if not is_playlist:
             ydl_opts['playlist_items'] = '1'
-        elif data.get("playlist_items"):
-            ydl_opts['playlist_items'] = data.get("playlist_items")
+        else:
+            if data.get("playlist_items"):
+                ydl_opts['playlist_items'] = data.get("playlist_items")
+                # Solo cuando de verdad se pide un RANGO de varios ítems en una
+                # misma llamada (Modo Rápido descargando una playlist completa)
+                # tiene sentido tolerar errores por ítem. No usar esto como
+                # criterio único basado en is_playlist: LOTES marca is_playlist=True
+                # también en sus descargas de un solo video por ítem
+                # (_execute_playlist en queue_manager.py, una URL puntual por
+                # llamada) — ahí 'ignoreerrors' silenciaría errores reales de
+                # descarga (ej. 403) impidiendo que el reintento con cliente
+                # alternativo (is_youtube_access_error) llegue a dispararse.
+                ydl_opts['ignoreerrors'] = 'only_download'
 
         # --- FRAGMENTOS / RECORTES ---
         fragments = data.get("selected_fragments", [])
@@ -807,7 +845,7 @@ class DownloaderMaster:
             logger.warning(f"DownloaderMaster: No se pudo parsear el limite de velocidad '{limit_str}', se ignora.")
             return None
 
-    def _handle_local_cuts(self, input_file, fragments, keep_original):
+    def _handle_local_cuts(self, input_file, fragments, keep_original, progress_callback=None):
         """Usa ffmpeg directamente para realizar cortes sobre el archivo ya descargado."""
         if not os.path.exists(input_file):
             logger.error(f"DownloaderMaster: No se encuentra el archivo base para cortes: {input_file}")
@@ -851,6 +889,14 @@ class DownloaderMaster:
                 output_file
             ]
             
+            if progress_callback:
+                progress_callback({
+                    "status": "fragment_progress",
+                    "phase": "cutting",
+                    "fragment_index": i + 1,
+                    "fragment_count": len(fragments),
+                })
+
             try:
                 logger.info(f"DownloaderMaster: Procesando corte local {i+1}/{len(fragments)}: {output_file}")
                 # Usamos utf-8 con reemplazo de errores para evitar fallos si ffmpeg imprime caracteres especiales/emojis

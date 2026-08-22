@@ -666,10 +666,14 @@ class QueuePanel(QWidget):
         
         if has_fragments:
             card.progress_bar.setRange(0, 0)
+            # 'speed' trae el mensaje "Descargando/Cortando fragmento N de M" cuando
+            # viene del pseudo-evento fragment_progress (ver queue_manager.py);
+            # si no, usamos un texto genérico de respaldo.
+            fragment_text = speed if speed else self.tr("Cortando fragmentos...")
             card.update_progress(
                 percent=0,
                 speed_text=self.tr("Por favor espere..."),
-                status_text=self.tr("Cortando fragmentos...")
+                status_text=fragment_text
             )
         else:
             card.progress_bar.setRange(0, 100)

@@ -738,7 +738,10 @@ class AdvancedProcessTab(QWidget):
         
     def showEvent(self, event):
         super().showEvent(event)
-        # Inicializamos el gestor en el showEvent para asegurar que window() sea válido
+        # Inicializamos el gestor en el showEvent para asegurar que window() sea válido.
+        # El progreso de LOTES ya lo maneja update_queue_main_progress() en
+        # download_controller.py (única fuente de verdad para el taskbar ahí);
+        # SOLO lo maneja on_solo_progress() en el mismo archivo.
         if not self.taskbar_manager:
             from core.utils.taskbar_progress import TaskbarProgressManager
             try:
@@ -907,13 +910,29 @@ class AdvancedProcessTab(QWidget):
 
     def _save_current_job_options(self):
         """Guarda la configuración actual de la UI en el trabajo en inspección."""
-        if self._selected_job_id:
-            job = self.queue_mgr.get_job(self._selected_job_id)
-            if job and job.job_type == "PLAYLIST":
-                return
-            req_data = self._collect_request_data()
-            if req_data:
-                self.queue_mgr.update_job_data(self._selected_job_id, request_data=req_data)
+        if not self._selected_job_id:
+            return
+        job = self.queue_mgr.get_job(self._selected_job_id)
+        if not job:
+            return
+
+        if job.job_type == "PLAYLIST":
+            # Los jobs de playlist no usan request_data (van por job.config), pero
+            # el título sí es editable acá y es lo que _execute_playlist usa como
+            # nombre de la carpeta de destino — hay que guardarlo igual, si no
+            # queda descartado al cambiar de tarjeta.
+            new_title = self.video_details.title_input.text().strip()
+            if new_title and new_title != job.title:
+                job.title = new_title
+                job.config["title"] = new_title
+                card = self.queue_panel.cards.get(job.job_id)
+                if card:
+                    card.update_title(new_title)
+            return
+
+        req_data = self._collect_request_data()
+        if req_data:
+            self.queue_mgr.update_job_data(self._selected_job_id, request_data=req_data)
 
     def _resolve_formats_manually(self, video_data):
         cached_key = '_cached_formats'

@@ -41,6 +41,12 @@ class QuickDownloadController(QObject):
         self.current_item_pos = 0
         self.completed_items = 0
 
+        # Contadores de la tanda actual, para la barra general ("X de Y
+        # completados"). Se reinician cuando arranca una tanda nueva desde
+        # estado idle (ver start_worker).
+        self._batch_total = 0
+        self._batch_completed = 0
+
     def start_download_flow(self, url, mode, quality, output_path, speed_limit_val,
                             chk_thumb_file_checked, chk_thumb_only_checked,
                             btn_cut_checked, chk_playlist_selector_checked):
@@ -262,9 +268,16 @@ class QuickDownloadController(QObject):
         from core.utils.config_manager import get_config
         max_concurrent = get_config().get("max_concurrent_downloads", 3)
 
+        # Si no hay nada activo ni encolado, esta es una tanda nueva: reiniciar
+        # los contadores para la barra general ("X de Y completados").
+        if not self.active_workers and not self.pending_tasks:
+            self._batch_total = 0
+            self._batch_completed = 0
+        self._batch_total += 1
+
         self.last_request_data = request_data.copy()
         self.last_downloaded_filepath = None
-        
+
         item_rows, item_keys = self.tab.activity_panel.add_activity_rows(
             selected_entries or [], selected_indices or []
         )
@@ -286,7 +299,27 @@ class QuickDownloadController(QObject):
                 row.update_progress(0, status=self.tr("En cola") if hasattr(self, "tr") else "En cola")
             self.pending_tasks.append(task_data)
             self.is_downloading = True
-            self.progress_updated.emit(0, self.tr("En cola...") if hasattr(self, "tr") else "En cola...", "wait")
+            self._emit_batch_progress()
+
+    def _emit_batch_progress(self):
+        """
+        Actualiza la barra general (la de 'Opciones de salida') para que solo
+        muestre cuántos ítems de la tanda actual ya terminaron — nunca el
+        progreso en vivo de un ítem individual (eso lo maneja cada fila).
+        """
+        total = self._batch_total
+        completed = self._batch_completed
+        if total <= 0:
+            return
+        percent = int(completed / total * 100)
+        msg = (
+            self.tr("{0} de {1} completados").format(completed, total)
+            if hasattr(self, "tr") else f"{completed} de {total} completados"
+        )
+        self.progress_updated.emit(percent, msg, "downloading")
+        if self.tab.taskbar_manager:
+            self.tab.taskbar_manager.set_state("normal")
+            self.tab.taskbar_manager.set_value(percent)
 
     def _start_task_worker(self, task_data):
         worker = DownloadWorker(task_data["request_data"], task_data["cancellation_event"])
@@ -300,7 +333,7 @@ class QuickDownloadController(QObject):
         self.is_downloading = True
         self.controls_state_changed.emit(False)
         self.download_text_changed.emit(self.tr("Descargar") if hasattr(self, "tr") else "Descargar")
-        self.progress_updated.emit(0, self.tr("Iniciando descarga...") if hasattr(self, "tr") else "Iniciando descarga...", "running")
+        self._emit_batch_progress()
         worker.start()
 
     def cancel_download(self):
@@ -313,6 +346,8 @@ class QuickDownloadController(QObject):
         self.controls_state_changed.emit(True)
         self.download_text_changed.emit(self.tr("Descargar") if hasattr(self, "tr") else "Descargar")
         self.progress_updated.emit(0, self.tr("Descargas canceladas") if hasattr(self, "tr") else "Descargas canceladas", "wait")
+        if self.tab.taskbar_manager:
+            self.tab.taskbar_manager.stop()
 
     def _find_actual_downloaded_file(self, filepath):
         """Busca el archivo real descargado ignorando extensiones temporales."""
@@ -351,6 +386,24 @@ class QuickDownloadController(QObject):
         return best_match
 
     def _on_task_progress(self, data, task_data):
+        has_fragments = bool(task_data["request_data"].get("selected_fragments"))
+
+        if data.get("status") == "fragment_progress":
+            idx = data.get("fragment_index")
+            total = data.get("fragment_count")
+            phase = data.get("phase", "downloading")
+            for row in task_data["item_rows"]:
+                row.set_fragment_progress(idx, total, phase)
+            if self.tab.taskbar_manager:
+                self.tab.taskbar_manager.set_state("indeterminate")
+            return
+
+        # Mientras el ítem tenga fragmentos, el progreso numérico crudo de
+        # yt-dlp no representa el avance real (se dispara una vez por
+        # fragmento) — la barra de la fila queda a cargo de fragment_progress.
+        if has_fragments:
+            return
+
         if data.get("status") == "downloading":
             from core.ytdlp_logic.analyzer import strip_ansi_codes
             p_str = strip_ansi_codes(data.get("_percent_str", "0%")).replace("%", "").strip()
@@ -360,7 +413,7 @@ class QuickDownloadController(QObject):
                 val = 0
             speed = strip_ansi_codes(data.get("_speed_str", "")).strip() or "..."
             eta = strip_ansi_codes(data.get("_eta_str", "")).strip() or "..."
-            
+
             for row in task_data["item_rows"]:
                 row.update_progress(
                     val,
@@ -370,8 +423,7 @@ class QuickDownloadController(QObject):
                 info = data.get("info_dict")
                 if info:
                     row.update_metadata_from_dict(info)
-            self.progress_updated.emit(int(val), f"{int(val)}% - {speed}", "downloading")
-            
+
         elif data.get("status") == "finished":
             filepath = data.get("filename")
             if filepath:
@@ -385,9 +437,11 @@ class QuickDownloadController(QObject):
                     row.update_metadata_from_dict(info)
 
     def _on_task_finished(self, success, message, task_data):
+        self._batch_completed += 1
+
         if task_data in self.active_workers:
             self.active_workers.remove(task_data)
-            
+
         if task_data.get("worker"):
             task_data["worker"].deleteLater()
 
@@ -407,6 +461,10 @@ class QuickDownloadController(QObject):
                 
                 if editor_mgr and editor_mgr.is_auto_send_enabled and hasattr(row, 'downloaded_filepath') and row.downloaded_filepath:
                     editor_mgr.process_raw_download(actual_path or row.downloaded_filepath, task_data["request_data"])
+            elif message == "SKIPPED_CONFLICT":
+                # No es un error: la política de conflicto elegida fue "Omitir"
+                # y el archivo ya existía.
+                row.update_progress(0, status=self.tr("Omitido") if hasattr(self, "tr") else "Omitido")
             else:
                 row.update_progress(0, status=self.tr("Error") if hasattr(self, "tr") else "Error")
                 row.mark_error()
@@ -431,5 +489,9 @@ class QuickDownloadController(QObject):
             self.controls_state_changed.emit(True)
             self.download_text_changed.emit(self.tr("Descargar") if hasattr(self, "tr") else "Descargar")
             self.progress_updated.emit(100, self.tr("Descargas completadas") if hasattr(self, "tr") else "Descargas completadas", "done")
+            if self.tab.taskbar_manager:
+                self.tab.taskbar_manager.stop()
+        else:
+            self._emit_batch_progress()
 
         self.download_finished_signal.emit(success, message)

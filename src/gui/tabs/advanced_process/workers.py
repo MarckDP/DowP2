@@ -41,11 +41,24 @@ class DownloadWorker(QThread):
 
     def run(self):
         success, message = self.master.download(
-            self.request_data, 
-            self._on_progress, 
-            self.cancellation_event
+            self.request_data,
+            self._on_progress,
+            self.cancellation_event,
+            conflict_ask_callback=self._ask_conflict,
         )
         self.finished.emit(success, message)
+
+    def _ask_conflict(self, filename):
+        """
+        Invocado desde DownloaderMaster (este mismo hilo worker) solo cuando
+        request_data["conflict_policy"] == "ask" (Proceso Avanzado en modo SOLO).
+        Bloquea este hilo hasta que el usuario responde en ConflictDialog.
+        """
+        from gui.dialogs.conflict_bridge import get_conflict_bridge
+        bridge = get_conflict_bridge()
+        if bridge is None:
+            return "cancel"
+        return bridge.ask(filename)
 
     def _on_progress(self, d):
         # Limitamos la emisión de señales para no saturar el hilo principal

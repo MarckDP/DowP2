@@ -291,6 +291,12 @@ class MainWindow(QMainWindow):
         super().__init__()
         logger.debug("MainWindow: Inicializando sistema de pestañas")
 
+        # Puente para el diálogo modal de conflicto de archivo (modo SOLO): debe
+        # crearse aquí, en el hilo principal, antes de que pueda arrancar cualquier
+        # descarga que lo necesite (ver gui/dialogs/conflict_bridge.py).
+        from gui.dialogs.conflict_bridge import ConflictDialogBridge
+        self._conflict_bridge = ConflictDialogBridge()
+
         # ── Barra de título personalizada ─────────────────────────────────────
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Window)
         # Permite redimensionar desde los bordes incluso sin decoración nativa

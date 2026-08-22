@@ -71,7 +71,8 @@ class QuickDownloadController(QObject):
             speed_limit_val=speed_limit_val,
             chk_thumb_file_checked=chk_thumb_file_checked,
             chk_thumb_only_checked=chk_thumb_only_checked,
-            is_playlist=False
+            is_playlist=False,
+            conflict_policy=self.tab.output_options.conflict_policy_combo.currentData(),
         )
         self.start_worker(req, selected_entries=[{"title": self.tr("Descarga directa") if hasattr(self, "tr") else "Descarga directa"}], selected_indices=[0])
 
@@ -121,6 +122,7 @@ class QuickDownloadController(QObject):
                 chk_thumb_only_checked=chk_thumb_only_checked,
                 is_playlist=True,
                 playlist_items=",".join(str(i + 1) for i in selected),
+                conflict_policy=self.tab.output_options.conflict_policy_combo.currentData(),
             )
             
             req["mode"] = dialog.result_data.get("playlist_mode") or req["mode"]
@@ -241,7 +243,8 @@ class QuickDownloadController(QObject):
                 speed_limit_val=speed_limit_val,
                 chk_thumb_file_checked=chk_thumb_file_checked,
                 chk_thumb_only_checked=chk_thumb_only_checked,
-                is_playlist=False
+                is_playlist=False,
+                conflict_policy=self.tab.output_options.conflict_policy_combo.currentData(),
             )
             req["selected_fragments"] = selected_fragments
             req["fragment_mode"] = fragment_mode

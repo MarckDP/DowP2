@@ -610,6 +610,10 @@ class AdvancedProcessTab(QWidget):
             # Al desactivar SOLO (checked = False)
             self._clear_ui_completely()
 
+        # Combo de política de conflicto: visible solo en modo LOTES (oculto en SOLO,
+        # donde en su lugar se pregunta con un diálogo modal por archivo).
+        self.output_options.set_conflict_policy_visible(not checked, animated=True)
+
         # Detener animaciones previas si están corriendo
         if hasattr(self, "_toggle_anim_group") and self._toggle_anim_group.state() == QParallelAnimationGroup.State.Running:
             self._toggle_anim_group.stop()
@@ -1011,6 +1015,7 @@ class AdvancedProcessTab(QWidget):
             "audio_source_id": "none",
             "force_audio_extract": False,
             "output_path": self.output_options.output_path_input.text(),
+            "conflict_policy": "ask" if self.url_bar.solo_btn.isChecked() else self.output_options.conflict_policy_combo.currentData(),
             "label": self.video_details.combo_tags.currentText() if self.video_details.combo_tags.currentIndex() > 0 else None,
             "speed_limit": f"{int(self.output_options.speed_limit_input.value() * 1024)}K" if self.output_options.speed_limit_input.value() > 0 else None,
             "download_thumbnail_file": False,
@@ -1255,6 +1260,7 @@ class AdvancedProcessTab(QWidget):
             "audio_source_id": audio_source_id,
             "force_audio_extract": force_audio_extract,
             "output_path": self.output_options.output_path_input.text(),
+            "conflict_policy": "ask" if self.url_bar.solo_btn.isChecked() else self.output_options.conflict_policy_combo.currentData(),
             "label": self.video_details.combo_tags.currentText() if self.video_details.combo_tags.currentIndex() > 0 else None,
             "speed_limit": f"{int(self.output_options.speed_limit_input.value() * 1024)}K" if self.output_options.speed_limit_input.value() > 0 else None,
             "download_thumbnail_file": self.video_details.chk_download_with_video.isChecked(),

@@ -42,6 +42,7 @@ class PlaylistController(QObject):
             "output_path": self.tab.output_options.output_path_input.text(),
             "playlist_mode": dialog.result_data.get("playlist_mode", "video+audio"),
             "playlist_quality": dialog.result_data.get("playlist_quality", "best_compatible"),
+            "conflict_policy": self.tab.output_options.conflict_policy_combo.currentData(),
             "selected_indices": selected,
             "total_videos": dialog.result_data.get("total_videos", len(data.get("entries") or [])),
             "speed_limit": f"{int(self.tab.output_options.speed_limit_input.value() * 1024)}K" if self.tab.output_options.speed_limit_input.value() > 0 else None,
@@ -134,6 +135,7 @@ class PlaylistController(QObject):
         job.config.update({
             "playlist_mode": dialog.result_data.get("playlist_mode", job.config.get("playlist_mode", "video+audio")),
             "playlist_quality": dialog.result_data.get("playlist_quality", job.config.get("playlist_quality", "best_compatible")),
+            "conflict_policy": self.tab.output_options.conflict_policy_combo.currentData(),
             "selected_indices": selected,
             "total_videos": dialog.result_data.get("total_videos", job.config.get("total_videos", len(selected))),
             "thumbnail_cache": dialog.result_data.get("thumbnail_cache", thumb_cache),

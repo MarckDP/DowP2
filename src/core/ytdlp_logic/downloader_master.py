@@ -9,6 +9,7 @@ from core.setup.ytdlp_setup import get_ytdlp_path
 from core.ytdlp_logic.analyzer import get_base_ydl_opts
 from core.utils.cleanup_manager import DownloadCancelledError
 from core.utils.subtitle_manager import SubtitleProcessor
+from core.utils import file_conflict_manager
 import glob
 
 class DownloaderMaster:
@@ -19,11 +20,17 @@ class DownloaderMaster:
     def __init__(self):
         self.active_downloads = {} # Para futuras colas simultáneas
 
-    def download(self, request_data, progress_callback=None, cancellation_event=None):
+    def download(self, request_data, progress_callback=None, cancellation_event=None, conflict_ask_callback=None):
         """
         Ejecuta una descarga basada en el diccionario de datos recibido de la UI.
+
+        conflict_ask_callback: callable(filename: str) -> "overwrite"/"rename"/"cancel",
+        usado únicamente cuando request_data["conflict_policy"] == "ask" (modo SOLO de
+        Proceso Avanzado). Se inyecta desde la capa de GUI (ver
+        gui/tabs/advanced_process/workers.py) para que este módulo no dependa de Qt.
         """
         self.cancellation_event = cancellation_event
+        self._pending_backup = None
         url = request_data.get("url")
         if not url:
             return False, "No URL provided"
@@ -122,6 +129,19 @@ class DownloaderMaster:
             
             else:
                 # Caso estándar: Descarga única (Completa, o para corte local posterior)
+                # Modo Rápido no fija un título propio (deja que yt-dlp use %(title)s
+                # del sitio), así que sin un título no hay ruta que comprobar. Se
+                # resuelve primero con una extracción de metadata liviana para que el
+                # chequeo de conflicto también funcione ahí.
+                if (not request_data.get("title") and not request_data.get("is_playlist")
+                        and request_data.get("mode", "video+audio") in ("video+audio", "video_only", "audio_only")):
+                    resolved_title = self._resolve_title_from_metadata(request_data, url)
+                    if resolved_title:
+                        request_data["title"] = resolved_title
+
+                if not self._resolve_output_conflict(request_data, conflict_ask_callback):
+                    return False, "SKIPPED_CONFLICT"
+
                 ydl_opts = self._prepare_opts(request_data, progress_callback)
                 
                 # Log del comando CLI equivalente
@@ -178,20 +198,123 @@ class DownloaderMaster:
                             filename = ydl.prepare_filename(info)
                             self._handle_subtitle_standardization(filename, request_data)
 
+                file_conflict_manager.commit_backup(self._pending_backup)
                 return True, "Download finished successfully"
 
         except DownloadCancelledError as e:
             # Limpieza de archivos temporales al cancelar
             self._cleanup_on_cancel(request_data)
+            file_conflict_manager.rollback_backup(self._pending_backup)
             return False, str(e)
         except Exception as e:
             err_msg = str(e)
             logger.error(f"Error en DownloaderMaster: {err_msg}\n{traceback.format_exc()}")
             # Limpieza de archivos temporales al fallar
             self._cleanup_on_cancel(request_data)
+            file_conflict_manager.rollback_backup(self._pending_backup)
             return False, err_msg
         finally:
             os.environ["PATH"] = old_path
+
+    def _resolve_title_from_metadata(self, request_data, url):
+        """
+        Resuelve el título real de la URL con una extracción de metadata liviana
+        (skip_download=True, sin hooks de progreso) para poder predecir la ruta de
+        salida y chequear conflictos ANTES de descargar. Solo se usa cuando
+        request_data no trae un título propio (caso de Modo Rápido).
+
+        Si la extracción falla por cualquier motivo, retorna None: el llamador debe
+        seguir sin título, lo que hace que _resolve_output_conflict no revise nada y
+        yt-dlp decida por su cuenta (mismo comportamiento previo a esta función).
+        """
+        try:
+            import yt_dlp
+            probe_opts = self._prepare_opts(request_data, None)
+            probe_opts['skip_download'] = True
+            probe_opts['quiet'] = True
+            probe_opts.pop('progress_hooks', None)
+            with yt_dlp.YoutubeDL(probe_opts) as probe:
+                info = probe.extract_info(url, download=False)
+            title = info.get('title') if info else None
+            return self._sanitize_filename(title) if title else None
+        except Exception as e:
+            logger.warning(
+                f"DownloaderMaster: No se pudo resolver el título por adelantado para el "
+                f"chequeo de conflicto (se continuará sin chequear): {e}"
+            )
+            return None
+
+    def _resolve_output_conflict(self, request_data, conflict_ask_callback):
+        """
+        Comprueba si el archivo de salida principal ya existe y resuelve el conflicto
+        según request_data["conflict_policy"]:
+          - "sobrescribir" / "conservar" / "omitir": aplicado en silencio (Modo Rápido,
+            Proceso Avanzado en modo LOTES).
+          - "ask": dispara conflict_ask_callback(filename) -> "overwrite"/"rename"/"cancel"
+            (Proceso Avanzado en modo SOLO). El callback lo inyecta la capa de GUI para
+            que este módulo no dependa de Qt.
+
+        Efectos secundarios sobre request_data si hay conflicto:
+          - Puede reescribir request_data["title"] (política "conservar"/"rename").
+          - Fija request_data["merge_output_format"] en modo "video+audio", para que
+            yt-dlp respete la extensión predicha en vez de decidir el contenedor por
+            su cuenta (puede caer a .mkv si los streams son incompatibles para .mp4).
+
+        Returns:
+            True si se debe continuar con la descarga, False si se debe omitir en
+            silencio (política "omitir" con conflicto real: no es un error).
+
+        Raises:
+            DownloadCancelledError: si el usuario cancela en el diálogo modal.
+        """
+        self._pending_backup = None
+
+        mode = request_data.get("mode", "video+audio")
+        if mode not in ("video+audio", "video_only", "audio_only"):
+            return True
+
+        output_path = request_data.get("output_path")
+        title = request_data.get("title")
+        if not output_path or not title:
+            return True
+
+        predicted_ext = file_conflict_manager.predict_final_extension(
+            request_data.get("video_ext"),
+            request_data.get("audio_ext"),
+            mode,
+            bool(request_data.get("video_is_combined")),
+        )
+        desired_path = os.path.join(output_path, f"{title}{predicted_ext}")
+
+        policy = request_data.get("conflict_policy", "conservar")
+
+        if policy == "ask":
+            if not os.path.exists(desired_path):
+                return True
+            if conflict_ask_callback is None:
+                logger.warning(
+                    "DownloaderMaster: conflict_policy='ask' sin conflict_ask_callback disponible, "
+                    "se continúa sin preguntar."
+                )
+                return True
+            choice = conflict_ask_callback(os.path.basename(desired_path))
+            if choice == "cancel":
+                raise DownloadCancelledError("Descarga cancelada por el usuario en conflicto de archivo.")
+            policy = "sobrescribir" if choice == "overwrite" else "conservar"
+
+        final_path, backup_path = file_conflict_manager.resolve_conflict(desired_path, policy)
+
+        if final_path is None:
+            # Política "omitir" con conflicto real: no es un error, simplemente no se descarga.
+            return False
+
+        self._pending_backup = backup_path
+        request_data["title"] = os.path.splitext(os.path.basename(final_path))[0]
+
+        if mode == "video+audio":
+            request_data["merge_output_format"] = predicted_ext.lstrip(".")
+
+        return True
 
     def _prepare_opts(self, data, progress_callback):
         """
@@ -224,7 +347,13 @@ class DownloaderMaster:
             'restrictfilenames': True,
             'downloader': 'native',
         })
-        
+
+        # Fijar el contenedor final si _resolve_output_conflict ya predijo uno (evita
+        # que yt-dlp decida por su cuenta y caiga a .mkv si los streams son
+        # incompatibles para .mp4, lo que invalidaría el chequeo de conflicto previo).
+        if data.get("merge_output_format"):
+            ydl_opts['merge_output_format'] = data["merge_output_format"]
+
         # Bloquear rígidamente la extracción de más de 1 item si no es una playlist autorizada
         if not is_playlist:
             ydl_opts['playlist_items'] = '1'

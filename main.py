@@ -115,7 +115,16 @@ def main():
     
     config = get_config()
     load_language(app, config.get("language", "en"))
-    
+
+    # ── Recuperación de backups huérfanos (.dbak) de una sesión anterior cerrada
+    #    a la fuerza a mitad de una sobrescritura. Siempre restaura el original,
+    #    nunca descarta en silencio. No requiere GUI ni dependencias verificadas,
+    #    por eso corre lo antes posible. ──
+    from core.utils.file_conflict_manager import recover_orphaned_backups
+    recovered = recover_orphaned_backups()
+    if recovered:
+        logger.info(f"Se restauraron {len(recovered)} archivo(s) tras un cierre inesperado: {recovered}")
+
     # ── Splash Screen con verificación de dependencias integrada ──
     from gui.splash_screen import SplashScreen
     

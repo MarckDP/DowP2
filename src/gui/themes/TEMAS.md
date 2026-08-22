@@ -150,6 +150,16 @@ Cada token controla un aspecto visual específico de la app. Aquí está la list
 | `titulo_settings` | Color del título "Ajustes Generales" | `QLabel#settingsTitle` |
 | `divisor_settings` | Color del divisor en ajustes | `QFrame#settingsDivider` |
 
+### 🚦 Estados
+
+| Token | Descripción | Dónde se usa |
+|---|---|---|
+| `estado_espera` | Estado neutro/pendiente | Tarjetas de cola en espera, ítems "pendiente"/"en cola" |
+| `estado_progreso` | Trabajando activamente (sin fallar) | Tarjetas de cola "Descargando" y "Analizando" |
+| `estado_exito` | Operación completada con éxito | Tarjetas "Completado", diálogos de dependencias, verificación de códecs |
+| `estado_aviso` | Advertencia, no bloqueante | Tarjetas "Omitido" (archivo ya existía), advertencias de compatibilidad |
+| `estado_error` | Fallo o cancelación | Tarjetas "Error"/"Cancelado", errores de dependencias |
+
 ### 🔽 Triángulo del ComboBox
 
 El triángulo ▼ que aparece en los menús desplegables se genera **automáticamente** usando el color de `acento_primario`. No necesitas configurarlo — siempre coincide con tu acento.

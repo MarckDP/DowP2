@@ -59,6 +59,7 @@
         "estado_exito": "#40d66b",
         "estado_aviso": "#d8c94a",
         "estado_error": "#ff6b5f",
+        "estado_progreso": "#3498db",
         "boton_fragmentos_inicio": "#ff6b5f",
         "boton_fragmentos_fin": "#FF8C00",
         "boton_fragmentos_texto": "#ffffff",

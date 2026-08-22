@@ -5,6 +5,7 @@ from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
+    QComboBox,
     QFileDialog,
     QFrame,
     QHBoxLayout,
@@ -15,9 +16,10 @@ from PySide6.QtWidgets import (
     QSpinBox,
     QDoubleSpinBox,
     QVBoxLayout,
+    QWidget,
 )
 from PySide6.QtGui import QDesktopServices, QIcon
-from PySide6.QtCore import Qt, QUrl, QSize
+from PySide6.QtCore import Qt, QUrl, QSize, QPropertyAnimation, QParallelAnimationGroup, QEasingCurve
 from gui.widgets.animated_button import AnimatedButton
 from gui.styles import apply_folder_browse_button_style, apply_folder_open_button_style
 
@@ -53,6 +55,36 @@ class OutputOptionsWidget(QFrame):
         controls_layout = QHBoxLayout()
         controls_layout.setContentsMargins(0, 0, 0, 0)
         controls_layout.setSpacing(10)
+
+        # --- CONFLICT POLICY SECTION (a la izquierda de la ruta) ---
+        # Visible siempre en Modo Rápido; en Proceso Avanzado solo en modo LOTES
+        # (ver advanced_process_view.py::_on_solo_toggled, que llama
+        # set_conflict_policy_visible()).
+        self.conflict_policy_container = QWidget()
+        conflict_policy_layout = QHBoxLayout(self.conflict_policy_container)
+        conflict_policy_layout.setContentsMargins(0, 0, 0, 0)
+        conflict_policy_layout.setSpacing(6)
+
+        self.lbl_conflict_policy = QLabel(self.tr("Si existe:"))
+        self.lbl_conflict_policy.setObjectName("menuLabel")
+
+        self.conflict_policy_combo = QComboBox()
+        self.conflict_policy_combo.addItem(self.tr("Sobrescribir"), "sobrescribir")
+        self.conflict_policy_combo.addItem(self.tr("Conservar"), "conservar")
+        self.conflict_policy_combo.addItem(self.tr("Omitir"), "omitir")
+        self.conflict_policy_combo.setCurrentIndex(1)  # "Conservar" por defecto
+        self.conflict_policy_combo.setToolTip(self.tr(
+            "Determina qué hacer si un archivo con el mismo nombre ya existe:\n"
+            "• Sobrescribir: reemplaza el archivo antiguo (con respaldo reversible).\n"
+            "• Conservar: guarda el nuevo archivo como 'nombre (1).ext'.\n"
+            "• Omitir: no descarga ese archivo."
+        ))
+
+        conflict_policy_layout.addWidget(self.lbl_conflict_policy)
+        conflict_policy_layout.addWidget(self.conflict_policy_combo)
+
+        controls_layout.addWidget(self.conflict_policy_container)
+        controls_layout.addSpacing(10)
 
         # --- PATH SECTION ---
         from core.tabs.advanced_process.output_logic import get_default_download_path
@@ -186,6 +218,56 @@ class OutputOptionsWidget(QFrame):
         if not path:
             return
         QDesktopServices.openUrl(QUrl.fromLocalFile(path))
+
+    def set_conflict_policy_visible(self, visible: bool, animated: bool = True):
+        """
+        Muestra/oculta el combo de política de conflicto. Usado por Proceso Avanzado
+        para ocultarlo en modo SOLO (donde en su lugar se pregunta con un diálogo
+        modal por archivo) y mostrarlo en modo LOTES. Modo Rápido nunca llama a este
+        método: el combo queda siempre visible ahí.
+
+        Anima minimumWidth/maximumWidth del contenedor a 0 <-> ancho natural, mismo
+        patrón que advanced_process_view.py usa para queue_trigger/queue_panel al
+        alternar SOLO/LOTES.
+        """
+        target_width = self.conflict_policy_container.sizeHint().width() if visible else 0
+
+        if hasattr(self, "_conflict_anim_group") and self._conflict_anim_group.state() == QParallelAnimationGroup.State.Running:
+            self._conflict_anim_group.stop()
+
+        if not animated:
+            self.conflict_policy_container.setMinimumWidth(target_width)
+            self.conflict_policy_container.setMaximumWidth(target_width if visible else 0)
+            self.conflict_policy_container.setVisible(visible)
+            return
+
+        if visible:
+            self.conflict_policy_container.setVisible(True)
+
+        self._conflict_anim_group = QParallelAnimationGroup(self)
+        current_width = self.conflict_policy_container.width()
+
+        anim_min = QPropertyAnimation(self.conflict_policy_container, b"minimumWidth")
+        anim_min.setDuration(220)
+        anim_min.setStartValue(current_width)
+        anim_min.setEndValue(target_width)
+        anim_min.setEasingCurve(QEasingCurve.Type.OutQuad)
+        self._conflict_anim_group.addAnimation(anim_min)
+
+        anim_max = QPropertyAnimation(self.conflict_policy_container, b"maximumWidth")
+        anim_max.setDuration(220)
+        anim_max.setStartValue(current_width)
+        anim_max.setEndValue(target_width)
+        anim_max.setEasingCurve(QEasingCurve.Type.OutQuad)
+        self._conflict_anim_group.addAnimation(anim_max)
+
+        def on_finished():
+            self.conflict_policy_container.setMaximumWidth(16777215)
+            if not visible:
+                self.conflict_policy_container.setVisible(False)
+
+        self._conflict_anim_group.finished.connect(on_finished)
+        self._conflict_anim_group.start()
 
     def _refresh_style(self, widget):
         from gui.widgets.bouncing_progress_bar import BouncingProgressBar

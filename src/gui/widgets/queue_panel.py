@@ -1,14 +1,25 @@
 # src/gui/widgets/queue_panel.py
 import os
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea, QProgressBar, QFrame, QPushButton
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea, QProgressBar, QFrame, QPushButton,
+    QGraphicsOpacityEffect
 )
-from PySide6.QtCore import Qt, QVariantAnimation, QEasingCurve, Signal
-from PySide6.QtGui import QColor, QIcon, QPixmap, QPainter
+from PySide6.QtCore import Qt, QVariantAnimation, QEasingCurve, Signal, QTimer
+from PySide6.QtGui import QColor, QIcon, QPixmap, QPainter, QCursor
 from gui.styles import get_theme_token
 from core.logger.logger_manager import logger
+from core.utils.paths import get_src_dir
 
-def get_colored_icon(path, color_hex, size=16):
+ICONS_DIR = os.path.join(get_src_dir(), "assets", "icons", "svg")
+
+def get_colored_icon(filename, color_hex, size=16):
+    """
+    Carga un ícono SVG desde assets/icons/svg por nombre de archivo y lo tiñe del
+    color dado. Usa get_src_dir() (no una ruta relativa) para que funcione tanto
+    corriendo desde el código fuente como dentro de un .exe compilado, donde el
+    directorio de trabajo actual no es necesariamente la raíz del repo.
+    """
+    path = os.path.join(ICONS_DIR, filename)
     pixmap = QPixmap(path)
     if pixmap.isNull():
         return QIcon()
@@ -39,6 +50,9 @@ class QueueItemCard(QFrame):
     reset_requested = Signal(str)
     configure_requested = Signal(str)
     open_folder_requested = Signal(str)
+    drag_started = Signal(str)
+
+    DRAG_THRESHOLD = 8
 
     def __init__(self, title, job_id, parent=None, is_playlist=False):
         super().__init__(parent)
@@ -46,6 +60,8 @@ class QueueItemCard(QFrame):
         self.is_playlist = is_playlist
         self._is_selected = False
         self._current_border = get_theme_token('borde', '#2d2d2d')
+        self._press_pos = None
+        self._dragging = False
         self.setObjectName("queueItemCard")
         self.init_ui(title)
 
@@ -87,7 +103,46 @@ class QueueItemCard(QFrame):
         
     def mousePressEvent(self, event):
         super().mousePressEvent(event)
-        self.card_clicked.emit(self.job_id)
+        if event.button() == Qt.LeftButton:
+            self._press_pos = event.position().toPoint()
+            self._dragging = False
+
+    def mouseMoveEvent(self, event):
+        super().mouseMoveEvent(event)
+        if self._press_pos is None or self._dragging:
+            return
+        if not (event.buttons() & Qt.LeftButton):
+            return
+        delta = (event.position().toPoint() - self._press_pos).manhattanLength()
+        if delta >= self.DRAG_THRESHOLD:
+            self._dragging = True
+            self.drag_started.emit(self.job_id)
+
+    def mouseReleaseEvent(self, event):
+        super().mouseReleaseEvent(event)
+        if event.button() != Qt.LeftButton:
+            return
+        # Si nunca se superó el umbral de arrastre, es un click normal (selección).
+        # Si se arrastró, QueuePanel ya tiene el mouse "grabbed" y este evento no
+        # llegará aquí hasta soltar (ver reset_drag_state, llamado desde el panel).
+        if self._press_pos is not None and not self._dragging:
+            self.card_clicked.emit(self.job_id)
+        self._press_pos = None
+
+    def set_drag_opacity(self, dragging: bool):
+        """Atenúa la tarjeta mientras se arrastra, para señalar cuál se está moviendo."""
+        if dragging:
+            effect = QGraphicsOpacityEffect(self)
+            effect.setOpacity(0.4)
+            self.setGraphicsEffect(effect)
+        else:
+            self.setGraphicsEffect(None)
+
+    def reset_drag_state(self):
+        """Llamado por QueuePanel cuando termina un arrastre (soltado o cancelado)."""
+        self._press_pos = None
+        self._dragging = False
+        self.set_drag_opacity(False)
         
     def init_ui(self, title):
         layout = QVBoxLayout(self)
@@ -108,45 +163,49 @@ class QueueItemCard(QFrame):
         self.status_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         
         # Botones de control
-        self.btn_up = QPushButton("▲")
+        self.btn_up = QPushButton()
+        self.btn_up.setIcon(get_colored_icon('arrow_upward_alt.svg', '#888888', size=12))
+        self.btn_up.setToolTip(self.tr("Mover arriba"))
         self.btn_up.setFixedSize(16, 16)
-        self.btn_up.setStyleSheet("border: none; color: #888; font-size: 8px;")
+        self.btn_up.setStyleSheet("border: none; background: transparent; padding: 0px; min-width: 0px; min-height: 0px;")
         self.btn_up.clicked.connect(lambda: self.move_up_requested.emit(self.job_id))
-        
-        self.btn_down = QPushButton("▼")
+
+        self.btn_down = QPushButton()
+        self.btn_down.setIcon(get_colored_icon('arrow_downward_alt.svg', '#888888', size=12))
+        self.btn_down.setToolTip(self.tr("Mover abajo"))
         self.btn_down.setFixedSize(16, 16)
-        self.btn_down.setStyleSheet("border: none; color: #888; font-size: 8px;")
+        self.btn_down.setStyleSheet("border: none; background: transparent; padding: 0px; min-width: 0px; min-height: 0px;")
         self.btn_down.clicked.connect(lambda: self.move_down_requested.emit(self.job_id))
 
         self.btn_close = QPushButton()
-        self.btn_close.setIcon(get_colored_icon('src/assets/icons/svg/close.svg', '#e74c3c'))
+        self.btn_close.setIcon(get_colored_icon('close.svg', '#e74c3c'))
         self.btn_close.setToolTip(self.tr("Eliminar de la cola"))
         self.btn_close.setFixedSize(16, 16)
-        self.btn_close.setStyleSheet("border: none; background: transparent;")
+        self.btn_close.setStyleSheet("border: none; background: transparent; padding: 0px; min-width: 0px; min-height: 0px;")
         self.btn_close.clicked.connect(lambda: self.delete_requested.emit(self.job_id))
         
         self.btn_reset = QPushButton()
         acento_color = get_theme_token('acento_primario', '#B9E640')
-        self.btn_reset.setIcon(get_colored_icon('src/assets/icons/svg/arrow_back.svg', acento_color))
+        self.btn_reset.setIcon(get_colored_icon('arrow_back.svg', acento_color))
         self.btn_reset.setToolTip(self.tr("Restaurar descarga"))
         self.btn_reset.setFixedSize(16, 16)
-        self.btn_reset.setStyleSheet("border: none; background: transparent;")
+        self.btn_reset.setStyleSheet("border: none; background: transparent; padding: 0px; min-width: 0px; min-height: 0px;")
         self.btn_reset.clicked.connect(lambda: self.reset_requested.emit(self.job_id))
         self.btn_reset.hide()
 
         self.btn_folder = QPushButton()
-        self.btn_folder.setIcon(get_colored_icon('src/assets/icons/svg/folder_open.svg', acento_color))
+        self.btn_folder.setIcon(get_colored_icon('folder_open.svg', acento_color))
         self.btn_folder.setToolTip(self.tr("Abrir carpeta contenedora"))
         self.btn_folder.setFixedSize(16, 16)
-        self.btn_folder.setStyleSheet("border: none; background: transparent;")
+        self.btn_folder.setStyleSheet("border: none; background: transparent; padding: 0px; min-width: 0px; min-height: 0px;")
         self.btn_folder.clicked.connect(lambda: self.open_folder_requested.emit(self.job_id))
         self.btn_folder.hide()
 
         self.btn_configure = QPushButton()
-        self.btn_configure.setIcon(get_colored_icon('src/assets/icons/svg/settings.svg', '#888888'))
+        self.btn_configure.setIcon(get_colored_icon('settings.svg', '#888888'))
         self.btn_configure.setToolTip(self.tr("Configurar Playlist"))
         self.btn_configure.setFixedSize(16, 16)
-        self.btn_configure.setStyleSheet("border: none; background: transparent;")
+        self.btn_configure.setStyleSheet("border: none; background: transparent; padding: 0px; min-width: 0px; min-height: 0px;")
         self.btn_configure.clicked.connect(lambda: self.configure_requested.emit(self.job_id))
         if not self.is_playlist:
             self.btn_configure.hide()
@@ -224,26 +283,36 @@ class QueueItemCard(QFrame):
             # Cambiar colores según estado
             border_color = get_theme_token('borde', '#2d2d2d')
             if status_text == self.tr("Completado"):
-                self.status_lbl.setStyleSheet(f"color: #2ecc71; font-size: 10px; font-weight: bold;")
-                self.percent_lbl.setStyleSheet(f"color: #2ecc71; font-size: 10px; font-weight: bold;")
-                border_color = "#2ecc71"
+                color = get_theme_token('estado_exito', '#40d66b')
+                self.status_lbl.setStyleSheet(f"color: {color}; font-size: 10px; font-weight: bold;")
+                self.percent_lbl.setStyleSheet(f"color: {color}; font-size: 10px; font-weight: bold;")
+                border_color = color
             elif status_text == self.tr("Error"):
-                self.status_lbl.setStyleSheet(f"color: #e74c3c; font-size: 10px; font-weight: bold;")
-                self.percent_lbl.setStyleSheet(f"color: #e74c3c; font-size: 10px; font-weight: bold;")
-                border_color = "#e74c3c"
+                color = get_theme_token('estado_error', '#ff6b5f')
+                self.status_lbl.setStyleSheet(f"color: {color}; font-size: 10px; font-weight: bold;")
+                self.percent_lbl.setStyleSheet(f"color: {color}; font-size: 10px; font-weight: bold;")
+                border_color = color
             elif status_text == self.tr("Cancelado"):
-                self.status_lbl.setStyleSheet(f"color: #e74c3c; font-size: 10px; font-weight: bold;")
-                self.percent_lbl.setStyleSheet(f"color: #e74c3c; font-size: 10px; font-weight: bold;")
-                border_color = "#e74c3c"
+                color = get_theme_token('estado_error', '#ff6b5f')
+                self.status_lbl.setStyleSheet(f"color: {color}; font-size: 10px; font-weight: bold;")
+                self.percent_lbl.setStyleSheet(f"color: {color}; font-size: 10px; font-weight: bold;")
+                border_color = color
+            elif status_text == self.tr("Omitido"):
+                color = get_theme_token('estado_aviso', '#d8c94a')
+                self.status_lbl.setStyleSheet(f"color: {color}; font-size: 10px; font-weight: bold;")
+                self.percent_lbl.setStyleSheet(f"color: {color}; font-size: 10px; font-weight: bold;")
+                border_color = color
             elif status_text == self.tr("Descargando"):
-                self.status_lbl.setStyleSheet(f"color: {get_theme_token('acento_primario', '#B9E640')}; font-size: 10px;")
-                border_color = get_theme_token('acento_primario', '#B9E640')
+                color = get_theme_token('estado_progreso', '#3498db')
+                self.status_lbl.setStyleSheet(f"color: {color}; font-size: 10px;")
+                border_color = color
             elif status_text.startswith(self.tr("Analizando")) or "Analizando" in status_text:
-                self.status_lbl.setStyleSheet(f"color: #f39c12; font-size: 10px; font-weight: bold;")
-                border_color = "#f39c12"
+                color = get_theme_token('estado_progreso', '#3498db')
+                self.status_lbl.setStyleSheet(f"color: {color}; font-size: 10px; font-weight: bold;")
+                border_color = color
             elif status_text == self.tr("En espera"):
                 # Reseteo completo: restaurar colores neutros, barra a 0, ocultar reset
-                self.status_lbl.setStyleSheet(f"color: {get_theme_token('texto_secundario', '#aaaaaa')}; font-size: 10px;")
+                self.status_lbl.setStyleSheet(f"color: {get_theme_token('estado_espera', '#aaaaaa')}; font-size: 10px;")
                 self.percent_lbl.setStyleSheet(f"color: {get_theme_token('acento_primario', '#B9E640')}; font-size: 10px; font-weight: bold;")
                 self.progress_bar.setRange(0, 100)
                 self.progress_bar.setValue(0)
@@ -253,7 +322,7 @@ class QueueItemCard(QFrame):
                 self.status_lbl.setToolTip("")
                 border_color = get_theme_token('borde', '#2d2d2d')
 
-            if status_text in (self.tr("Completado"), self.tr("Error"), self.tr("Cancelado")):
+            if status_text in (self.tr("Completado"), self.tr("Error"), self.tr("Cancelado"), self.tr("Omitido")):
                 self.btn_reset.show()
                 self.btn_up.hide()
                 self.btn_down.hide()
@@ -297,7 +366,15 @@ class QueuePanel(QWidget):
         # Mapeo de job_id -> QueueItemCard
         self.cards = {}
         self._selected_card_id = None
-        
+
+        # Estado de arrastre para reordenar (ver _on_card_drag_started)
+        self._dragging_job_id = None
+        self._drag_insert_index = None
+        self._autoscroll_direction = 0
+        self._autoscroll_timer = QTimer(self)
+        self._autoscroll_timer.setInterval(30)
+        self._autoscroll_timer.timeout.connect(self._do_autoscroll)
+
         # Configurar animación
         self._anim = QVariantAnimation(self)
         self._anim.setDuration(220)
@@ -350,6 +427,14 @@ class QueuePanel(QWidget):
         self.scroll_layout.setSpacing(8)
         self.scroll_layout.setAlignment(Qt.AlignTop)
         
+        # Indicador de inserción para el arrastre de tarjetas (línea delgada que
+        # marca dónde quedaría la tarjeta si se suelta ahí). Oculto por defecto.
+        self._drag_indicator = QFrame(self.scroll_content)
+        self._drag_indicator.setStyleSheet(
+            f"background-color: {get_theme_token('estado_progreso', '#3498db')}; border-radius: 1px;"
+        )
+        self._drag_indicator.hide()
+
         # Mensaje de lista vacía
         self.empty_lbl = QLabel(self.tr("No hay descargas en cola"))
         self.empty_lbl.setStyleSheet(f"color: {get_theme_token('texto_secundario', '#888888')}; font-size: 11px;")
@@ -472,6 +557,7 @@ class QueuePanel(QWidget):
         card.reset_requested.connect(self.queue_mgr.reset_job)
         card.configure_requested.connect(self.configure_playlist_signal.emit)
         card.open_folder_requested.connect(self._on_open_folder_requested)
+        card.drag_started.connect(self._on_card_drag_started)
         
         self.scroll_layout.addWidget(card)
         self.cards[job_id] = card
@@ -538,7 +624,9 @@ class QueuePanel(QWidget):
                 speed_text = clean_err
                 card.status_lbl.setToolTip(clean_err)
             elif status == "COMPLETED":
-                speed_text = self.tr("Descargado")
+                speed_text = job.error_message or self.tr("Descargado")
+            elif status == "SKIPPED":
+                speed_text = job.error_message or self.tr("El archivo ya existe")
         
         if status in ("COMPLETED", "FAILED", "CANCELLED", "SKIPPED"):
             card.progress_bar.setRange(0, 100)
@@ -624,6 +712,103 @@ class QueuePanel(QWidget):
             if card:
                 self.scroll_layout.addWidget(card)
         self.scroll_content.setUpdatesEnabled(True)
+
+    # ── Arrastrar para reordenar ─────────────────────────────────────────────
+    # Toda la orquestación vive acá (no en QueueItemCard) porque acá ya están
+    # scroll_layout, self.cards y queue_mgr. La tarjeta solo detecta cuándo
+    # empieza el arrastre (drag_started); a partir de ahí este panel "agarra" el
+    # mouse (grabMouse) para recibir todos los eventos sin importar qué widget
+    # hijo esté debajo del cursor.
+
+    def _on_card_drag_started(self, job_id):
+        self._dragging_job_id = job_id
+        self._drag_insert_index = None
+        card = self.cards.get(job_id)
+        if card:
+            card.set_drag_opacity(True)
+        self._drag_indicator.raise_()
+        self.grabMouse()
+        self._update_drag_indicator(QCursor.pos())
+
+    def mouseMoveEvent(self, event):
+        super().mouseMoveEvent(event)
+        if self._dragging_job_id is None:
+            return
+        global_pos = event.globalPosition().toPoint()
+        self._update_drag_indicator(global_pos)
+        self._update_autoscroll(global_pos)
+
+    def mouseReleaseEvent(self, event):
+        super().mouseReleaseEvent(event)
+        if self._dragging_job_id is None:
+            return
+        self._finish_drag()
+
+    def _update_drag_indicator(self, global_pos):
+        local_pos = self.scroll_content.mapFromGlobal(global_pos)
+
+        sibling_cards = [
+            self.cards[job.job_id] for job in self.queue_mgr.get_all_jobs()
+            if job.job_id != self._dragging_job_id and job.job_id in self.cards
+        ]
+
+        insert_index = len(sibling_cards)
+        target_y = sibling_cards[-1].y() + sibling_cards[-1].height() if sibling_cards else 0
+        for i, card in enumerate(sibling_cards):
+            mid_y = card.y() + card.height() // 2
+            if local_pos.y() < mid_y:
+                insert_index = i
+                target_y = card.y()
+                break
+
+        self._drag_insert_index = insert_index
+        self._drag_indicator.setGeometry(0, max(0, target_y - 1), self.scroll_content.width(), 3)
+        self._drag_indicator.show()
+        self._drag_indicator.raise_()
+
+    def _update_autoscroll(self, global_pos):
+        viewport = self.scroll.viewport()
+        local_y = viewport.mapFromGlobal(global_pos).y()
+        margin = 30
+
+        if local_y < margin:
+            self._autoscroll_direction = -1
+        elif local_y > viewport.height() - margin:
+            self._autoscroll_direction = 1
+        else:
+            self._autoscroll_direction = 0
+
+        if self._autoscroll_direction != 0:
+            if not self._autoscroll_timer.isActive():
+                self._autoscroll_timer.start()
+        else:
+            self._autoscroll_timer.stop()
+
+    def _do_autoscroll(self):
+        if self._autoscroll_direction == 0 or self._dragging_job_id is None:
+            self._autoscroll_timer.stop()
+            return
+        bar = self.scroll.verticalScrollBar()
+        bar.setValue(bar.value() + self._autoscroll_direction * 12)
+        self._update_drag_indicator(QCursor.pos())
+
+    def _finish_drag(self):
+        self.releaseMouse()
+        self._autoscroll_timer.stop()
+        self._autoscroll_direction = 0
+        self._drag_indicator.hide()
+
+        job_id = self._dragging_job_id
+        insert_index = self._drag_insert_index
+        self._dragging_job_id = None
+        self._drag_insert_index = None
+
+        card = self.cards.get(job_id)
+        if card:
+            card.reset_drag_state()
+
+        if job_id and insert_index is not None:
+            self.queue_mgr.move_job_to_index(job_id, insert_index)
 
     def _on_open_folder_requested(self, job_id):
         job = self.queue_mgr.get_job(job_id)

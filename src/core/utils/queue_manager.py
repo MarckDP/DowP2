@@ -331,7 +331,11 @@ class QueueWorker(QThread):
                     
             self.job_status_changed.emit(job.job_id, JobStatus.COMPLETED)
         else:
-            if self._cancellation_event.is_set():
+            if message == "SKIPPED_CONFLICT":
+                job.status = JobStatus.SKIPPED
+                job.error_message = self.tr("Omitido: el archivo ya existe") if hasattr(self, "tr") else "Omitido: el archivo ya existe"
+                self.job_status_changed.emit(job.job_id, JobStatus.SKIPPED)
+            elif self._cancellation_event.is_set():
                 job.status = JobStatus.CANCELLED
                 self.job_status_changed.emit(job.job_id, JobStatus.CANCELLED)
             else:
@@ -373,6 +377,8 @@ class QueueWorker(QThread):
         total = len(selected_entries)
         mode = job.config.get("playlist_mode", "video+audio")
         quality = job.config.get("playlist_quality", "best_compatible")
+        conflict_policy = job.config.get("conflict_policy", "conservar")
+        skipped_count = 0
 
         from core.utils.config_manager import get_config
         batch_thumb_mode = get_config().get("batch_thumbnail_mode", "manual")
@@ -427,7 +433,8 @@ class QueueWorker(QThread):
                 "force_audio_extract": (mode == "audio_only"),
                 "audio_ext": "mp3" if mode == "audio_only" and quality in ["320", "192", "128"] else None,
                 "video_ext": "mp4" if mode != "audio_only" else None,
-                "download_thumbnail_file": False # Hacemos la descarga directa nosotros
+                "download_thumbnail_file": False, # Hacemos la descarga directa nosotros
+                "conflict_policy": conflict_policy,
             }
 
             def progress_callback(d, item_pos=pos, item_name=item_title):
@@ -460,6 +467,12 @@ class QueueWorker(QThread):
                         self._download_best_thumb(entry, playlist_output, f"{prefix}{item_title}", force_png=True)
                     except Exception as e:
                         logger.warning(f"QueueWorker: Falló miniatura de playlist {item_title}: {e}")
+            elif message == "SKIPPED_CONFLICT":
+                # Un ítem omitido por conflicto de archivo no debe frenar el resto de
+                # la playlist (mismo espíritu que en LOTES: solo se salta ese ítem).
+                logger.info(f"QueueWorker: Ítem de playlist omitido por conflicto: {item_title}")
+                skipped_count += 1
+                continue
             else:
                 if self._cancellation_event.is_set():
                     job.status = JobStatus.CANCELLED
@@ -474,6 +487,11 @@ class QueueWorker(QThread):
         job.status = JobStatus.COMPLETED
         job.progress = 100.0
         job.final_filepath = playlist_output
+        if skipped_count:
+            job.error_message = (
+                self.tr("{0} de {1} ítems omitidos (ya existían)").format(skipped_count, total)
+                if hasattr(self, "tr") else f"{skipped_count} de {total} ítems omitidos (ya existían)"
+            )
         self.job_status_changed.emit(job.job_id, JobStatus.COMPLETED)
 
     @staticmethod
@@ -895,6 +913,18 @@ class QueueManager(QObject):
             idx = next((i for i, j in enumerate(self._jobs) if j.job_id == job_id), -1)
             if idx != -1 and idx < len(self._jobs) - 1:
                 self._jobs[idx], self._jobs[idx + 1] = self._jobs[idx + 1], self._jobs[idx]
+        self.queue_reordered.emit()
+
+    def move_job_to_index(self, job_id: str, new_index: int):
+        """Mueve un trabajo a una posición arbitraria de la cola (usado al arrastrar
+        una tarjeta y soltarla en la lista)."""
+        with QMutexLocker(self._mutex):
+            idx = next((i for i, j in enumerate(self._jobs) if j.job_id == job_id), -1)
+            if idx == -1:
+                return
+            job = self._jobs.pop(idx)
+            insert_at = max(0, min(new_index, len(self._jobs)))
+            self._jobs.insert(insert_at, job)
         self.queue_reordered.emit()
 
     def get_job(self, job_id: str) -> Job | None:

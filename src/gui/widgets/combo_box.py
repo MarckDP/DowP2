@@ -60,17 +60,17 @@ class CheckmarkComboDelegate(QStyledItemDelegate):
         return pixmap
 
     def sizeHint(self, option, index):
-        """Calcula el ancho necesario para el texto completo + icono + checkmark."""
+        """Calcula el ancho necesario para el texto completo + icono + checkmark y altura ergonómica."""
         hint = super().sizeHint(option, index)
         text = index.data(Qt.DisplayRole) or ""
         fm = option.fontMetrics
         text_w = fm.horizontalAdvance(text)
 
-        total_w = text_w + 54
+        total_w = text_w + 58
         icon = index.data(Qt.DecorationRole)
         if icon and not icon.isNull():
             total_w += 24
-        return QSize(max(hint.width(), total_w), max(hint.height(), 26))
+        return QSize(max(hint.width(), total_w), max(hint.height() + 8, 30))
 
     def paint(self, painter, option, index):
         opt = QStyleOptionViewItem(option)

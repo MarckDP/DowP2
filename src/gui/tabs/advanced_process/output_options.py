@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QDesktopServices, QIcon
 from PySide6.QtCore import Qt, QUrl, QSize, QPropertyAnimation, QParallelAnimationGroup, QEasingCurve
 from gui.widgets.animated_button import AnimatedButton
+from gui.widgets.combo_box import AutoPopupComboBox
 from gui.styles import apply_folder_browse_button_style, apply_folder_open_button_style
 
 
@@ -68,7 +69,7 @@ class OutputOptionsWidget(QFrame):
         self.lbl_conflict_policy = QLabel(self.tr("Si existe:"))
         self.lbl_conflict_policy.setObjectName("menuLabel")
 
-        self.conflict_policy_combo = QComboBox()
+        self.conflict_policy_combo = AutoPopupComboBox()
         self.conflict_policy_combo.addItem(self.tr("Sobrescribir"), "sobrescribir")
         self.conflict_policy_combo.addItem(self.tr("Conservar"), "conservar")
         self.conflict_policy_combo.addItem(self.tr("Omitir"), "omitir")

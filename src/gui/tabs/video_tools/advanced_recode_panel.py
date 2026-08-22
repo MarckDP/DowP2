@@ -20,7 +20,7 @@ from PySide6.QtCore import Signal, Qt
 from gui.styles import get_theme_token
 from gui.widgets.mode_selector import ModeSelector
 from gui.widgets.preset_bar import PresetBar
-from gui.widgets.combo_box import CheckmarkComboDelegate
+from gui.widgets.combo_box import CheckmarkComboDelegate, AutoPopupComboBox
 from core.logger.logger_manager import logger
 from core.utils.recode_guard import evaluate_recode, get_video_codecs, get_audio_codecs, get_compatible_containers, resolve_encoder, get_channel_support
 from core.utils.hardware_detector import detect_hardware
@@ -281,7 +281,7 @@ class AdvancedRecodePanel(QWidget):
         lbl_codec.setObjectName("menuLabel")
         v.addWidget(lbl_codec)
 
-        codec_combo = QComboBox(frame)
+        codec_combo = AutoPopupComboBox(frame)
         self._setup_fixed_combo(codec_combo)
         v.addWidget(codec_combo)
 
@@ -291,7 +291,7 @@ class AdvancedRecodePanel(QWidget):
         v.addWidget(lbl_variant)
         lbl_variant.setVisible(False)
 
-        variant_combo = QComboBox(frame)
+        variant_combo = AutoPopupComboBox(frame)
         self._setup_fixed_combo(variant_combo)
         v.addWidget(variant_combo)
         variant_combo.setVisible(False)
@@ -301,7 +301,7 @@ class AdvancedRecodePanel(QWidget):
         lbl_profile.setObjectName("menuLabel")
         v.addWidget(lbl_profile)
 
-        profile_combo = QComboBox(frame)
+        profile_combo = AutoPopupComboBox(frame)
         self._setup_fixed_combo(profile_combo)
         v.addWidget(profile_combo)
 
@@ -346,7 +346,7 @@ class AdvancedRecodePanel(QWidget):
             lbl_dither.setObjectName("menuLabel")
             gif_layout.addWidget(lbl_dither)
 
-            combo_dither = QComboBox(gif_container)
+            combo_dither = AutoPopupComboBox(gif_container)
             self._setup_fixed_combo(combo_dither)
             combo_dither.addItem(self.tr("Floyd-Steinberg (Suave, estándar)"), "floyd_steinberg")
             combo_dither.addItem(self.tr("Bayer (Geométrico, liviano)"), "bayer")
@@ -359,7 +359,7 @@ class AdvancedRecodePanel(QWidget):
             lbl_stats.setObjectName("menuLabel")
             gif_layout.addWidget(lbl_stats)
 
-            combo_stats = QComboBox(gif_container)
+            combo_stats = AutoPopupComboBox(gif_container)
             self._setup_fixed_combo(combo_stats)
             combo_stats.addItem(self.tr("Global / Todo el clip (full)"), "full")
             combo_stats.addItem(self.tr("Zonas en movimiento (diff)"), "diff")
@@ -370,7 +370,7 @@ class AdvancedRecodePanel(QWidget):
             lbl_colors.setObjectName("menuLabel")
             gif_layout.addWidget(lbl_colors)
 
-            combo_colors = QComboBox(gif_container)
+            combo_colors = AutoPopupComboBox(gif_container)
             self._setup_fixed_combo(combo_colors)
             combo_colors.addItem(self.tr("256 colores (Máximo)"), 256)
             combo_colors.addItem(self.tr("128 colores"), 128)
@@ -383,7 +383,7 @@ class AdvancedRecodePanel(QWidget):
             lbl_fps.setObjectName("menuLabel")
             gif_layout.addWidget(lbl_fps)
 
-            combo_fps = QComboBox(gif_container)
+            combo_fps = AutoPopupComboBox(gif_container)
             self._setup_fixed_combo(combo_fps)
             combo_fps.addItem(self.tr("Original (Sin cambios)"), None)
             combo_fps.addItem(self.tr("30 FPS (Fluido)"), 30)
@@ -487,7 +487,7 @@ class AdvancedRecodePanel(QWidget):
             lbl_channels.setObjectName("menuLabel")
             channels_layout.addWidget(lbl_channels)
 
-            channels_combo = QComboBox(channels_container)
+            channels_combo = AutoPopupComboBox(channels_container)
             self._setup_fixed_combo(channels_combo)
             channels_combo.addItem(self.tr("Igual al original"), "")
             channels_combo.addItem(self.tr("Mono (1 canal)"), "1")
@@ -509,7 +509,7 @@ class AdvancedRecodePanel(QWidget):
             lbl_samplerate.setObjectName("menuLabel")
             samplerate_layout.addWidget(lbl_samplerate)
 
-            samplerate_combo = QComboBox(samplerate_container)
+            samplerate_combo = AutoPopupComboBox(samplerate_container)
             self._setup_fixed_combo(samplerate_combo)
             samplerate_combo.addItem(self.tr("Igual al original"), "")
             samplerate_combo.addItem("48000 Hz", "48000")
@@ -531,7 +531,7 @@ class AdvancedRecodePanel(QWidget):
     def _build_container_section(self, parent=None) -> QFrame:
         frame, v = self._card_frame(self.tr("Contenedor de salida"), parent=parent)
 
-        self.combo_container = QComboBox(frame)
+        self.combo_container = AutoPopupComboBox(frame)
         self._setup_fixed_combo(self.combo_container)
         v.addWidget(self.combo_container)
 

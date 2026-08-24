@@ -127,6 +127,10 @@ Cada token controla un aspecto visual específico de la app. Aquí está la list
 | `boton_secundario_texto` | Color del texto | Texto de botones secundarios |
 | `boton_secundario_hover` | Color al pasar el ratón | Efecto hover de botones secundarios |
 
+### 🔘 Botones planos (Flat / Ghost)
+
+Los botones con `variant="flat"` o `variant="ghost"` no tienen fondo ni borde por defecto. En hover usan el token `fondo_elemento` y `texto_activo`, respetando automáticamente el tema activo o personalizado.
+
 ### ☑️ Casillas (Checkboxes)
 
 | Token | Descripción | Dónde se usa |

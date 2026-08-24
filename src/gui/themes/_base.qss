@@ -186,7 +186,15 @@ QPushButton#analyzeButton:disabled {
 }
 
 /* 3. Acento Sólido Verde Plano (Carpeta, Play, Loop, etc.) */
-QPushButton[variant="accent-solid"],
+QPushButton[variant="accent-solid"] {
+    background-color: {{acento_secundario}};
+    color: #000000;
+    border: none;
+    border-radius: 6px;
+    padding: 6px 14px;
+    font-weight: bold;
+}
+
 QPushButton#pathToolButton,
 #pathToolButton {
     background-color: {{acento_secundario}};
@@ -287,6 +295,35 @@ QPushButton[variant="danger"]:disabled {
     background-color: {{fondo_secundario}};
     border-color: {{borde_normal}};
     color: {{texto_deshabilitado}};
+}
+
+/* 7. Plano / Ghost (Transparente, sin bordes, hover sutil con token de tema) */
+QPushButton[variant="flat"],
+QPushButton[variant="ghost"] {
+    background-color: transparent;
+    color: {{texto_principal}};
+    border: none;
+    border-radius: 6px;
+    padding: 4px 6px;
+    font-size: 12px;
+}
+
+QPushButton[variant="flat"]:hover,
+QPushButton[variant="ghost"]:hover {
+    background-color: {{fondo_elemento}};
+    color: {{texto_activo}};
+}
+
+QPushButton[variant="flat"]:pressed,
+QPushButton[variant="ghost"]:pressed {
+    background-color: {{fondo_terciario}};
+}
+
+QPushButton[variant="flat"]:disabled,
+QPushButton[variant="ghost"]:disabled {
+    background-color: transparent;
+    color: {{texto_deshabilitado}};
+    border: none;
 }
 
 /* Otros botones especiales */
@@ -971,13 +1008,51 @@ QLabel#panelPlaceholder {
 }
 
 /* ═══════════════════════════════════════════
+   MODAL DE AJUSTES (Overlay Backdrop)
+   ═══════════════════════════════════════════ */
+QWidget#settingsModalOverlay {
+    background-color: rgba(0, 0, 0, 0.72);
+}
+
+QFrame#settingsModalCard {
+    background-color: {{fondo_secundario}};
+    border: 1px solid {{borde_normal}};
+    border-radius: 6px;
+}
+
+QWidget#settingsModalHeader {
+    background-color: {{fondo_elemento}};
+    border-top-left-radius: 6px;
+    border-top-right-radius: 6px;
+    border-bottom: 1px solid {{borde_normal}};
+}
+
+QLabel#settingsModalTitle {
+    color: {{texto_activo}};
+    font-weight: bold;
+    font-size: 13px;
+}
+
+QPushButton#modalCloseBtn {
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    padding: 0px;
+}
+
+QPushButton#modalCloseBtn:hover {
+    background-color: {{estado_error}};
+}
+
+/* ═══════════════════════════════════════════
    SETTINGS — Ajustes Layout
    ═══════════════════════════════════════════ */
 
 QFrame#settingsSidebar {
     background-color: {{fondo_elemento}};
     border-right: 1px solid {{borde_normal}};
-    border-radius: 0px;
+    border-bottom-left-radius: 6px;
+    border-top-left-radius: 0px;
 }
 
 QPushButton#sidebarButton {

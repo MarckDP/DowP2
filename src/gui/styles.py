@@ -288,7 +288,7 @@ def apply_folder_open_button_style(btn, tooltip=None, icon_size=18):
     dis_color = get_theme_token("texto_deshabilitado", "#777777")
     btn.setIcon(get_colored_svg_icon("folder_open.svg", "#000000", size=icon_size, disabled_color_hex=dis_color))
     btn.setIconSize(QSize(icon_size, icon_size))
-    if not btn.objectName():
+    if not btn.objectName() and not btn.text():
         btn.setObjectName("pathToolButton")
     set_button_variant(btn, "accent-solid")
     if tooltip:

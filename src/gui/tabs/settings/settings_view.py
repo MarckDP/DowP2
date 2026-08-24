@@ -39,11 +39,11 @@ class SettingsTab(QWidget):
         # ---------------- LEFT SIDEBAR ----------------
         self.sidebar_frame = QFrame()
         self.sidebar_frame.setObjectName("settingsSidebar")
-        self.sidebar_frame.setFixedWidth(200)
+        self.sidebar_frame.setFixedWidth(185)
 
         sidebar_layout = QVBoxLayout(self.sidebar_frame)
-        sidebar_layout.setContentsMargins(0, 20, 0, 20)
-        sidebar_layout.setSpacing(5)
+        sidebar_layout.setContentsMargins(0, 16, 0, 16)
+        sidebar_layout.setSpacing(4)
 
         # Title
         options_label = QLabel(self.tr("Opciones"))
@@ -53,7 +53,7 @@ class SettingsTab(QWidget):
         options_label.setFont(font)
         options_label.setAlignment(Qt.AlignCenter)
         sidebar_layout.addWidget(options_label)
-        sidebar_layout.addSpacing(20)
+        sidebar_layout.addSpacing(14)
 
         self.btn_group = QButtonGroup(self)
         self.btn_group.setExclusive(True)
@@ -110,7 +110,7 @@ class SettingsTab(QWidget):
         self.content_area.setObjectName("settingsContentArea")
         
         content_layout = QVBoxLayout(self.content_area)
-        content_layout.setContentsMargins(30, 30, 30, 30)
+        content_layout.setContentsMargins(22, 16, 22, 16)
 
         self.stacked_widget = QStackedWidget()
         

@@ -1,7 +1,8 @@
 # src/gui/main_window.py
 import sys
 import os
-from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QTabWidget, QApplication, QHBoxLayout, QPushButton
+from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QTabWidget, 
+                             QApplication, QHBoxLayout, QPushButton, QFrame, QLabel)
 from PySide6.QtCore import Qt, QPoint, QSize
 from PySide6.QtGui import QIcon
 from core.logger.logger_manager import logger
@@ -19,53 +20,276 @@ from gui.tabs.video_tools.video_tools_view import VideoToolsTab
 from gui.tabs.editing_media.editing_media_view import EditingMediaTab
 from gui.tabs.settings.settings_view import SettingsTab
 
+from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor, QRadialGradient
+from PySide6.QtCore import Qt, QPointF, QSize, QTimer
+
+def make_led_icon(color_hex: str, size: int = 32, glow: bool = True) -> QIcon:
+    """Genera un ícono de luz LED circular nítido con resplandor suave y reflejo especular."""
+    pix = QPixmap(size, size)
+    pix.fill(Qt.transparent)
+    painter = QPainter(pix)
+    painter.setRenderHint(QPainter.Antialiasing)
+
+    center = QPointF(size / 2.0, size / 2.0)
+    base_color = QColor(color_hex)
+
+    if glow:
+        # Halo de resplandor difuso
+        gradient = QRadialGradient(center, size / 2.0)
+        c_glow = QColor(base_color)
+        c_glow.setAlpha(95)
+        c_transparent = QColor(base_color)
+        c_transparent.setAlpha(0)
+        gradient.setColorAt(0.0, c_glow)
+        gradient.setColorAt(0.65, c_glow)
+        gradient.setColorAt(1.0, c_transparent)
+        painter.setBrush(gradient)
+        painter.setPen(Qt.NoPen)
+        painter.drawEllipse(center, size / 2.0 - 1, size / 2.0 - 1)
+
+    # Núcleo sólido del LED
+    core_radius = size * 0.28
+    painter.setBrush(base_color)
+    painter.setPen(Qt.NoPen)
+    painter.drawEllipse(center, core_radius, core_radius)
+
+    # Reflejo especular (punto de luz 3D)
+    specular_radius = core_radius * 0.35
+    specular_offset = core_radius * 0.3
+    spec_center = QPointF(center.x() - specular_offset, center.y() - specular_offset)
+    spec_color = QColor(255, 255, 255, 170)
+    painter.setBrush(spec_color)
+    painter.drawEllipse(spec_center, specular_radius, specular_radius)
+
+    painter.end()
+    return QIcon(pix)
+
+
+class HoverIconButton(QPushButton):
+    """Botón totalmente transparente que agranda su ícono en hover sin recuadro de fondo."""
+    def __init__(self, normal_size=(22, 22), hover_size=(26, 26), parent=None):
+        super().__init__(parent)
+        self.normal_icon_size = QSize(*normal_size)
+        self.hover_icon_size = QSize(*hover_size)
+        self.setIconSize(self.normal_icon_size)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setStyleSheet("""
+            QPushButton {
+                background: transparent !important;
+                background-color: transparent !important;
+                border: none !important;
+                padding: 0px !important;
+                outline: none !important;
+            }
+            QPushButton:hover {
+                background: transparent !important;
+                background-color: transparent !important;
+                border: none !important;
+            }
+            QPushButton:pressed {
+                background: transparent !important;
+                background-color: transparent !important;
+                border: none !important;
+            }
+        """)
+
+    def enterEvent(self, event):
+        self.setIconSize(self.hover_icon_size)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self.setIconSize(self.normal_icon_size)
+        super().leaveEvent(event)
+
+
+from PySide6.QtCore import Qt, QPointF, QSize, QTimer, QRectF, QVariantAnimation, QEasingCurve
+
+class EditorAppWidget(QWidget):
+    """Widget de editor NLE con icono nítido, animación de respiración al iniciar y línea verde cuando está conectado."""
+    def __init__(self, app_id, svg_name, app_name, exe_path, icons_dir, parent_corner, parent=None):
+        super().__init__(parent)
+        self.app_id = app_id
+        self.svg_name = svg_name
+        self.app_name = app_name
+        self.exe_path = exe_path
+        self.icons_dir = icons_dir
+        self.parent_corner = parent_corner
+        self.icon_path = os.path.join(icons_dir, svg_name)
+
+        self.setFixedSize(30, 38)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setStyleSheet("background: transparent !important; border: none !important;")
+
+        self._state = 1  # 1=Cerrado, 2=Abierto, 3=Conectado
+        self._is_active = False
+        self._is_running = False
+        self._is_hovered = False
+        self._is_launching = False
+        self._pulse_opacity = 0.35
+
+        # Animación de respiración suave (pulso de opacidad)
+        self._pulse_anim = QVariantAnimation(self)
+        self._pulse_anim.setStartValue(0.30)
+        self._pulse_anim.setKeyValueAt(0.5, 1.0)
+        self._pulse_anim.setEndValue(0.30)
+        self._pulse_anim.setDuration(1200)
+        self._pulse_anim.setEasingCurve(QEasingCurve.InOutSine)
+        self._pulse_anim.setLoopCount(-1)
+        self._pulse_anim.valueChanged.connect(self._on_pulse_value)
+
+        self._update_tooltip()
+
+    def _on_pulse_value(self, val):
+        self._pulse_opacity = float(val)
+        self.update()
+
+    def start_launching_animation(self):
+        """Inicia el efecto de respiración al lanzar la app."""
+        self._is_launching = True
+        self._pulse_anim.start()
+        self._update_tooltip()
+        # Timeout de seguridad de 60s
+        QTimer.singleShot(60000, self.stop_launching_animation)
+
+    def stop_launching_animation(self):
+        """Detiene el efecto de respiración una vez abierta o por timeout."""
+        if self._is_launching:
+            self._is_launching = False
+            self._pulse_anim.stop()
+            self._update_tooltip()
+            self.update()
+
+    def set_app_status(self, is_active: bool, is_running: bool):
+        if is_running or is_active:
+            self.stop_launching_animation()
+        self._is_active = is_active
+        self._is_running = is_running
+        if is_active:
+            self._state = 3
+        elif is_running:
+            self._state = 2
+        else:
+            if not self._is_launching:
+                self._state = 1
+        self._update_tooltip()
+        self.update()
+
+    def _update_tooltip(self):
+        if self._is_launching:
+            self.setToolTip(f"{self.app_name} (Iniciando...)")
+        elif self._state == 3:
+            self.setToolTip(f"{self.app_name} (Conectado y Vinculado)")
+        elif self._state == 2:
+            self.setToolTip(f"{self.app_name} (Abierto - Sin vincular)")
+        else:
+            self.setToolTip(f"{self.app_name} (Cerrado - Clic para abrir)")
+
+    def enterEvent(self, event):
+        self._is_hovered = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._is_hovered = False
+        self.update()
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.RightButton:
+            self.parent_corner._show_app_icon_context_menu(self, event.globalPosition().toPoint())
+        else:
+            self.parent_corner.on_app_icon_clicked(self)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform)
+
+        # 1. Opacidad según estado
+        if self._is_launching:
+            opacity = self._pulse_opacity
+        elif self._state == 3:
+            opacity = 1.0
+        elif self._state == 2:
+            opacity = 1.0 if self._is_hovered else 0.85
+        else:
+            opacity = 0.65 if self._is_hovered else 0.35
+        painter.setOpacity(opacity)
+
+        # 2. Dibujar Icono SVG (tamaño amplio y nítido)
+        icon_size = 30 if self._is_hovered else 27
+        if os.path.exists(self.icon_path):
+            pix = QPixmap(self.icon_path).scaled(icon_size, icon_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            x = (self.width() - icon_size) / 2.0
+            y = (self.height() - 5 - icon_size) / 2.0
+            painter.drawPixmap(int(x), int(y), pix)
+
+        # 3. Línea indicadora verde brillante en la parte inferior si está conectado
+        if self._is_active:
+            painter.setOpacity(1.0)
+            painter.setBrush(QColor("#00e676"))
+            painter.setPen(Qt.NoPen)
+            line_w = 20
+            line_h = 2.5
+            line_x = (self.width() - line_w) / 2.0
+            line_y = self.height() - line_h - 1
+            painter.drawRoundedRect(QRectF(line_x, line_y, line_w, line_h), 1.25, 1.25)
+
+        painter.end()
+
+
 class EditorStatusCornerWidget(QWidget):
-    """Widget de la esquina superior derecha para el control global de NLEs."""
+    """Widget de la esquina superior derecha para el control global de NLEs y acceso a Ajustes."""
     def __init__(self, main_window, parent=None):
         super().__init__(parent)
         self.main_window = main_window
-        from PySide6.QtWidgets import QHBoxLayout, QPushButton, QLabel, QGraphicsOpacityEffect
-        from PySide6.QtGui import QIcon, QPixmap
-        from PySide6.QtCore import Qt, QSize
-        import os
-        import subprocess
-        from PySide6.QtWidgets import QHBoxLayout, QPushButton
-        from PySide6.QtGui import QIcon
-        from PySide6.QtCore import Qt, QSize
-        import os
-        
-        self.layout = QHBoxLayout(self)
-        self.layout.setContentsMargins(5, 2, 10, 2)
-        self.layout.setSpacing(5)
-        
-        self.btn_toggle = QPushButton()
-        self.btn_toggle.setCheckable(True)
-        self.btn_toggle.setChecked(True)
-        self.btn_toggle.setFixedSize(QSize(28, 28))
-        self.btn_toggle.setCursor(Qt.PointingHandCursor)
-        
-        self.btn_settings = QPushButton()
-        self.btn_settings.setFixedSize(QSize(28, 28))
-        self.btn_settings.setCursor(Qt.PointingHandCursor)
-        self.btn_settings.setToolTip("Ajustes")
         
         self.icons_dir = os.path.join(get_src_dir(), "assets", "icons", "svg")
-        self.btn_settings.setIcon(QIcon(os.path.join(self.icons_dir, "settings.svg")))
 
-        self._icon_green = QIcon(os.path.join(self.icons_dir, "check_circle_green.svg"))
-        self._icon_yellow = QIcon(os.path.join(self.icons_dir, "warning.svg")) # or some other icon
-        self._icon_red = QIcon(os.path.join(self.icons_dir, "error_red.svg"))
-        self._icon_off = QIcon(os.path.join(self.icons_dir, "pause.svg"))
+        # Layout principal de la esquina
+        self.layout = QHBoxLayout(self)
+        self.layout.setContentsMargins(6, 0, 10, 0)
+        self.layout.setSpacing(16)  # Separación generosa entre el bloque de editores y Ajustes
+        self.layout.setAlignment(Qt.AlignVCenter | Qt.AlignRight)
+        
+        # Subcontenedor para el grupo de Editores (Luz indicadora + Íconos de programas juntos y compactos)
+        self.editors_container = QWidget()
+        self.editors_layout = QHBoxLayout(self.editors_container)
+        self.editors_layout.setContentsMargins(0, 0, 0, 0)
+        self.editors_layout.setSpacing(1)  # Íconos muy juntos
+        self.editors_layout.setAlignment(Qt.AlignVCenter | Qt.AlignRight)
+
+        # 1. Luz LED / Indicador compacto
+        self.btn_toggle = HoverIconButton(normal_size=(14, 14), hover_size=(16, 16))
+        self.btn_toggle.setCheckable(True)
+        self.btn_toggle.setChecked(True)
+        self.btn_toggle.setFixedSize(QSize(20, 20))
+        self.btn_toggle.setToolTip("Auto-enviar")
+
+        # 2. Botón de Ajustes (más grande, separado a la derecha)
+        self.btn_settings = HoverIconButton(normal_size=(25, 25), hover_size=(29, 29))
+        self.btn_settings.setFixedSize(QSize(38, 38))
+        self.btn_settings.setIcon(QIcon(os.path.join(self.icons_dir, "settings.svg")))
+        self.btn_settings.setToolTip("Ajustes")
+
+        # Íconos LED cacheados
+        self._led_green = make_led_icon("#00e676", size=32, glow=True)   # Verde: conectado
+        self._led_yellow = make_led_icon("#f1c40f", size=32, glow=True)  # Amarillo: abierto sin vincular
+        self._led_gray = make_led_icon("#707070", size=32, glow=False)   # Gris: ningún editor abierto
+        self._led_red = make_led_icon("#ff4d4d", size=32, glow=True)     # Rojo: pausado
 
         self.btn_toggle.toggled.connect(self.on_toggle)
         self.btn_settings.clicked.connect(self.on_settings_clicked)
 
-        # Diccionario para almacenar los iconos de apps
+        # Añadir Luz al subcontenedor de editores
+        self.editors_layout.addWidget(self.btn_toggle)
+
+        # Añadir subcontenedor de editores y botón de Ajustes al layout principal
+        self.layout.addWidget(self.editors_container)
+        self.layout.addWidget(self.btn_settings)
+
         self.app_icons = {}
         self._build_app_icons()
-
-        self.layout.addWidget(self.btn_toggle)
-        self.layout.addWidget(self.btn_settings)
 
         self._active_editor = None
         self._process_status = {}
@@ -73,10 +297,6 @@ class EditorStatusCornerWidget(QWidget):
 
     def _build_app_icons(self):
         """Crea (o recrea) los íconos de apps habilitadas en Integraciones."""
-        from PySide6.QtWidgets import QLabel, QGraphicsOpacityEffect
-        from PySide6.QtGui import QPixmap
-
-        # Cargar configuración para ver qué apps están habilitadas
         config = get_config()
         integrations = config.get('integrations', {})
 
@@ -88,55 +308,36 @@ class EditorStatusCornerWidget(QWidget):
 
         for app_id, svg_name, app_name in apps:
             is_enabled = integrations.get(f"{app_id}_enabled", False)
-            existing_lbl = self.app_icons.get(app_id)
+            exe_path = integrations.get(f"{app_id}_path", "")
+            existing_widget = self.app_icons.get(app_id)
 
-            if is_enabled and existing_lbl is None:
-                lbl = QLabel()
-                lbl.setFixedSize(28, 28)
-                lbl.setAlignment(Qt.AlignCenter)
-                lbl.setCursor(Qt.PointingHandCursor)
-                lbl.setToolTip(f"{app_name} (Cerrado)")
-
-                # Cargar pixmap
-                icon_path = os.path.join(self.icons_dir, svg_name)
-                # Escalar a 24x24 para dejar espacio al borde de 2px (24 + 2 + 2 = 28)
-                pixmap = QPixmap(icon_path).scaled(24, 24, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                lbl.setPixmap(pixmap)
-
-                # Efecto de opacidad/color
-                effect = QGraphicsOpacityEffect(lbl)
-                effect.setOpacity(0.3) # Estado 1: Cerrado = opaco
-                lbl.setGraphicsEffect(effect)
-
-                # Guardar info en el label para click handling
-                lbl.setProperty("app_id", app_id)
-                lbl.setProperty("app_name", app_name)
-                lbl.setProperty("exe_path", integrations.get(f"{app_id}_path", ""))
-                lbl.setProperty("state", 1) # 1=Closed, 2=Open, 3=Connected
-                lbl.mousePressEvent = lambda e, l=lbl: self.on_app_icon_mouse_press(e, l)
-
-                # Insertar antes del botón de toggle (si ya está en el layout) para
-                # mantener el orden; durante la construcción inicial aún no está
-                # agregado, así que simplemente se anexa al final.
-                toggle_idx = self.layout.indexOf(self.btn_toggle)
-                insert_at = toggle_idx if toggle_idx != -1 else self.layout.count()
-                self.layout.insertWidget(insert_at, lbl)
-                self.app_icons[app_id] = lbl
-            elif is_enabled and existing_lbl is not None:
-                # Ya existe: solo refrescar la ruta del ejecutable por si cambió.
-                existing_lbl.setProperty("exe_path", integrations.get(f"{app_id}_path", ""))
-            elif not is_enabled and existing_lbl is not None:
-                # Se deshabilitó la integración: quitar el ícono de inmediato.
-                self.layout.removeWidget(existing_lbl)
-                existing_lbl.deleteLater()
+            if is_enabled and existing_widget is None:
+                widget = EditorAppWidget(
+                    app_id=app_id,
+                    svg_name=svg_name,
+                    app_name=app_name,
+                    exe_path=exe_path,
+                    icons_dir=self.icons_dir,
+                    parent_corner=self
+                )
+                self.editors_layout.addWidget(widget)
+                self.app_icons[app_id] = widget
+            elif is_enabled and existing_widget is not None:
+                existing_widget.exe_path = exe_path
+            elif not is_enabled and existing_widget is not None:
+                self.editors_layout.removeWidget(existing_widget)
+                existing_widget.deleteLater()
                 del self.app_icons[app_id]
 
+        # Visibilidad condicional: ocultar todo el contenedor de editores si no hay programas
+        has_apps = len(self.app_icons) > 0
+        self.editors_container.setVisible(has_apps)
+
     def refresh_app_icons(self):
-        """Se llama cuando el usuario activa/desactiva una integración en Ajustes,
-        para que el ícono aparezca o desaparezca sin necesidad de reiniciar la app."""
+        """Se llama cuando el usuario activa/desactiva una integración en Ajustes."""
         self._build_app_icons()
         self.update_ui_state()
-        
+
     def late_init(self):
         """Llamado después de que EditorIntegrationManager se inicializa en main.py"""
         from core.services.editor_integration_manager import EditorIntegrationManager
@@ -149,63 +350,48 @@ class EditorStatusCornerWidget(QWidget):
             self._process_status = self.editor_manager.process_status
             self.btn_toggle.setChecked(self.editor_manager.is_auto_send_enabled)
         self.update_ui_state()
-            
+
     def on_editor_changed(self, editor_name):
         self._active_editor = editor_name
         self.update_ui_state()
-        
+
     def on_process_changed(self, status_dict):
         self._process_status = status_dict
         self.update_ui_state()
-        
+
     def on_toggle(self, checked):
         if hasattr(self, 'editor_manager') and self.editor_manager:
             self.editor_manager.is_auto_send_enabled = checked
         self.update_ui_state()
-        
+
     def update_ui_state(self):
-        # 1. Update toggle button
+        # 1. Visibilidad condicional del grupo de editores
+        has_apps = len(self.app_icons) > 0
+        self.editors_container.setVisible(has_apps)
+
+        # 2. Actualizar estado de la luz LED
         is_on = self.btn_toggle.isChecked()
         if not is_on:
-            self.btn_toggle.setIcon(self._icon_off)
-            self.btn_toggle.setToolTip("Auto-enviar: PAUSADO")
+            self.btn_toggle.setIcon(self._led_red)
+            self.btn_toggle.setToolTip(self.tr("Auto-enviar: DESACTIVADO / PAUSADO (Clic para activar)"))
         else:
             if self._active_editor:
-                self.btn_toggle.setIcon(self._icon_green)
-                self.btn_toggle.setToolTip(f"Auto-enviar a {self._active_editor}: ACTIVO")
+                self.btn_toggle.setIcon(self._led_green)
+                self.btn_toggle.setToolTip(self.tr(f"Auto-enviar a {self._active_editor}: ACTIVO Y CONECTADO"))
+            elif any(self._process_status.values()):
+                self.btn_toggle.setIcon(self._led_yellow)
+                self.btn_toggle.setToolTip(self.tr("Auto-enviar: Editor detectado (sin vincular)"))
             else:
-                self.btn_toggle.setIcon(self._icon_yellow)
-                self.btn_toggle.setToolTip("Auto-enviar: ESPERANDO CONEXIÓN")
-                
-        # 2. Update App Icons
-        for app_id, lbl in self.app_icons.items():
+                self.btn_toggle.setIcon(self._led_gray)
+                self.btn_toggle.setToolTip(self.tr("Auto-enviar: Ningún editor abierto (En espera)"))
+
+        # 3. Actualizar estado de los widgets de apps
+        for app_id, widget in self.app_icons.items():
             is_running = self._process_status.get(app_id, False)
             is_active = (self._active_editor == app_id)
-            
-            effect = lbl.graphicsEffect()
-            if is_active:
-                lbl.setProperty("state", 3)
-                effect.setOpacity(1.0)
-                lbl.setStyleSheet("border: 2px solid #55ff55; border-radius: 6px; background-color: rgba(85, 255, 85, 0.1);") # Brillante / Marco
-                lbl.setToolTip(f"{lbl.property('app_name')} (Conectado)")
-            elif is_running:
-                lbl.setProperty("state", 2)
-                effect.setOpacity(0.8) # Abierto pero sin conexión (opaco pero a color)
-                lbl.setStyleSheet("border: 2px solid transparent; border-radius: 6px;")
-                lbl.setToolTip(f"{lbl.property('app_name')} (Abierto - Sin vincular)")
-            else:
-                lbl.setProperty("state", 1)
-                effect.setOpacity(0.3) # Cerrado (grisáceo / opaco)
-                lbl.setStyleSheet("border: 2px solid transparent; border-radius: 6px;")
-                lbl.setToolTip(f"{lbl.property('app_name')} (Cerrado - Clic para abrir)")
-                
-    def on_app_icon_mouse_press(self, event, lbl):
-        if event.button() == Qt.RightButton:
-            self._show_app_icon_context_menu(lbl, event.globalPosition().toPoint())
-        else:
-            self.on_app_icon_clicked(lbl)
+            widget.set_app_status(is_active=is_active, is_running=is_running)
 
-    def _show_app_icon_context_menu(self, lbl, global_pos):
+    def _show_app_icon_context_menu(self, widget, global_pos):
         from PySide6.QtWidgets import QMenu
         menu = QMenu(self)
         act_configure = menu.addAction(self.tr("Configurar integración"))
@@ -213,43 +399,19 @@ class EditorStatusCornerWidget(QWidget):
         menu.exec(global_pos)
 
     def _open_integration_settings(self):
-        self.main_window.tabs.setCurrentIndex(5)
-        settings_tab = self.main_window.tab_settings
-        settings_tab.btn_integrations.click()
+        self.main_window.settings_overlay.open_page(7)
 
-    def on_app_icon_clicked(self, lbl):
+    def on_app_icon_clicked(self, widget):
         import subprocess
         import os
-        from PySide6.QtCore import QTimer
-        from PySide6.QtGui import QPixmap
-        
-        state = lbl.property("state")
-        app_id = lbl.property("app_id")
-        exe_path = lbl.property("exe_path")
-        
-        # Animación de "Click" (Pop effect)
-        svg_name = ""
-        if app_id == "premiere": svg_name = "premiere pro.svg"
-        elif app_id == "aftereffects": svg_name = "after effects.svg"
-        elif app_id == "davinci": svg_name = "davinci resolve.svg"
-        
-        if svg_name:
-            icons_dir = os.path.join(get_src_dir(), "assets", "icons", "svg")
-            icon_path = os.path.join(icons_dir, svg_name)
-            
-            # Achicar
-            pixmap_small = QPixmap(icon_path).scaled(20, 20, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            lbl.setPixmap(pixmap_small)
-            
-            # Restaurar
-            def restore_size():
-                pixmap_normal = QPixmap(icon_path).scaled(24, 24, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                lbl.setPixmap(pixmap_normal)
-            QTimer.singleShot(120, restore_size)
-        
+
+        state = widget._state
+        app_id = widget.app_id
+        exe_path = widget.exe_path
+
         if state == 1:
-            # Launch app
             if exe_path and os.path.exists(exe_path):
+                widget.start_launching_animation()
                 from core.logger.logger_manager import logger
                 from PySide6.QtCore import QProcess
                 logger.info(f"Lanzando editor (modo desvinculado): {exe_path}")
@@ -262,28 +424,117 @@ class EditorStatusCornerWidget(QWidget):
                             subprocess.Popen(exe_path, creationflags=getattr(subprocess, 'DETACHED_PROCESS', 0))
                 except Exception as e:
                     logger.error(f"Error lanzando {app_id}: {e}")
+                    widget.stop_launching_animation()
             else:
                 from gui.dialogs.dialogs import show_warning
                 show_warning(self.main_window, "Ruta no encontrada", f"No se encontró el ejecutable en:\n{exe_path}\nConfigura la ruta en Ajustes -> Integraciones.")
         elif state == 2:
-            # Force active (if supported)
             if hasattr(self, 'editor_manager') and self.editor_manager:
                 success = self.editor_manager.force_adobe_target(app_id)
                 if not success:
                     from gui.dialogs.dialogs import show_info
                     show_info(self.main_window, "DowP Importer", "La extensión no está respondiendo. Abre el panel de DowP en tu editor para conectar.")
         elif state == 3:
-            # Desconectar / Desvincular
             if hasattr(self, 'editor_manager') and self.editor_manager:
                 self.editor_manager.force_adobe_target(None)
-                
+
     def on_settings_clicked(self):
-        # Ir a la pestaña de Ajustes (índice 5 en main_window.tabs, oculta de la barra de
-        # pestañas: este botón es ahora el único punto de entrada a Ajustes) mostrando la
-        # sub-pestaña General.
-        self.main_window.tabs.setCurrentIndex(5)
-        settings_tab = self.main_window.tab_settings
-        settings_tab.btn_general.click()
+        self.main_window.settings_overlay.open_page(0)
+
+
+class SettingsModalOverlay(QWidget):
+    """Capa modal superpuesta con fondo oscurecido para los Ajustes."""
+    def __init__(self, main_window, settings_tab, parent=None):
+        super().__init__(parent or main_window)
+        self.main_window = main_window
+        self.settings_tab = settings_tab
+        
+        self.setObjectName("settingsModalOverlay")
+        self.setAttribute(Qt.WA_StyledBackground, True)
+
+        # Layout del overlay (centrado)
+        overlay_layout = QVBoxLayout(self)
+        overlay_layout.setContentsMargins(24, 16, 24, 16)
+        overlay_layout.setAlignment(Qt.AlignCenter)
+
+        # Tarjeta modal central (compacta y elegante)
+        self.card = QFrame()
+        self.card.setObjectName("settingsModalCard")
+        self.card.setMinimumSize(890, 580)
+        self.card.setMaximumSize(980, 660)
+
+        card_layout = QVBoxLayout(self.card)
+        card_layout.setContentsMargins(0, 0, 0, 0)
+        card_layout.setSpacing(0)
+
+        # Barra de cabecera con botón de cerrar "X"
+        header = QWidget()
+        header.setObjectName("settingsModalHeader")
+        header.setFixedHeight(38)
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(18, 2, 10, 2)
+        
+        title_lbl = QLabel(self.tr("Ajustes"))
+        title_lbl.setObjectName("settingsModalTitle")
+        header_layout.addWidget(title_lbl)
+        header_layout.addStretch()
+
+        close_icon_path = os.path.join(get_src_dir(), "assets", "icons", "svg", "close.svg")
+        self.btn_close = QPushButton()
+        self.btn_close.setObjectName("modalCloseBtn")
+        self.btn_close.setIcon(QIcon(close_icon_path))
+        self.btn_close.setIconSize(QSize(14, 14))
+        self.btn_close.setFixedSize(26, 26)
+        self.btn_close.setCursor(Qt.PointingHandCursor)
+        self.btn_close.setToolTip(self.tr("Cerrar (Esc)"))
+        self.btn_close.clicked.connect(self.close_overlay)
+        header_layout.addWidget(self.btn_close)
+
+        card_layout.addWidget(header)
+        card_layout.addWidget(self.settings_tab, 1)
+
+        overlay_layout.addWidget(self.card)
+        self.hide()
+
+    def open_page(self, page_index: int = 0):
+        # Seleccionar subpestaña correspondiente
+        buttons = [
+            self.settings_tab.btn_general,
+            self.settings_tab.btn_memory_cache,
+            self.settings_tab.btn_network,
+            self.settings_tab.btn_downloads,
+            self.settings_tab.btn_cookies,
+            self.settings_tab.btn_deps,
+            self.settings_tab.btn_labels,
+            self.settings_tab.btn_integrations,
+            self.settings_tab.btn_system,
+            self.settings_tab.btn_models,
+            self.settings_tab.btn_console
+        ]
+        if 0 <= page_index < len(buttons):
+            buttons[page_index].click()
+
+        if self.parent():
+            self.setGeometry(0, 0, self.parent().width(), self.parent().height())
+        self.raise_()
+        self.show()
+        self.setFocus()
+
+    def close_overlay(self):
+        self.hide()
+
+    def mousePressEvent(self, event):
+        # Clic en el backdrop oscuro exterior cierra el modal
+        if not self.card.geometry().contains(event.pos()):
+            self.close_overlay()
+        else:
+            super().mousePressEvent(event)
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Escape:
+            self.close_overlay()
+        else:
+            super().keyPressEvent(event)
 
 
 class MainWindow(QMainWindow):
@@ -347,17 +598,15 @@ class MainWindow(QMainWindow):
         self.tab_editing = EditingMediaTab()
         self.tabs.addTab(self.tab_editing, self.tr("Gestor de Medios"))
 
-        # 6. Ajustes (oculta de la barra de pestañas: se accede desde el botón de Ajustes
-        # en la esquina superior derecha, que reemplazó al antiguo botón de integraciones)
-        self.tab_settings = SettingsTab()
-        self.tabs.addTab(self.tab_settings, self.tr("Ajustes"))
-        self.tabs.setTabVisible(5, False)
-
-        # Corner Widget (Editor Status)
+        # Corner Widget (Editor Status & Ajustes)
         self.editor_status_widget = EditorStatusCornerWidget(self)
         self.tabs.setCornerWidget(self.editor_status_widget, Qt.TopRightCorner)
 
         self.main_layout.addWidget(self.tabs)
+
+        # ── Modal Overlay de Ajustes ──────────────────────────────────────────
+        self.tab_settings = SettingsTab()
+        self.settings_overlay = SettingsModalOverlay(self, self.tab_settings, parent=central_widget)
 
         # ── Conexiones ────────────────────────────────────────────────────────
         self.tab_settings.theme_changed.connect(self.update_theme)
@@ -365,6 +614,11 @@ class MainWindow(QMainWindow):
         self.tabs.currentChanged.connect(self.on_tab_changed)
 
         logger.info("MainWindow: Sistema de pestañas inicializado")
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, 'settings_overlay') and self.settings_overlay:
+            self.settings_overlay.setGeometry(0, 0, self.centralWidget().width(), self.centralWidget().height())
 
     def on_tab_changed(self, index):
         """Se ejecuta al cambiar de pestaña."""

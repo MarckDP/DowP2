@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (
     QFrame, QLabel, QVBoxLayout, QHBoxLayout, QSizePolicy, QWidget, QPushButton, QSlider,
     QGraphicsScene, QGraphicsView
 )
-from PySide6.QtCore import Qt, QUrl, QSize, QSizeF
+from PySide6.QtCore import Qt, QUrl, QSize, QSizeF, QRectF
 from PySide6.QtGui import QPixmap, QIcon, QPainter, QColor
 
 from core.logger.logger_manager import logger
@@ -35,7 +35,12 @@ def get_svg_icon(name: str) -> QIcon:
 
 
 class _PreviewVideoView(QGraphicsView):
-    """Vista gráfica para renderizar video en el mismo buffer 2D de Qt sin crear ventana nativa HWND."""
+    """Vista gráfica para renderizar video en el mismo buffer 2D de Qt sin crear ventana nativa HWND,
+    con soporte para cuadrícula de fondo tipo transparencia (estilo Photoshop) para videos con canal alfa."""
+    SQUARE = 10
+    COLOR_A = QColor(42, 42, 42)
+    COLOR_B = QColor(30, 30, 30)
+
     def __init__(self, scene: QGraphicsScene, video_item: QGraphicsVideoItem, parent=None):
         super().__init__(scene, parent)
         self._video_item = video_item
@@ -45,6 +50,27 @@ class _PreviewVideoView(QGraphicsView):
         self.setRenderHint(QPainter.SmoothPixmapTransform)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._show_checkerboard = True
+
+    def set_checkerboard_visible(self, visible: bool):
+        if self._show_checkerboard != visible:
+            self._show_checkerboard = visible
+            self.viewport().update()
+
+    def drawBackground(self, painter: QPainter, rect: QRectF):
+        if self._show_checkerboard:
+            painter.save()
+            size = self.SQUARE
+            r = self.sceneRect() if self.sceneRect().isValid() and not self.sceneRect().isEmpty() else rect
+            cols = int(r.width() // size) + 2
+            rows = int(r.height() // size) + 2
+            for row in range(rows):
+                for col in range(cols):
+                    color = self.COLOR_A if (row + col) % 2 == 0 else self.COLOR_B
+                    painter.fillRect(QRectF(r.left() + col * size, r.top() + row * size, size, size), color)
+            painter.restore()
+        else:
+            super().drawBackground(painter, rect)
 
     def refit(self):
         vp_w = self.viewport().width()

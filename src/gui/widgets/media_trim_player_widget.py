@@ -523,8 +523,7 @@ class TrimWaveformWidget(QWidget):
 
 class _CheckerboardFrame(QFrame):
     """Contenedor del área de video que pinta una cuadrícula tipo 'transparencia' (estilo
-    Photoshop) de fondo, en vez de un color plano. Así se distingue a simple vista el lienzo
-    real del video de un área vacía/sin señal (que de otro modo también se vería negra)."""
+    Photoshop) de fondo cuando se reproduce un video, o un fondo oscuro sólido si no hay medio o es solo audio."""
 
     SQUARE = 10
     COLOR_A = QColor(42, 42, 42)
@@ -534,6 +533,12 @@ class _CheckerboardFrame(QFrame):
         super().__init__(parent)
         self._border_color = QColor(border_color)
         self._radius = radius
+        self._show_checkerboard = False
+
+    def set_checkerboard_visible(self, visible: bool):
+        if self._show_checkerboard != visible:
+            self._show_checkerboard = visible
+            self.update()
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -543,13 +548,16 @@ class _CheckerboardFrame(QFrame):
         path.addRoundedRect(rect, self._radius, self._radius)
         painter.setClipPath(path)
 
-        size = self.SQUARE
-        cols = int(rect.width() // size) + 2
-        rows = int(rect.height() // size) + 2
-        for row in range(rows):
-            for col in range(cols):
-                color = self.COLOR_A if (row + col) % 2 == 0 else self.COLOR_B
-                painter.fillRect(col * size, row * size, size, size, color)
+        if self._show_checkerboard:
+            size = self.SQUARE
+            cols = int(rect.width() // size) + 2
+            rows = int(rect.height() // size) + 2
+            for row in range(rows):
+                for col in range(cols):
+                    color = self.COLOR_A if (row + col) % 2 == 0 else self.COLOR_B
+                    painter.fillRect(col * size, row * size, size, size, color)
+        else:
+            painter.fillRect(rect, QColor(14, 14, 14))
 
         painter.setClipping(False)
         painter.setRenderHint(QPainter.Antialiasing, True)
@@ -781,6 +789,32 @@ class MediaTrimPlayerWidget(QWidget):
         self.lbl_audio_art.setStyleSheet("color: #89b4fa; font-weight: bold; font-size: 16px; background: transparent;")
         self.lbl_audio_art.setVisible(False)
         prev_layout.addWidget(self.lbl_audio_art, 1)
+
+        # Widget para estado vacío cuando no hay medio cargado
+        self.empty_preview_widget = QWidget(self.preview_container)
+        empty_layout = QVBoxLayout(self.empty_preview_widget)
+        empty_layout.setAlignment(Qt.AlignCenter)
+        empty_layout.setContentsMargins(10, 10, 10, 10)
+        empty_layout.setSpacing(6)
+
+        lbl_empty_icon = QLabel()
+        lbl_empty_icon.setAlignment(Qt.AlignCenter)
+        ico = get_svg_icon("play_arrow.svg")
+        if not ico.isNull():
+            lbl_empty_icon.setPixmap(ico.pixmap(32, 32))
+        empty_layout.addWidget(lbl_empty_icon)
+
+        self.lbl_empty_title = QLabel(self.tr("Vista Previa y Recorte"))
+        self.lbl_empty_title.setAlignment(Qt.AlignCenter)
+        self.lbl_empty_title.setStyleSheet("font-weight: bold; font-size: 13px; color: #777777; background: transparent;")
+        empty_layout.addWidget(self.lbl_empty_title)
+
+        self.lbl_empty_subtitle = QLabel(self.tr("Carga o selecciona un medio para previsualizarlo y ajustar sus puntos In / Out"))
+        self.lbl_empty_subtitle.setAlignment(Qt.AlignCenter)
+        self.lbl_empty_subtitle.setStyleSheet("font-size: 11px; color: #555555; background: transparent;")
+        empty_layout.addWidget(self.lbl_empty_subtitle)
+
+        prev_layout.addWidget(self.empty_preview_widget)
 
         # Botón flotante para selección de resolución de previsualización (esquina superior derecha del visor)
         self.btn_quality = QToolButton(self.preview_container)
@@ -1083,10 +1117,18 @@ class MediaTrimPlayerWidget(QWidget):
         self._native_size_known = False
         self._native_size = None
 
-        is_video = self.media_type in ("video", "video+audio", "imagen")
+        has_media = bool(self.media_path and os.path.exists(self.media_path))
+        is_video = has_media and self.media_type in ("video", "video+audio", "imagen")
+        is_audio = has_media and not is_video
+
+        if hasattr(self, "empty_preview_widget"):
+            self.empty_preview_widget.setVisible(not has_media)
         self.video_widget.setVisible(is_video)
-        self.lbl_audio_art.setVisible(not is_video)
-        if not is_video:
+        self.lbl_audio_art.setVisible(is_audio)
+        if hasattr(self, "preview_container"):
+            self.preview_container.set_checkerboard_visible(is_video)
+
+        if is_audio:
             filename = os.path.basename(self.media_path)
             self.lbl_audio_art.setText(f"{self.tr('Pista de Audio')}: {filename}" if filename else self.tr("Vista Previa de Audio"))
         self.btn_quality.setVisible(is_video)
@@ -1123,6 +1165,10 @@ class MediaTrimPlayerWidget(QWidget):
         self.video_widget.reset_zoom()
         self.video_widget.setVisible(False)
         self.lbl_audio_art.setVisible(False)
+        if hasattr(self, "empty_preview_widget"):
+            self.empty_preview_widget.setVisible(True)
+        if hasattr(self, "preview_container"):
+            self.preview_container.set_checkerboard_visible(False)
         self.waveform_widget.set_audio_path("")
         self.waveform_widget.set_saved_subclip_ratios([])
         self.lbl_time_info.setText("00:00:00 / 00:00:00")
@@ -1130,6 +1176,8 @@ class MediaTrimPlayerWidget(QWidget):
             self.btn_audio_track.setVisible(False)
         if hasattr(self, "chk_all_tracks"):
             self.chk_all_tracks.setVisible(False)
+        if hasattr(self, "btn_quality"):
+            self.btn_quality.setVisible(False)
 
     def set_fps(self, fps: float):
         if fps and fps > 0:

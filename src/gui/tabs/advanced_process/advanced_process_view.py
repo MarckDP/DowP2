@@ -1,5 +1,4 @@
-# src/gui/tabs/single_process/single_process_view.py
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QCheckBox, QComboBox
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QCheckBox, QComboBox, QSizePolicy
 from PySide6.QtCore import QPropertyAnimation, QParallelAnimationGroup, QEasingCurve
 from core.logger.logger_manager import logger
 from core.utils.format_manager import FormatManager
@@ -44,9 +43,17 @@ class AdvancedProcessTab(QWidget):
         self.subtitle_options = SubtitleOptionsWidget()
         self.output_options = OutputOptionsWidget()
 
-        # New Collapsible Queue Components
+        # New Collapsible Queue Components (agrupados sin separación entre panel y tirador)
         self.queue_panel = QueuePanel()
         self.queue_trigger = QueueTriggerBar()
+
+        self.batch_queue_container = QWidget()
+        self.batch_queue_container.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
+        batch_layout = QHBoxLayout(self.batch_queue_container)
+        batch_layout.setContentsMargins(0, 0, 0, 0)
+        batch_layout.setSpacing(0)
+        batch_layout.addWidget(self.queue_panel)
+        batch_layout.addWidget(self.queue_trigger)
 
         # Middle horizontal container for collapsing layout
         self.middle_container = QWidget()
@@ -65,9 +72,8 @@ class AdvancedProcessTab(QWidget):
         middle_content_layout.addStretch(1)
 
         # Assemble middle container
-        middle_layout.addWidget(self.queue_panel)
-        middle_layout.addWidget(self.queue_trigger)
-        middle_layout.addWidget(self.middle_content_container)
+        middle_layout.addWidget(self.batch_queue_container)
+        middle_layout.addWidget(self.middle_content_container, 1)
 
         # Add to main vertical layout
         self.main_layout.addWidget(self.url_bar)

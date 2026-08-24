@@ -832,13 +832,34 @@ QPushButton#soloButton:checked:hover {
 }
 
 /* ═══════════════════════════════════════════
-   DIÁLOGO DE FRAGMENTOS
+   DIÁLOGOS MODALES (Overlay Backdrop)
    ═══════════════════════════════════════════ */
 
-QDialog#fragmentDialog {
+QDialog#fragmentDialogOverlay,
+QDialog#subclipDialogOverlay {
+    background-color: rgba(0, 0, 0, 0.72);
+}
+
+QFrame#fragmentDialogCard,
+QFrame#subclipDialogCard {
     background-color: {{fondo_principal}};
     border: 1px solid {{borde_normal}};
     border-radius: 6px;
+}
+
+QWidget#fragmentTitleBar,
+QWidget#subclipTitleBar {
+    background-color: {{fondo_secundario}};
+    border-top-left-radius: 6px;
+    border-top-right-radius: 6px;
+    border-bottom: 1px solid {{borde_sutil}};
+}
+
+QLabel#fragmentTitleLabel,
+QLabel#subclipTitleLabel {
+    color: {{texto_activo}};
+    font-weight: bold;
+    font-size: 13px;
 }
 
 QWidget#fragmentMainContainer {
@@ -1164,4 +1185,17 @@ QScrollBar::sub-line:horizontal {
 QScrollBar::add-page:horizontal,
 QScrollBar::sub-page:horizontal {
     background: none;
+}
+
+/* ═══════════════════════════════════════════
+   QUEUE PANEL (Panel de Cola / Lotes)
+   ═══════════════════════════════════════════ */
+QWidget#QueuePanel {
+    background-color: {{fondo_secundario}};
+    border-top-left-radius: 6px;
+    border-bottom-left-radius: 6px;
+    border-left: 1px solid {{borde_normal}};
+    border-top: 1px solid {{borde_normal}};
+    border-bottom: 1px solid {{borde_normal}};
+    border-right: none;
 }

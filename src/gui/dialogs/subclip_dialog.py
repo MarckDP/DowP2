@@ -5,8 +5,8 @@ from PySide6.QtWidgets import (
     QPushButton, QListWidget, QListWidgetItem, QWidget,
     QSizePolicy, QLineEdit, QFrame, QToolButton, QMenu
 )
-from PySide6.QtCore import Qt, QSize, QTimer, Signal
-from PySide6.QtGui import QIcon
+from PySide6.QtCore import Qt, QSize, QTimer, Signal, QPoint
+from PySide6.QtGui import QIcon, QPainter, QColor
 
 from gui.styles import get_theme_token
 from gui.widgets.send_state_button import SendButtonState
@@ -118,21 +118,23 @@ class SubclipEditorDialog(QDialog):
         self.pending_download = pending_download
         self._display_name = display_name or os.path.basename(media_path) or "Medio remoto"
 
-        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
-        self.setWindowTitle(f"Edición de Subclips - {self._display_name}")
-        self.resize(960, 600)
-        self.setMinimumSize(800, 480)
-        self.old_pos = None
+    def __init__(self, media_path: str, media_type: str = "video", duration_sec: float = 0.0, fps: float = 30.0, existing_subclips: list = None, initial_in_sec: float = None, initial_out_sec: float = None, pending_download: bool = False, display_name: str = None, parent=None):
+        super().__init__(parent)
+        self.media_path = media_path
+        self.media_type = media_type.lower()
+        self.duration_sec = duration_sec or 1.0
+        self.fps = fps if fps > 0 else 30.0
+        self.in_sec = initial_in_sec if initial_in_sec is not None else 0.0
+        self.out_sec = initial_out_sec if initial_out_sec is not None else self.duration_sec
+        self.subclips = list(existing_subclips) if existing_subclips else []
+        self.pending_download = pending_download
+        self._display_name = display_name or os.path.basename(media_path) or "Medio remoto"
 
-        bg_dialog = get_theme_token('fondo_principal', '#0a0a0a')
-        borde_color = get_theme_token('borde_normal', '#222222')
-        self.setStyleSheet("""
-            QDialog {
-                background-color: %s;
-                border: 1px solid %s;
-                border-radius: 6px;
-            }
-        """ % (bg_dialog, borde_color))
+        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setWindowTitle(f"Edición de Subclips - {self._display_name}")
+        self.setObjectName("subclipDialogOverlay")
 
         self.init_ui()
 
@@ -145,75 +147,65 @@ class SubclipEditorDialog(QDialog):
             logger.info(f"[SubclipDialog] Ventana abierta en modo pendiente de descarga para '{self._display_name}'.")
             self._set_pending_state(True)
 
-    def title_mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            self.old_pos = event.globalPosition().toPoint()
+    def showEvent(self, event):
+        super().showEvent(event)
+        win = self.parent().window() if self.parent() else None
+        if win:
+            pos = win.mapToGlobal(QPoint(0, 0))
+            self.setGeometry(pos.x(), pos.y(), win.width(), win.height())
 
-    def title_mouseMoveEvent(self, event):
-        if self.old_pos is not None:
-            delta = event.globalPosition().toPoint() - self.old_pos
-            self.move(self.x() + delta.x(), self.y() + delta.y())
-            self.old_pos = event.globalPosition().toPoint()
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), QColor(0, 0, 0, 185))
+        painter.end()
+        super().paintEvent(event)
 
-    def title_mouseReleaseEvent(self, event):
-        self.old_pos = None
+    def mousePressEvent(self, event):
+        if hasattr(self, 'card') and not self.card.geometry().contains(event.pos()):
+            self.reject()
+        else:
+            super().mousePressEvent(event)
 
     def init_ui(self):
-        main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.setSpacing(0)
+        overlay_layout = QVBoxLayout(self)
+        overlay_layout.setContentsMargins(24, 16, 24, 16)
+        overlay_layout.setAlignment(Qt.AlignCenter)
 
-        # ── Barra de Título Customizada (Sin Bordes) ─────────────────────────
+        # ── Tarjeta Central Inamovible ────────────────────────
+        self.card = QFrame()
+        self.card.setObjectName("subclipDialogCard")
+        self.card.setMinimumSize(940, 580)
+        self.card.setMaximumSize(1080, 680)
+
+        card_layout = QVBoxLayout(self.card)
+        card_layout.setContentsMargins(0, 0, 0, 0)
+        card_layout.setSpacing(0)
+
+        # ── Barra de Título Customizada ───────────────────────
         title_bar = QWidget()
         title_bar.setObjectName("subclipTitleBar")
-        title_bar.setFixedHeight(42)
-        title_bg = get_theme_token('fondo_secundario', '#121212')
-        borde_sutil = get_theme_token('borde_sutil', '#222222')
-        title_bar.setStyleSheet("""
-            QWidget#subclipTitleBar {
-                background-color: %s;
-                border-top-left-radius: 6px;
-                border-top-right-radius: 6px;
-                border-bottom: 1px solid %s;
-            }
-        """ % (title_bg, borde_sutil))
+        title_bar.setFixedHeight(38)
         tb_layout = QHBoxLayout(title_bar)
-        tb_layout.setContentsMargins(14, 0, 14, 0)
+        tb_layout.setContentsMargins(16, 0, 10, 0)
 
         self.title_lbl = QLabel(f"Edición de Subclips (In/Out) — {self._display_name}")
-        self.title_lbl.setStyleSheet("font-weight: bold; font-size: 13px; color: #ffffff;")
+        self.title_lbl.setObjectName("subclipTitleLabel")
         tb_layout.addWidget(self.title_lbl)
         tb_layout.addStretch()
 
         btn_close = QPushButton()
-        btn_close.setObjectName("titleBarClose")
+        btn_close.setObjectName("modalCloseBtn")
         btn_close.setIcon(get_svg_icon("close.svg"))
         btn_close.setIconSize(QSize(14, 14))
-        btn_close.setFixedSize(28, 28)
-        btn_close.setToolTip(self.tr("Cerrar"))
-        btn_close.setStyleSheet("""
-            QPushButton#titleBarClose {
-                background-color: transparent;
-                border: none;
-                border-radius: 6px;
-                padding: 0px;
-            }
-            QPushButton#titleBarClose:hover {
-                background-color: #c62828;
-            }
-            QPushButton#titleBarClose:pressed {
-                background-color: #8e0000;
-            }
-        """)
+        btn_close.setFixedSize(26, 26)
+        btn_close.setCursor(Qt.PointingHandCursor)
+        btn_close.setToolTip(self.tr("Cerrar (Esc)"))
         btn_close.clicked.connect(self.reject)
         tb_layout.addWidget(btn_close)
 
-        title_bar.mousePressEvent   = self.title_mousePressEvent
-        title_bar.mouseMoveEvent    = self.title_mouseMoveEvent
-        title_bar.mouseReleaseEvent = self.title_mouseReleaseEvent
-        main_layout.addWidget(title_bar)
+        card_layout.addWidget(title_bar)
 
-        # ── Contenido Principal ────────────────────────────────────────────────
+        # ── Contenido Principal ───────────────────────────────
         content_widget = QWidget()
         content_layout = QHBoxLayout(content_widget)
         content_layout.setContentsMargins(14, 12, 14, 14)
@@ -321,7 +313,8 @@ class SubclipEditorDialog(QDialog):
         right_layout.addWidget(self.btn_send)
         content_layout.addWidget(right_widget, 30)
 
-        main_layout.addWidget(content_widget, 1)
+        card_layout.addWidget(content_widget, 1)
+        overlay_layout.addWidget(self.card)
         self._update_send_button()
         self._refresh_subclip_list()
 

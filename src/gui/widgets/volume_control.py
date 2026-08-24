@@ -96,6 +96,10 @@ class VolumeControlWidget(QWidget):
         """Devuelve el nivel actual del slider (0 a 100)."""
         return self.slider.value()
 
+    def set_slider_visible(self, visible: bool):
+        """Muestra u oculta el slider horizontal (útil para vistas muy compactas)."""
+        self.slider.setVisible(visible)
+
     def is_muted(self) -> bool:
         """Devuelve si el audio está actualmente silenciado."""
         return self._is_muted

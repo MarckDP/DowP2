@@ -120,9 +120,10 @@ class FragmentDialog(QDialog):
     def __init__(self, parent=None, stream_url="", thumbnail_pixmap=None, duration=0, fps=30, source_url=""):
         super().__init__(parent)
         self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WA_StyledBackground, True)
         self.setWindowTitle(self.tr("Recorte de fragmentos"))
         self.setModal(True)
-        self.resize(860, 520)
 
         self.stream_url = stream_url
         self.source_url = source_url   # URL de la página original (para el proxy)
@@ -130,8 +131,7 @@ class FragmentDialog(QDialog):
         self.duration_ms = int(duration) * 1000 if duration else 180000
         self.fps = fps
         self.fragments = [] # Lista de tuplas (start_ms, end_ms, suffix)
-        self.selected_mode = None # FragmentState.PRECISE por defecto si no se elige nada, pero dejamos que sea None inicialmente
-        self.old_pos = None
+        self.selected_mode = None
         self.is_modified = False
 
         # Arrancar el servidor proxy local (singleton — no hace nada si ya corre)
@@ -142,64 +142,78 @@ class FragmentDialog(QDialog):
             from core.logger.logger_manager import logger
             logger.warning(f"FragmentDialog: No se pudo iniciar el proxy: {_e}")
 
-        self.setObjectName("fragmentDialog")
+        self.setObjectName("fragmentDialogOverlay")
         self.init_ui()
-        # Diferir load_preview() para que el diálogo esté renderizado antes de posicionar
-        # los overlays. Sin esto, preview_container.width/height == 0 y los carteles
-        # aparecen en la esquina superior izquierda (0, 0).
         QTimer.singleShot(0, self.load_preview)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        win = self.parent().window() if self.parent() else None
+        if win:
+            pos = win.mapToGlobal(QPoint(0, 0))
+            self.setGeometry(pos.x(), pos.y(), win.width(), win.height())
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), QColor(0, 0, 0, 185))
+        painter.end()
+        super().paintEvent(event)
+
+    def mousePressEvent(self, event):
+        if hasattr(self, 'card') and not self.card.geometry().contains(event.pos()):
+            self.reject()
+        else:
+            super().mousePressEvent(event)
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Escape:
+            self.reject()
+        else:
+            super().keyPressEvent(event)
 
     # ──────────────────────────────────────────────────────────
     # UI
     # ──────────────────────────────────────────────────────────
     def init_ui(self):
-        main_layout = QVBoxLayout(self)
-        main_layout.setSpacing(0)
-        main_layout.setContentsMargins(0, 0, 0, 0)
+        overlay_layout = QVBoxLayout(self)
+        overlay_layout.setContentsMargins(24, 16, 24, 16)
+        overlay_layout.setAlignment(Qt.AlignCenter)
 
-        # ── Title bar ──────────────────────────────────────────
+        # ── Tarjeta Central Inamovible ────────────────────────
+        self.card = QFrame()
+        self.card.setObjectName("fragmentDialogCard")
+        self.card.setMinimumSize(880, 540)
+        self.card.setMaximumSize(980, 620)
+
+        card_layout = QVBoxLayout(self.card)
+        card_layout.setContentsMargins(0, 0, 0, 0)
+        card_layout.setSpacing(0)
+
+        # ── Barra de Título ───────────────────────────────────
         title_bar = QWidget()
-        title_bar.setObjectName("titleBar")
-        title_bar.setFixedHeight(44)
+        title_bar.setObjectName("fragmentTitleBar")
+        title_bar.setFixedHeight(38)
         tb_layout = QHBoxLayout(title_bar)
-        tb_layout.setContentsMargins(15, 0, 15, 0)
+        tb_layout.setContentsMargins(16, 0, 10, 0)
 
-        btn_close = QPushButton()
-        btn_close.setObjectName("titleBarClose")
-        btn_close.setIcon(_icon("close.svg"))
-        btn_close.setIconSize(QSize(14, 14))
-        btn_close.setFixedSize(28, 28)
-        btn_close.setToolTip(self.tr("Cerrar"))
-        btn_close.setStyleSheet("""
-            QPushButton#titleBarClose {
-                background-color: transparent;
-                border: none;
-                border-radius: 6px;
-                padding: 0px;
-            }
-            QPushButton#titleBarClose:hover {
-                background-color: #c62828;
-            }
-            QPushButton#titleBarClose:pressed {
-                background-color: #8e0000;
-            }
-        """)
-        btn_close.clicked.connect(self.reject)
-
-        tb_layout.addSpacing(40)
-        tb_layout.addStretch()
         title_lbl = QLabel(self.tr("Recorte de fragmentos"))
-        title_lbl.setStyleSheet("font-weight: 600; font-size: 15px;")
+        title_lbl.setObjectName("fragmentTitleLabel")
         tb_layout.addWidget(title_lbl)
         tb_layout.addStretch()
+
+        btn_close = QPushButton()
+        btn_close.setObjectName("modalCloseBtn")
+        btn_close.setIcon(_icon("close.svg"))
+        btn_close.setIconSize(QSize(14, 14))
+        btn_close.setFixedSize(26, 26)
+        btn_close.setCursor(Qt.PointingHandCursor)
+        btn_close.setToolTip(self.tr("Cerrar (Esc)"))
+        btn_close.clicked.connect(self.reject)
         tb_layout.addWidget(btn_close)
 
-        title_bar.mousePressEvent   = self.title_mousePressEvent
-        title_bar.mouseMoveEvent    = self.title_mouseMoveEvent
-        title_bar.mouseReleaseEvent = self.title_mouseReleaseEvent
-        main_layout.addWidget(title_bar)
+        card_layout.addWidget(title_bar)
 
-        # ── Content ────────────────────────────────────────────
+        # ── Contenido ─────────────────────────────────────────
         content_widget = QWidget()
         content_widget.setObjectName("fragmentMainContainer")
         content_layout = QHBoxLayout(content_widget)
@@ -530,7 +544,8 @@ class FragmentDialog(QDialog):
         right_layout.addLayout(bot)
 
         content_layout.addWidget(right_panel, 3)
-        main_layout.addWidget(content_widget, 1)
+        card_layout.addWidget(content_widget, 1)
+        overlay_layout.addWidget(self.card)
 
     # ──────────────────────────────────────────────────────────
     # EVENT FILTER — Delete/Backspace on list

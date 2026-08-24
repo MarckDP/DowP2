@@ -495,19 +495,6 @@ class QueuePanel(QWidget):
         self.content_layout.addLayout(actions_layout)
 
         self.main_layout.addWidget(self.content_widget)
-        
-        # Estilo de fondo a juego con fondo_secundario del tema con bordes redondeados solo a la izquierda
-        self.setStyleSheet(f"""
-            QWidget#QueuePanel {{
-                background-color: {get_theme_token('fondo_secundario', '#1e1e1e')};
-                border-top-left-radius: 12px;
-                border-bottom-left-radius: 12px;
-                border-left: 1px solid {get_theme_token('borde_normal', '#2d2d2d')};
-                border-top: 1px solid {get_theme_token('borde_normal', '#2d2d2d')};
-                border-bottom: 1px solid {get_theme_token('borde_normal', '#2d2d2d')};
-                border-right: 1px solid {get_theme_token('borde_normal', '#2d2d2d')};
-            }}
-        """)
 
     def toggle_expanded(self, parent_width):
         """Alterna el estado de expansión usando animaciones."""

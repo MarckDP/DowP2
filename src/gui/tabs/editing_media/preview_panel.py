@@ -1,7 +1,10 @@
 # src/gui/tabs/editing_media/preview_panel.py
 import os
-from PySide6.QtWidgets import QFrame, QLabel, QVBoxLayout, QHBoxLayout, QSizePolicy, QWidget, QPushButton, QSlider
-from PySide6.QtCore import Qt, QUrl, QSize
+from PySide6.QtWidgets import (
+    QFrame, QLabel, QVBoxLayout, QHBoxLayout, QSizePolicy, QWidget, QPushButton, QSlider,
+    QGraphicsScene, QGraphicsView
+)
+from PySide6.QtCore import Qt, QUrl, QSize, QSizeF
 from PySide6.QtGui import QPixmap, QIcon, QPainter, QColor
 
 from core.logger.logger_manager import logger
@@ -18,7 +21,7 @@ from gui.widgets.volume_control import VolumeControlWidget
 
 try:
     from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
-    from PySide6.QtMultimediaWidgets import QVideoWidget
+    from PySide6.QtMultimediaWidgets import QGraphicsVideoItem
     MULTIMEDIA_AVAILABLE = True
 except ImportError as e:
     MULTIMEDIA_AVAILABLE = False
@@ -31,6 +34,42 @@ def get_svg_icon(name: str) -> QIcon:
     return QIcon(path) if os.path.exists(path) else QIcon()
 
 
+class _PreviewVideoView(QGraphicsView):
+    """Vista gráfica para renderizar video en el mismo buffer 2D de Qt sin crear ventana nativa HWND."""
+    def __init__(self, scene: QGraphicsScene, video_item: QGraphicsVideoItem, parent=None):
+        super().__init__(scene, parent)
+        self._video_item = video_item
+        self.setFrameShape(QFrame.NoFrame)
+        self.setStyleSheet("QGraphicsView { background: transparent; border: none; }")
+        self.viewport().setAutoFillBackground(False)
+        self.setRenderHint(QPainter.SmoothPixmapTransform)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+
+    def refit(self):
+        vp_w = self.viewport().width()
+        vp_h = self.viewport().height()
+        if vp_w <= 0 or vp_h <= 0:
+            return
+
+        self.scene().setSceneRect(0, 0, vp_w, vp_h)
+        native = self._video_item.nativeSize()
+        if native.isEmpty() or native.width() <= 0 or native.height() <= 0:
+            self._video_item.setSize(QSizeF(vp_w, vp_h))
+            self._video_item.setPos(0, 0)
+            return
+
+        scale = min(vp_w / native.width(), vp_h / native.height())
+        scaled_w = native.width() * scale
+        scaled_h = native.height() * scale
+        self._video_item.setSize(QSizeF(scaled_w, scaled_h))
+        self._video_item.setPos((vp_w - scaled_w) / 2.0, (vp_h - scaled_h) / 2.0)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.refit()
+
+
 class PreviewContainerWidget(QFrame):
     """Contenedor de vista previa rectangular (panorámico) con soporte para imágenes y reproducción de video real con controles."""
     
@@ -39,10 +78,11 @@ class PreviewContainerWidget(QFrame):
         self.setObjectName("previewContainer")
         
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        self.setMinimumHeight(120)
+        self.setMinimumHeight(140)
         
         self.layout = QVBoxLayout(self)
-        self.layout.setContentsMargins(5, 5, 5, 5)
+        self.layout.setContentsMargins(0, 0, 0, 0)
+        self.layout.setSpacing(0)
         
         # Fondo oscuro y bordes redondeados
         self.setStyleSheet(f"""
@@ -53,14 +93,53 @@ class PreviewContainerWidget(QFrame):
             }}
         """)
         
-        # 1. Widget de Imagen / Placeholder
+        # 1. Widget de Estado Vacío Estilizado (Centrado Absoluto)
+        self.empty_state_widget = QWidget()
+        self.empty_state_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        empty_outer = QVBoxLayout(self.empty_state_widget)
+        empty_outer.setContentsMargins(0, 0, 0, 0)
+        empty_outer.setSpacing(0)
+        empty_outer.addStretch(1)
+
+        empty_inner = QWidget()
+        empty_inner_layout = QVBoxLayout(empty_inner)
+        empty_inner_layout.setContentsMargins(10, 0, 10, 0)
+        empty_inner_layout.setSpacing(6)
+        empty_inner_layout.setAlignment(Qt.AlignCenter)
+
+        self.lbl_empty_icon = QLabel()
+        self.lbl_empty_icon.setAlignment(Qt.AlignCenter)
+        empty_ico = get_colored_svg_icon("play_arrow.svg", "#444444", size=36)
+        if not empty_ico.isNull():
+            self.lbl_empty_icon.setPixmap(empty_ico.pixmap(36, 36))
+        empty_inner_layout.addWidget(self.lbl_empty_icon)
+
+        self.lbl_empty_title = QLabel(self.tr("Vista Previa"))
+        self.lbl_empty_title.setAlignment(Qt.AlignCenter)
+        self.lbl_empty_title.setStyleSheet(f"font-weight: bold; font-size: 13px; color: {get_theme_token('texto_secundario', '#777777')};")
+        empty_inner_layout.addWidget(self.lbl_empty_title)
+
+        self.lbl_empty_desc = QLabel(self.tr("Selecciona un archivo multimedia de la lista\npara reproducirlo o ver su detalle"))
+        self.lbl_empty_desc.setAlignment(Qt.AlignCenter)
+        self.lbl_empty_desc.setStyleSheet("font-size: 11px; color: #555555;")
+        empty_inner_layout.addWidget(self.lbl_empty_desc)
+
+        empty_outer.addWidget(empty_inner, 0, Qt.AlignCenter)
+        empty_outer.addStretch(1)
+
+        self.layout.addWidget(self.empty_state_widget, 1)
+
+        # 2. Widget de Imagen / Placeholder
         self.placeholder_label = QLabel()
         self.placeholder_label.setAlignment(Qt.AlignCenter)
         self.placeholder_label.setWordWrap(True)
-        self.layout.addWidget(self.placeholder_label)
+        self.placeholder_label.setVisible(False)
+        self.layout.addWidget(self.placeholder_label, 1)
         
-        # 2. Widget de Video Real
+        # 2. Widget de Video Real Integrado en Qt
         self.video_widget = None
+        self.video_scene = None
+        self.video_item = None
         self.media_player = None
         self.audio_output = None
         self._is_dragging_slider = False
@@ -68,7 +147,13 @@ class PreviewContainerWidget(QFrame):
         
         if MULTIMEDIA_AVAILABLE:
             try:
-                self.video_widget = QVideoWidget(self)
+                self.video_scene = QGraphicsScene(self)
+                self.video_scene.setBackgroundBrush(Qt.NoBrush)
+                self.video_item = QGraphicsVideoItem()
+                self.video_scene.addItem(self.video_item)
+                self.video_item.nativeSizeChanged.connect(lambda s: self.video_widget.refit() if self.video_widget else None)
+
+                self.video_widget = _PreviewVideoView(self.video_scene, self.video_item, self)
                 self.video_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
                 self.video_widget.setVisible(False)
                 self.layout.addWidget(self.video_widget)
@@ -76,7 +161,7 @@ class PreviewContainerWidget(QFrame):
                 self.media_player = QMediaPlayer(self)
                 self.audio_output = QAudioOutput(self)
                 self.media_player.setAudioOutput(self.audio_output)
-                self.media_player.setVideoOutput(self.video_widget)
+                self.media_player.setVideoOutput(self.video_item)
                 
                 # Bajar el volumen por defecto a un nivel agradable (10%) para evitar sustos
                 self.audio_output.setVolume(0.1)
@@ -92,7 +177,7 @@ class PreviewContainerWidget(QFrame):
         self.controls_widget = QWidget()
         self.controls_widget.setVisible(False)
         controls_v = QVBoxLayout(self.controls_widget)
-        controls_v.setContentsMargins(4, 2, 4, 2)
+        controls_v.setContentsMargins(8, 2, 8, 8)
         controls_v.setSpacing(4)
 
         # Barra de tiempo
@@ -125,12 +210,12 @@ class PreviewContainerWidget(QFrame):
         # Fila inferior: Play, Tiempo, Volumen
         btn_layout = QHBoxLayout()
         btn_layout.setContentsMargins(0, 0, 0, 0)
-        btn_layout.setSpacing(6)
+        btn_layout.setSpacing(4)
 
         # Botón Play/Pausa
         self.btn_play_pause = QPushButton()
         self.btn_play_pause.setIconSize(QSize(14, 14))
-        self.btn_play_pause.setFixedSize(26, 26)
+        self.btn_play_pause.setFixedSize(24, 24)
         apply_player_play_button_style(self.btn_play_pause, is_playing=True, icon_size=14)
         self.btn_play_pause.clicked.connect(self.toggle_play_pause)
         btn_layout.addWidget(self.btn_play_pause)
@@ -139,7 +224,7 @@ class PreviewContainerWidget(QFrame):
         self._video_loop_active = False  # Por defecto desactivado
         self.btn_loop = QPushButton()
         self.btn_loop.setIconSize(QSize(14, 14))
-        self.btn_loop.setFixedSize(26, 26)
+        self.btn_loop.setFixedSize(24, 24)
         apply_player_loop_button_style(self.btn_loop, is_active=False, icon_size=14)
 
         self.btn_loop.clicked.connect(self._toggle_video_loop)
@@ -148,20 +233,22 @@ class PreviewContainerWidget(QFrame):
         # Botón Editar Subclip
         self.btn_edit_subclip = QPushButton()
         self.btn_edit_subclip.setIconSize(QSize(14, 14))
-        self.btn_edit_subclip.setFixedSize(26, 26)
+        self.btn_edit_subclip.setFixedSize(24, 24)
         self._has_subclips = False
         apply_edit_subclip_button_style(self.btn_edit_subclip, has_subclips=False, icon_size=14)
         btn_layout.addWidget(self.btn_edit_subclip)
 
         # Etiqueta de tiempo
-        self.lbl_video_time = QLabel("00:00:00.000 / 00:00:00.000")
+        self.lbl_video_time = QLabel("00:00 / 00:00")
         self.lbl_video_time.setStyleSheet("font-size: 11px; color: #a6adc8; background: transparent; border: none;")
+        self.lbl_video_time.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         btn_layout.addWidget(self.lbl_video_time)
 
         btn_layout.addStretch(1)
 
         # Control de Volumen Unificado
-        self.volume_control = VolumeControlWidget(initial_volume=10, slider_width=60)
+        self.volume_control = VolumeControlWidget(initial_volume=10, slider_width=50)
+        self.volume_control.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.volume_control.volume_changed.connect(self._on_volume_changed)
         btn_layout.addWidget(self.volume_control)
 
@@ -185,6 +272,10 @@ class PreviewContainerWidget(QFrame):
         if w > 0:
             avail_h = int(w * 0.6)
             self.setFixedHeight(avail_h)
+            if hasattr(self, "volume_control") and self.volume_control:
+                self.volume_control.set_slider_visible(w >= 280)
+            if hasattr(self, "lbl_video_time") and self.lbl_video_time:
+                self.lbl_video_time.setVisible(w >= 230)
             if hasattr(self, "_current_movie") and self._current_movie and self.placeholder_label.isVisible():
                 movie = self._current_movie
                 orig_size = movie.currentImage().size()
@@ -201,6 +292,8 @@ class PreviewContainerWidget(QFrame):
                         Qt.SmoothTransformation
                     )
                     self.placeholder_label.setPixmap(scaled)
+            elif hasattr(self, "video_widget") and self.video_widget and self.video_widget.isVisible():
+                self.video_widget.refit()
 
     def stop_media(self):
         """Detiene cualquier reproducción de video o animación GIF activa."""
@@ -226,16 +319,16 @@ class PreviewContainerWidget(QFrame):
             self.video_widget.setVisible(False)
         if hasattr(self, "controls_widget"):
             self.controls_widget.setVisible(False)
-        self.placeholder_label.setVisible(True)
+        if hasattr(self, "empty_state_widget"):
+            self.empty_state_widget.setVisible(True)
+        self.placeholder_label.setVisible(False)
         self.placeholder_label.setPixmap(QPixmap())
-        self.placeholder_label.setText(
-            "Selecciona un archivo multimedia\npara ver su vista previa"
-        )
-        self.placeholder_label.setStyleSheet("color: #6c7086; font-size: 13px;")
 
     def show_image_preview(self, path: str):
         self.stop_media()
         self._current_image_path = path
+        if hasattr(self, "empty_state_widget"):
+            self.empty_state_widget.setVisible(False)
         if self.video_widget:
             self.video_widget.setVisible(False)
         if hasattr(self, "controls_widget"):
@@ -285,8 +378,11 @@ class PreviewContainerWidget(QFrame):
 
     def show_video_preview(self, path: str):
         if self.video_widget and self.media_player:
+            if hasattr(self, "empty_state_widget"):
+                self.empty_state_widget.setVisible(False)
             self.placeholder_label.setVisible(False)
             self.video_widget.setVisible(True)
+            self.video_widget.refit()
             if hasattr(self, "controls_widget"):
                 self.controls_widget.setVisible(True)
             try:
@@ -301,6 +397,8 @@ class PreviewContainerWidget(QFrame):
 
     def show_video_placeholder(self, path: str):
         self.stop_media()
+        if hasattr(self, "empty_state_widget"):
+            self.empty_state_widget.setVisible(False)
         if self.video_widget:
             self.video_widget.setVisible(False)
         if hasattr(self, "controls_widget"):
@@ -313,6 +411,8 @@ class PreviewContainerWidget(QFrame):
 
     def show_audio_preview(self, path: str):
         self.stop_media()
+        if hasattr(self, "empty_state_widget"):
+            self.empty_state_widget.setVisible(False)
         if self.video_widget:
             self.video_widget.setVisible(False)
         if hasattr(self, "controls_widget"):
@@ -352,18 +452,21 @@ class PreviewContainerWidget(QFrame):
         self._update_time_label(self.time_slider.value(), duration)
 
     def _update_time_label(self, position, duration):
-        pos_str = self._format_time(position)
-        dur_str = self._format_time(duration)
+        show_hours = bool(duration and duration >= 3600000)
+        pos_str = self._format_time(position, show_hours)
+        dur_str = self._format_time(duration, show_hours)
         self.lbl_video_time.setText(f"{pos_str} / {dur_str}")
 
-    def _format_time(self, ms):
+    def _format_time(self, ms, show_hours=False):
         if not ms or ms < 0:
             ms = 0
         ms = int(ms)
-        s, ms_r = divmod(ms, 1000)
+        s = ms // 1000
         m, s = divmod(s, 60)
         h, m = divmod(m, 60)
-        return f"{h:02d}:{m:02d}:{s:02d}.{ms_r:03d}"
+        if show_hours or h > 0:
+            return f"{h:02d}:{m:02d}:{s:02d}"
+        return f"{m:02d}:{s:02d}"
 
     def _on_slider_pressed(self):
         self._is_dragging_slider = True

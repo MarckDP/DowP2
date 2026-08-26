@@ -348,6 +348,20 @@ class MediaTableModel(QAbstractTableModel):
 
     def set_data(self, media_items):
         """Reemplaza los datos del modelo."""
+        # Detectar un cambio REAL de contexto (carpeta, colección, filtro de tipo o
+        # búsqueda) y no una carga incremental de más del mismo listado ("Cargar más"/
+        # scroll infinito, donde old_paths ⊆ new_paths porque solo se agregan elementos
+        # al final del mismo conjunto ya filtrado/ordenado). En un cambio real, purgar del
+        # pool de fondo las miniaturas/waveforms aún no iniciadas: ya no son relevantes y
+        # estaban bloqueando en cola —por orden FIFO de llegada— a los archivos de la
+        # carpeta/filtro/búsqueda nueva.
+        old_paths = {item.get("ruta") for item in self._media_items if item.get("ruta")}
+        new_paths = {item.get("ruta") for item in media_items if item.get("ruta")}
+        if old_paths and not old_paths.issubset(new_paths):
+            ThumbnailCacheManager.get_instance().purge_stale_background()
+            from core.tabs.editing_media.waveform_cache_manager import WaveformCacheManager
+            WaveformCacheManager.get_instance().purge_stale_background()
+
         self.beginResetModel()
         self._media_items = media_items
         self._path_to_row = {}

@@ -3,11 +3,17 @@ import os
 import hashlib
 import subprocess
 import re
-from PySide6.QtCore import QObject, Signal, QRunnable, QThreadPool, Qt
+from PySide6.QtCore import QObject, Signal, QRunnable, Qt
 from PySide6.QtGui import QImage, QPixmap, QIcon, QImageReader, QPainter, QColor
 from core.logger.logger_manager import logger
 from core.setup.ffmpeg_setup import get_ffmpeg_dir, get_platform_info, check_ffmpeg
 from core.utils.paths import get_thumbnail_cache_dir
+from core.utils.media_task_pools import (
+    get_background_pool,
+    get_interactive_pool,
+    PRIORITY_BACKGROUND,
+    PRIORITY_INTERACTIVE,
+)
 
 CACHE_DIR = get_thumbnail_cache_dir()
 
@@ -56,7 +62,7 @@ class ThumbnailRunnable(QRunnable):
             logger.error(f"ThumbnailRunnable: Error procesando {self.file_path}: {e}")
             self.signals.failed.emit(self.file_path)
         finally:
-            self.manager._task_finished(self.file_path)
+            self.manager._task_finished(self.file_path, self)
 
 def _make_multi_state_icon(pix: QPixmap) -> QIcon:
     if pix.isNull():
@@ -85,15 +91,23 @@ class ThumbnailCacheManager(QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
         os.makedirs(CACHE_DIR, exist_ok=True)
-        self.thread_pool = QThreadPool.globalInstance()
-        # Limitar a máximo 2 hilos para evitar saturación de CPU y I/O de disco
-        self.thread_pool.setMaxThreadCount(2)
-        
+
         # Caché en RAM para acceso instantáneo (0ms I/O)
         self._qicon_cache: dict[str, QIcon] = {}
         self._hash_cache: dict[str, str] = {}
-        self._pending_files = set()
+        # Separados a propósito (no un solo set compartido): si una miniatura ya está
+        # pendiente en el pool de fondo y luego el usuario selecciona ese mismo archivo,
+        # la solicitud interactiva NO debe descartarse solo porque "ya hay algo pendiente"
+        # — si lo hiciera, quedaría atada a la cola de fondo, que además puede estar
+        # pausada por completo mientras hay reproducción activa (ver set_background_throttled).
+        self._pending_background = set()
+        self._pending_interactive = set()
         self._failed_files = set()
+        # Referencias fuertes a los workers en curso, igual que WaveformCacheManager: sin
+        # esto nada en el lado Python los mantiene vivos una vez que request_thumbnail()
+        # retorna, y también hace falta tener el objeto worker a mano para poder cancelarlo
+        # con QThreadPool.tryTake() en purge_stale_background() si todavía no arrancó.
+        self._active_workers: dict[str, set] = {}
 
     def _get_hash_key(self, file_path: str) -> str:
         """Genera un hash SHA256 único y lo mantiene en memoria para evitar os.stat repetidos."""
@@ -136,13 +150,25 @@ class ThumbnailCacheManager(QObject):
             return target_path
         return None
 
-    def request_thumbnail(self, file_path: str, media_type: str, size: int = 256):
-        """Solicita una miniatura de forma no bloqueante."""
+    def request_thumbnail(self, file_path: str, media_type: str, size: int = 256, interactive: bool = False):
+        """Solicita una miniatura de forma no bloqueante.
+
+        `interactive=True` indica que el usuario está esperando este resultado ahora
+        mismo (p.ej. la carátula del audio recién seleccionado): se ejecuta en un pool
+        dedicado, separado del de generación masiva por scroll, para que nunca quede
+        esperando detrás de una cola de tareas de fondo."""
         cache_key = (file_path, size)
         if cache_key in self._qicon_cache:
             return
 
-        if file_path in self._pending_files or file_path in self._failed_files:
+        if file_path in self._failed_files:
+            return
+
+        # Deduplicar dentro del MISMO carril: una solicitud interactiva repetida no debe
+        # lanzar un segundo worker interactivo, pero SÍ debe proceder aunque ya haya una
+        # tarea de fondo pendiente para ese archivo (ver comentario en __init__).
+        pending_set = self._pending_interactive if interactive else self._pending_background
+        if file_path in pending_set:
             return
 
         cached_path = self.get_cached_thumbnail_path(file_path)
@@ -157,11 +183,19 @@ class ThumbnailCacheManager(QObject):
             self.thumbnail_loaded.emit(file_path, cached_path)
             return
 
-        self._pending_files.add(file_path)
+        pending_set.add(file_path)
         worker = ThumbnailRunnable(file_path, media_type, self)
+        # Set en vez de asignación directa: con los carriles separados, un mismo file_path
+        # puede tener a la vez un worker de fondo y uno interactivo corriendo en paralelo
+        # (duplicado inofensivo, ver comentario en __init__); una asignación simple perdería
+        # la referencia del primero en cuanto arrancara el segundo.
+        self._active_workers.setdefault(file_path, set()).add(worker)
         worker.signals.finished.connect(self._on_worker_finished)
         worker.signals.failed.connect(self._on_worker_failed)
-        self.thread_pool.start(worker)
+        if interactive:
+            get_interactive_pool().start(worker, PRIORITY_INTERACTIVE)
+        else:
+            get_background_pool().start(worker, PRIORITY_BACKGROUND)
 
     def _on_worker_finished(self, file_path: str, thumb_path: str):
         pix = QPixmap(thumb_path)
@@ -176,8 +210,45 @@ class ThumbnailCacheManager(QObject):
     def _on_worker_failed(self, file_path: str):
         self._failed_files.add(file_path)
 
-    def _task_finished(self, file_path: str):
-        self._pending_files.discard(file_path)
+    def _task_finished(self, file_path: str, worker=None):
+        # Se limpia de ambos carriles sin condicional: discard() no falla si no está
+        # presente, y como mucho un archivo pudo quedar pendiente en los dos a la vez
+        # (una tarea de fondo y otra interactiva corriendo en paralelo para el mismo
+        # archivo — duplicado inofensivo, ver comentario en __init__).
+        self._pending_background.discard(file_path)
+        self._pending_interactive.discard(file_path)
+        workers = self._active_workers.get(file_path)
+        if workers is not None:
+            workers.discard(worker)
+            if not workers:
+                self._active_workers.pop(file_path, None)
+
+    def purge_stale_background(self):
+        """Cancela las tareas de fondo aún NO iniciadas para archivos que ya no son
+        relevantes tras un cambio real de carpeta/colección/filtro/búsqueda (no una carga
+        incremental de más del mismo listado).
+
+        Usa QThreadPool.tryTake() en vez de QThreadPool.clear(): el pool de fondo lo
+        comparten ThumbnailCacheManager y WaveformCacheManager (ver media_task_pools.py),
+        así que un .clear() a secas también borraría de golpe las tareas del otro gestor
+        sin que este se entere, dejando sus propios diccionarios de seguimiento (y sus
+        referencias fuertes a workers) apuntando a runnables ya destruidos por Qt.
+        tryTake() en cambio cancela un worker puntual (y devuelve False sin tocar nada si
+        ya arrancó a correr o si pertenece a otro pool/gestor), así que es seguro llamarlo
+        aquí sin coordinarse con WaveformCacheManager. Las tareas que ya estaban corriendo
+        (como mucho las que ocupan los hilos del pool ahora mismo) se dejan terminar solas
+        — nada se pierde en disco, y si el archivo vuelve a ser visible más adelante
+        simplemente se vuelve a pedir."""
+        pool = get_background_pool()
+        for file_path in list(self._pending_background):
+            workers = self._active_workers.get(file_path)
+            if workers:
+                for w in list(workers):
+                    if pool.tryTake(w):
+                        workers.discard(w)
+                if not workers:
+                    self._active_workers.pop(file_path, None)
+            self._pending_background.discard(file_path)
 
     def _create_thumbnail(self, file_path: str, media_type: str) -> str | None:
         """Genera la miniatura según el tipo de medio y la guarda en CACHE_DIR."""
@@ -222,7 +293,7 @@ class ThumbnailCacheManager(QObject):
             ffmpeg_exe = os.path.join(get_ffmpeg_dir(), info["binary_name"])
 
             duration_secs = self._get_video_duration_seconds(ffmpeg_exe, src_path)
-            target_time = max(0.5, duration_secs * 0.10) if duration_secs > 0 else 1.0
+            target_time = max(0.0, duration_secs * 0.10) if duration_secs > 0 else 0.0
 
             hours = int(target_time // 3600)
             mins = int((target_time % 3600) // 60)
@@ -256,6 +327,30 @@ class ThumbnailCacheManager(QObject):
 
             if os.path.exists(target_path) and os.path.getsize(target_path) > 0:
                 return target_path
+
+            # Fallback: si el salto temporal al 10% no produjo fotograma (video ultra-corto o sin keyframe intermedio), capturar el primer fotograma (0.0s)
+            if target_time > 0:
+                fallback_cmd = [
+                    ffmpeg_exe,
+                    "-ss", "00:00:00.000",
+                    "-i", src_path,
+                    "-vframes", "1",
+                    "-vf", "scale=256:256:force_original_aspect_ratio=decrease",
+                    "-y", target_path
+                ]
+                fallback_proc = subprocess.Popen(
+                    fallback_cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    startupinfo=startupinfo,
+                    text=True,
+                    encoding='utf-8',
+                    errors='ignore'
+                )
+                fallback_proc.communicate(timeout=6)
+
+                if os.path.exists(target_path) and os.path.getsize(target_path) > 0:
+                    return target_path
         except Exception as e:
             logger.error(f"ThumbnailCacheManager: Error extrayendo fotograma de video {src_path}: {e}")
         return None
@@ -279,7 +374,7 @@ class ThumbnailCacheManager(QObject):
                 errors='ignore'
             )
             _, stderr = process.communicate(timeout=3)
-            match = re.search(r"Duration:\s*(\d+):(\d+):(\d+\.\d+)", stderr)
+            match = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", stderr)
             if match:
                 hours = float(match.group(1))
                 mins = float(match.group(2))

@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from PySide6.QtCore import Qt, QSize, QEvent, QPoint, QTimer
-from PySide6.QtGui import QIcon
+from PySide6.QtGui import QIcon, QPixmap
 
 # Importar QtMultimedia de forma segura para reproducción de audio
 try:
@@ -206,11 +206,16 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
                 self.audio_output = QAudioOutput(self)
                 self.audio_player.setAudioOutput(self.audio_output)
                 self.audio_output.setVolume(0.7)  # Volumen por defecto al 70%
-                self.audio_player.setLoops(QMediaPlayer.Infinite)  # Bucle por defecto
-                
+                # El bucle NUNCA se controla con setLoops() más allá de este valor fijo:
+                # cambiarlo en caliente con un medio ya cargado es poco fiable en algunos
+                # backends. El bucle real lo maneja _on_audio_media_status_changed_loop.
+                self.audio_player.setLoops(1)
+
                 # Conectar señales del reproductor
                 self.audio_player.positionChanged.connect(self._on_audio_position_changed)
                 self.audio_player.durationChanged.connect(self._on_audio_duration_changed)
+                self.audio_player.playbackStateChanged.connect(self._update_background_throttle)
+                self.audio_player.mediaStatusChanged.connect(self._on_audio_media_status_changed_loop)
             except Exception as e:
                 logger.error(f"EditingMediaTab: Error inicializando reproductor de audio: {e}")
 
@@ -219,6 +224,7 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         # Conectar señales del reproductor de video de la vista previa al waveform central
         if MULTIMEDIA_AVAILABLE and hasattr(self, "preview_box") and self.preview_box.media_player:
             self.preview_box.media_player.positionChanged.connect(self._on_video_position_changed)
+            self.preview_box.media_player.playbackStateChanged.connect(self._update_background_throttle)
         
         # Conectar señales del controlador
         self.controller.disk_changed.connect(self._on_disk_changed)
@@ -778,7 +784,7 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         self.btn_edit_subclip.clicked.connect(self._on_open_subclip_dialog)
         controls_layout.addWidget(self.btn_edit_subclip)
 
-        self.lbl_time = QLabel("00:00:00.000 / 00:00:00.000")
+        self.lbl_time = QLabel("00:00 / 00:00")
         self.lbl_time.setStyleSheet("font-size: 11px; color: #a6adc8;")
         controls_layout.addWidget(self.lbl_time)
 
@@ -790,6 +796,7 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         controls_layout.addWidget(self.volume_control)
 
         audio_layout.addWidget(self.audio_controls_widget)
+        self.audio_controls_widget.installEventFilter(self)
 
         return col
 
@@ -1310,7 +1317,20 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
             if event.type() == QEvent.Resize:
                 if getattr(self, "view_mode", "grid") == "grid":
                     self._recalculate_grid_spacing()
+        elif hasattr(self, "audio_controls_widget") and obj == self.audio_controls_widget:
+            if event.type() == QEvent.Resize:
+                self._recalculate_audio_controls_layout()
         return super().eventFilter(obj, event)
+
+    def _recalculate_audio_controls_layout(self):
+        """Oculta el slider de volumen y/o la etiqueta de tiempo cuando la fila de controles
+        de audio ('Detalles') se queda sin espacio, para que nada quede cortado — el mismo
+        criterio que ya usa PreviewContainerWidget.resizeEvent() para el preview de video."""
+        w = self.audio_controls_widget.width()
+        if hasattr(self, "volume_control") and self.volume_control:
+            self.volume_control.set_slider_visible(w >= 260)
+        if hasattr(self, "lbl_time") and self.lbl_time:
+            self.lbl_time.setVisible(w >= 190)
 
     def _recalculate_grid_spacing(self):
         """Calcula el ancho fluido adaptable de las tarjetas para rellenar el 100% del contenedor sin espacio muerto a la derecha."""
@@ -1413,9 +1433,9 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         self._recalculate_grid_spacing()
 
     def _on_thumbnail_loaded(self, file_path: str, thumb_path: str):
-        pass # La actualización de miniaturas ahora se maneja directamente en MediaTableModel
-
-        # Actualizar carátula en el panel de audio si el archivo coincide
+        # La actualización de la miniatura en la lista se maneja directamente en
+        # MediaTableModel; aquí solo se refresca la carátula del panel de audio si el
+        # archivo que terminó de procesarse es el que está sonando ahora mismo.
         if hasattr(self, "current_playing_path") and self.current_playing_path == file_path:
             if hasattr(self, "lbl_cover_art") and hasattr(self, "current_playing_type") and self.current_playing_type == "audio":
                 pix = QPixmap(thumb_path).scaled(64, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation)

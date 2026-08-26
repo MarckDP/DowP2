@@ -6,12 +6,18 @@ import subprocess
 import struct
 import array
 import math
-from PySide6.QtCore import QObject, Signal, QRunnable, QThreadPool, Qt, QSize
+from PySide6.QtCore import QObject, Signal, QRunnable, Qt, QSize
 from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor
 
 from core.logger.logger_manager import logger
 from core.setup.ffmpeg_setup import get_ffmpeg_dir, get_platform_info, check_ffmpeg
 from core.utils.paths import get_waveform_cache_dir
+from core.utils.media_task_pools import (
+    get_background_pool,
+    get_interactive_pool,
+    PRIORITY_BACKGROUND,
+    PRIORITY_INTERACTIVE,
+)
 from gui.styles import get_theme_token
 
 CACHE_DIR = get_waveform_cache_dir()
@@ -87,7 +93,7 @@ class WaveformRunnable(QRunnable):
             logger.error(f"WaveformRunnable: Error {self.file_path}: {e}")
             self.signals.failed.emit(self.file_path)
         finally:
-            self.manager._task_finished(self.file_path)
+            self.manager._task_finished(self.file_path, self)
 
     def _extract_peaks(self) -> list:
         if not check_ffmpeg():
@@ -274,11 +280,19 @@ class WaveformCacheManager(QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
         os.makedirs(CACHE_DIR, exist_ok=True)
-        self.thread_pool = QThreadPool.globalInstance()
         self._qicon_cache: dict[str, QIcon] = {}
         self._peaks_cache: dict[str, list] = {}
         self._hash_cache: dict[str, str] = {}
-        self._pending_files = set()
+        # Separados a propósito (no un solo set compartido): si una waveform ya está
+        # pendiente en el pool de fondo y luego el usuario selecciona ese mismo archivo,
+        # la solicitud interactiva NO debe descartarse solo porque "ya hay algo pendiente"
+        # — si lo hiciera, quedaría atada a la cola de fondo, que además puede estar
+        # pausada por completo mientras hay reproducción activa (ver set_background_throttled).
+        # Las claves de request_hires_waveform (siempre interactivo) viven en el mismo
+        # _pending_interactive que las de request_waveform interactivo: no chocan porque
+        # usan un formato de clave distinto (ver _hires_cache_key).
+        self._pending_background = set()
+        self._pending_interactive = set()
         self._failed_files = set()
         # Referencias fuertes a los workers en curso: sin esto, nada en el lado Python los
         # mantiene vivos una vez que request_waveform()/request_hires_waveform() retorna (el
@@ -333,7 +347,11 @@ class WaveformCacheManager(QObject):
             return icon
         return None
 
-    def request_waveform(self, file_path: str, num_peaks: int = 120, size: QSize = QSize(80, 80)):
+    def request_waveform(self, file_path: str, num_peaks: int = 120, size: QSize = QSize(80, 80), interactive: bool = False):
+        """`interactive=True` indica que el usuario está esperando este resultado ahora
+        mismo (waveform del ítem recién seleccionado/reproducido): se ejecuta en un pool
+        dedicado, separado del de generación masiva por scroll, para que nunca quede
+        esperando detrás de una cola de tareas de fondo."""
         cache_key = (file_path, size.width(), size.height())
         if cache_key in self._qicon_cache:
             return
@@ -345,15 +363,29 @@ class WaveformCacheManager(QObject):
             self.waveform_loaded.emit(file_path, cached_peaks)
             return
 
-        if file_path in self._pending_files or file_path in self._failed_files:
+        if file_path in self._failed_files:
             return
 
-        self._pending_files.add(file_path)
+        # Deduplicar dentro del MISMO carril: una solicitud interactiva repetida no debe
+        # lanzar un segundo worker interactivo, pero SÍ debe proceder aunque ya haya una
+        # tarea de fondo pendiente para ese archivo (ver comentario en __init__).
+        pending_set = self._pending_interactive if interactive else self._pending_background
+        if file_path in pending_set:
+            return
+
+        pending_set.add(file_path)
         worker = WaveformRunnable(file_path, self, num_peaks)
-        self._active_workers[file_path] = worker
+        # Set en vez de asignación directa: con los carriles separados, un mismo file_path
+        # puede tener a la vez un worker de fondo y uno interactivo corriendo en paralelo
+        # (duplicado inofensivo, ver comentario en __init__); una asignación simple perdería
+        # la referencia del primero en cuanto arrancara el segundo.
+        self._active_workers.setdefault(file_path, set()).add(worker)
         worker.signals.finished.connect(self._on_worker_finished, Qt.ConnectionType.QueuedConnection)
         worker.signals.failed.connect(self._on_worker_failed, Qt.ConnectionType.QueuedConnection)
-        self.thread_pool.start(worker)
+        if interactive:
+            get_interactive_pool().start(worker, PRIORITY_INTERACTIVE)
+        else:
+            get_background_pool().start(worker, PRIORITY_BACKGROUND)
 
     def _save_peaks_to_cache(self, file_path: str, peaks: list):
         hash_key = self._get_hash_key(file_path)
@@ -405,9 +437,12 @@ class WaveformCacheManager(QObject):
         if cached is not None:
             self.hires_waveform_loaded.emit(file_path, cached, audio_track)
             return
-        if cache_key in self._pending_files:
+        # Siempre interactivo (ver comentario más abajo): comparte el mismo set
+        # _pending_interactive que request_waveform, sin colisión posible porque
+        # cache_key siempre lleva el sufijo "_hires" (ver _hires_cache_key).
+        if cache_key in self._pending_interactive:
             return
-        self._pending_files.add(cache_key)
+        self._pending_interactive.add(cache_key)
         worker = HiResWaveformRunnable(file_path, self, num_peaks, audio_track)
         self._active_workers[cache_key] = worker
         # Conexión directa a métodos vinculados (en vez de lambdas) con QueuedConnection
@@ -418,7 +453,9 @@ class WaveformCacheManager(QObject):
         # Qt6Core.dll) que se veía al cargar un archivo sin cachear.
         worker.signals.finished.connect(self._on_hires_worker_finished, Qt.ConnectionType.QueuedConnection)
         worker.signals.failed.connect(self._on_hires_worker_failed, Qt.ConnectionType.QueuedConnection)
-        self.thread_pool.start(worker)
+        # Siempre interactivo: solo se pide para el archivo abierto ahora en el
+        # reproductor/editor de subclips, nunca en generación masiva de fondo.
+        get_interactive_pool().start(worker, PRIORITY_INTERACTIVE)
 
     def _on_hires_worker_finished(self, file_path: str, peaks: list, audio_track: int = 0):
         cache_key = self._hires_cache_key(file_path, audio_track)
@@ -431,7 +468,7 @@ class WaveformCacheManager(QObject):
 
     def _hires_task_finished(self, file_path: str, audio_track: int = 0):
         cache_key = self._hires_cache_key(file_path, audio_track)
-        self._pending_files.discard(cache_key)
+        self._pending_interactive.discard(cache_key)
         self._active_workers.pop(cache_key, None)
 
     def _on_worker_finished(self, file_path: str, peaks: list):
@@ -441,10 +478,47 @@ class WaveformCacheManager(QObject):
     def _on_worker_failed(self, file_path: str):
         self._failed_files.add(file_path)
 
-    def _task_finished(self, file_path: str):
-        self._pending_files.discard(file_path)
-        self._active_workers.pop(file_path, None)
-        
+    def _task_finished(self, file_path: str, worker=None):
+        # Se limpia de ambos carriles sin condicional: discard() no falla si no está
+        # presente, y como mucho un archivo pudo quedar pendiente en los dos a la vez
+        # (una tarea de fondo y otra interactiva corriendo en paralelo para el mismo
+        # archivo — duplicado inofensivo, ver comentario en __init__).
+        self._pending_background.discard(file_path)
+        self._pending_interactive.discard(file_path)
+        workers = self._active_workers.get(file_path)
+        if workers is not None:
+            workers.discard(worker)
+            if not workers:
+                self._active_workers.pop(file_path, None)
+
+    def purge_stale_background(self):
+        """Cancela las tareas de fondo aún NO iniciadas para archivos que ya no son
+        relevantes tras un cambio real de carpeta/colección/filtro/búsqueda (no una carga
+        incremental de más del mismo listado).
+
+        Usa QThreadPool.tryTake() en vez de QThreadPool.clear(): el pool de fondo lo
+        comparten ThumbnailCacheManager y WaveformCacheManager (ver media_task_pools.py),
+        así que un .clear() a secas también borraría de golpe las tareas del otro gestor
+        sin que este se entere, dejando sus propios diccionarios de seguimiento (y sus
+        referencias fuertes a workers) apuntando a runnables ya destruidos por Qt.
+        tryTake() en cambio cancela un worker puntual (y devuelve False sin tocar nada si
+        ya arrancó a correr o si pertenece a otro pool/gestor), así que es seguro llamarlo
+        aquí sin coordinarse con ThumbnailCacheManager. Las tareas que ya estaban corriendo
+        (como mucho las que ocupan los hilos del pool ahora mismo) se dejan terminar solas
+        — nada se pierde en disco, y si el archivo vuelve a ser visible más adelante
+        simplemente se vuelve a pedir. Las waveforms de alta resolución (siempre
+        interactivas, en su propio pool) nunca se tocan aquí."""
+        pool = get_background_pool()
+        for file_path in list(self._pending_background):
+            workers = self._active_workers.get(file_path)
+            if workers:
+                for w in list(workers):
+                    if pool.tryTake(w):
+                        workers.discard(w)
+                if not workers:
+                    self._active_workers.pop(file_path, None)
+            self._pending_background.discard(file_path)
+
     def clear_cache(self) -> int:
         count = 0
         try:

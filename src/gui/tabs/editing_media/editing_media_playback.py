@@ -13,7 +13,25 @@ from core.tabs.editing_media.editing_media_logic import WaveformExtractorThread
 
 class PlaybackMixin:
     """Mixin que maneja la reproducción de audio, extracción de metadata y waveform."""
-    
+
+    def _update_background_throttle(self, *_args):
+        """Pausa la generación masiva de miniaturas/waveforms de fondo mientras haya un
+        video o audio reproduciéndose activamente, para no competir por CPU/disco con
+        la reproducción en vivo. Se reanuda sola en cuanto se detiene/pausa.
+        Conectado a playbackStateChanged de ambos reproductores (audio central y
+        preview de video); se ignoran los argumentos que envíe la señal."""
+        from core.utils.media_task_pools import set_background_throttled
+
+        playing = False
+        if getattr(self, "audio_player", None):
+            if self.audio_player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
+                playing = True
+        if not playing and hasattr(self, "preview_box") and self.preview_box and getattr(self.preview_box, "media_player", None):
+            if self.preview_box.media_player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
+                playing = True
+
+        set_background_throttled(playing)
+
     def _parse_duration_to_seconds(self, dur_str: str) -> float:
         if not dur_str or dur_str == "-":
             return 0.0
@@ -685,7 +703,7 @@ class PlaybackMixin:
                     else:
                         self.lbl_cover_art.setPixmap(fallback_icon.pixmap(32, 32))
                         if not is_remote:
-                            ThumbnailCacheManager.get_instance().request_thumbnail(path, "audio")
+                            ThumbnailCacheManager.get_instance().request_thumbnail(path, "audio", interactive=True)
 
             self.waveform_widget.set_video_only(False)
             self.waveform_widget.set_audio_path(path)
@@ -756,8 +774,10 @@ class PlaybackMixin:
                     if tipo == "video":
                         self._on_video_waveform_ready(cached_peaks)
                 else:
-                    # MISS: Extracción asíncrona optimizada
-                    wf_mgr.request_waveform(path, num_peaks)
+                    # MISS: Extracción asíncrona optimizada, con prioridad interactiva:
+                    # es el ítem que el usuario acaba de seleccionar/reproducir, no debe
+                    # esperar detrás de la generación de fondo de la lista.
+                    wf_mgr.request_waveform(path, num_peaks, interactive=True)
 
             # Controles de reproducción de audio solo para archivos de audio puros
             if tipo == "audio" and self.audio_player:
@@ -776,8 +796,6 @@ class PlaybackMixin:
                         if cached_local_path and os.path.exists(cached_local_path):
                             # HIT: Reproducción instantánea directa desde disco local
                             self.audio_player.setSource(QUrl.fromLocalFile(cached_local_path))
-                            loops = QMediaPlayer.Infinite if getattr(self, "_audio_loop_active", False) else 1
-                            self.audio_player.setLoops(loops)
                             self.audio_player.play()
                             from gui.styles import apply_player_play_button_style
                             apply_player_play_button_style(self.btn_play, is_playing=True, icon_size=14)
@@ -789,12 +807,10 @@ class PlaybackMixin:
                             from gui.styles import apply_player_play_button_style
                             apply_player_play_button_style(self.btn_play, is_playing=True, icon_size=14)
 
-                        self.lbl_time.setText("00:00:00.000 / 00:00:00.000")
+                        self.lbl_time.setText("00:00 / 00:00")
                     else:
                         self.audio_player.setSource(QUrl.fromLocalFile(path))
-                        self.lbl_time.setText("00:00:00.000 / 00:00:00.000")
-                        loops = QMediaPlayer.Infinite if getattr(self, "_audio_loop_active", False) else 1
-                        self.audio_player.setLoops(loops)
+                        self.lbl_time.setText("00:00 / 00:00")
 
                         self.audio_player.play()
                         from gui.styles import apply_player_play_button_style
@@ -1128,15 +1144,18 @@ class PlaybackMixin:
                 ratio = position / duration
                 self.waveform_widget.set_playback_ratio(ratio)
 
-    def _format_time_ms(self, ms: int) -> str:
-        """Formatea milisegundos a HH:MM:SS.mmm (estándar de edición de video)."""
+    def _format_time_ms(self, ms: int, show_hours: bool = False) -> str:
+        """Formatea milisegundos a MM:SS, o HH:MM:SS si `show_hours` (duración >= 1 hora).
+        Para precisión al milisegundo está el editor de subclips, que ya cubre ese caso."""
         if not ms or ms < 0:
             ms = 0
         ms = int(ms)
-        s, ms_r = divmod(ms, 1000)
+        s = ms // 1000
         m, s = divmod(s, 60)
         h, m = divmod(m, 60)
-        return f"{h:02d}:{m:02d}:{s:02d}.{ms_r:03d}"
+        if show_hours or h > 0:
+            return f"{h:02d}:{m:02d}:{s:02d}"
+        return f"{m:02d}:{s:02d}"
 
     def _on_audio_position_changed(self, position):
         if not self.audio_player:
@@ -1145,20 +1164,30 @@ class PlaybackMixin:
         if duration > 0:
             ratio = position / duration
             self.waveform_widget.set_playback_ratio(ratio)
-            self.lbl_time.setText(f"{self._format_time_ms(position)} / {self._format_time_ms(duration)}")
+            show_hours = duration >= 3600000
+            self.lbl_time.setText(f"{self._format_time_ms(position, show_hours)} / {self._format_time_ms(duration, show_hours)}")
 
     def _on_audio_duration_changed(self, duration):
         if self.audio_player:
             pos = self.audio_player.position()
-            self.lbl_time.setText(f"{self._format_time_ms(pos)} / {self._format_time_ms(duration)}")
+            show_hours = duration >= 3600000
+            self.lbl_time.setText(f"{self._format_time_ms(pos, show_hours)} / {self._format_time_ms(duration, show_hours)}")
+
+    def _on_audio_media_status_changed_loop(self, status):
+        """Reinicia manualmente la reproducción de audio al llegar al final si el bucle está
+        activo, en vez de depender de QMediaPlayer.setLoops(): cambiarlo en caliente (mientras
+        ya hay un medio cargado) resulta poco fiable con algunos backends — el mismo motivo por
+        el que el preview de video (ver _on_media_status_changed_loop en preview_panel.py) ya
+        maneja su bucle así en vez de con setLoops()."""
+        if status == QMediaPlayer.MediaStatus.EndOfMedia and getattr(self, "_audio_loop_active", False):
+            self.audio_player.setPosition(0)
+            self.audio_player.play()
 
     def _on_freesound_preview_ready(self, url: str, local_path: str):
         """Maneja la finalización de la descarga rápida en caché LRU."""
         if getattr(self, "active_remote_audio_url", None) == url:
             if local_path and os.path.exists(local_path):
                 self.audio_player.setSource(QUrl.fromLocalFile(local_path))
-                loops = QMediaPlayer.Infinite if getattr(self, "_audio_loop_active", False) else 1
-                self.audio_player.setLoops(loops)
                 from gui.styles import apply_player_play_button_style
                 # Si el usuario pausó explícitamente mientras esta previa terminaba de
                 # descargarse en segundo plano, respetar esa pausa en vez de arrancar solo.
@@ -1254,13 +1283,10 @@ class PlaybackMixin:
                     logger.error(f"Error al revelar archivo en explorador: {e}")
 
     def _on_toggle_audio_loop(self):
-        """Alterna el modo de repetición del reproductor de audio."""
+        """Alterna el modo de repetición del reproductor de audio. `audio_player.setLoops()`
+        se mantiene siempre en 1 (ver constructor): el bucle en sí lo maneja
+        _on_audio_media_status_changed_loop al llegar al final del medio."""
         from gui.styles import apply_player_loop_button_style
 
         self._audio_loop_active = not self._audio_loop_active
-        if self.audio_player:
-            if self._audio_loop_active:
-                self.audio_player.setLoops(QMediaPlayer.Infinite)
-            else:
-                self.audio_player.setLoops(1)
         apply_player_loop_button_style(self.btn_loop_audio, is_active=self._audio_loop_active, icon_size=14)

@@ -308,8 +308,10 @@ class RichComboBox(AutoPopupComboBox):
         opt.currentText = ""
         
         self.style().drawComplexControl(QStyle.ComplexControl.CC_ComboBox, opt, painter, self)
+        if not self.isEnabled():
+            self._paint_disabled_arrow_overlay(painter, opt)
         self.style().drawControl(QStyle.ControlElement.CE_ComboBoxLabel, opt, painter, self)
-        
+
         rect = self.style().subControlRect(QStyle.ComplexControl.CC_ComboBox, opt, QStyle.SubControl.SC_ComboBoxEditField, self)
         rect.setLeft(rect.left() + 5)
         rect.setRight(rect.right() - 5)

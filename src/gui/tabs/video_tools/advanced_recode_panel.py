@@ -11,11 +11,13 @@ from PySide6.QtWidgets import (
     QButtonGroup,
     QScrollArea,
     QSpinBox,
+    QCheckBox,
     QSizePolicy,
     QPushButton,
     QStyledItemDelegate,
 )
 from PySide6.QtCore import Signal, Qt
+import math
 
 from gui.styles import get_theme_token
 from gui.widgets.mode_selector import ModeSelector
@@ -88,6 +90,35 @@ _CONTAINER_LABELS = {
     "webp": "WEBP",
     "gif": "GIF",
     "opus": "OPUS",
+}
+
+# Presets de resolución: escalan el LADO LARGO del video preservando el aspecto real del fuente
+# (modelo "conservar aspecto" — nunca recortan ni deforman por sí solos). El valor es el tamaño
+# objetivo en píxeles del lado más largo; la expresión ffmpeg que lo usa decide en tiempo de
+# ejecución (con iw/ih) si ese lado es el ancho o el alto, sin que DowP necesite saber la
+# orientación del fuente de antemano.
+_RESOLUTION_PRESETS = [
+    ("original", "Original", None),
+    ("4k", "4K (2160p)", 3840),
+    ("2k", "2K (1440p)", 2560),
+    ("1080p", "1080p (Full HD)", 1920),
+    ("720p", "720p (HD)", 1280),
+    ("480p", "480p (SD)", 854),
+    ("custom", "Personalizado", None),
+]
+
+# Framerates estándar de broadcast/cine para forzar CFR.
+_CFR_FPS_OPTIONS = [23.976, 24, 25, 29.97, 30, 50, 59.94, 60]
+
+_FIT_MODE_LABELS = {
+    "deformar": "Deformar",
+    "ajustar": "Ajustar",
+    "crop": "Recortar",
+}
+_FIT_MODE_TOOLTIPS = {
+    "deformar": "Estira la imagen al tamaño exacto elegido, sin respetar su relación de aspecto original.",
+    "ajustar": "Encoge la imagen para que quepa entera en el tamaño elegido y rellena el sobrante con barras negras.",
+    "crop": "Agranda la imagen para cubrir todo el tamaño elegido y recorta lo que sobre por los bordes.",
 }
 
 _PREFERRED_CONTAINER_BY_CODEC = {
@@ -187,6 +218,7 @@ class AdvancedRecodePanel(QWidget):
 
         self._build_stream_section(self.tr("Video"), "video", is_video=True, parent=content)
         self._build_stream_section(self.tr("Audio"), "audio", is_video=False, parent=content)
+        self._build_transform_section(content)
         self._build_container_section(content)
         self._build_size_estimate_section(content)
 
@@ -236,6 +268,13 @@ class AdvancedRecodePanel(QWidget):
         combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
         combo.setMinimumContentsLength(1)
         combo.setItemDelegate(CheckmarkComboDelegate(combo))
+        # El filtro global de cursor (HandCursorInstaller, main.py) escucha ChildAdded, pero acá
+        # todos los combos se construyen pasando el parent directo al constructor
+        # (AutoPopupComboBox(frame)) en vez de agregarlos después vía layout.addWidget() — con eso
+        # el evento ChildAdded nunca llega a dispararse (verificado), así que el filtro global no
+        # los alcanza nunca. Se fija a mano acá, mismo patrón que ya usan los QRadioButton/
+        # QCheckBox de este archivo.
+        combo.setCursor(Qt.PointingHandCursor)
 
     def _build_stream_section(self, title: str, prefix: str, is_video: bool, parent=None) -> QFrame:
         frame, v = self._card_frame(parent=parent)
@@ -528,6 +567,135 @@ class AdvancedRecodePanel(QWidget):
         v.addStretch(1)
         return frame
 
+    def _build_transform_section(self, parent=None) -> QFrame:
+        frame, v = self._card_frame(self.tr("Transformación de video"), parent=parent)
+
+        # ── CFR ──────────────────────────────────────────────
+        cfr_row = QHBoxLayout()
+        cfr_row.setSpacing(8)
+        self.chk_cfr = QCheckBox(self.tr("CFR"), frame)
+        self.chk_cfr.setCursor(Qt.PointingHandCursor)
+        self.chk_cfr.setToolTip(self.tr(
+            "Forzar FPS constante (Constant Frame Rate): reescribe el video a una tasa de "
+            "fotogramas fija, en vez de conservar la original."
+        ))
+        cfr_row.addWidget(self.chk_cfr)
+
+        self.combo_cfr_fps = AutoPopupComboBox(frame)
+        self._setup_fixed_combo(self.combo_cfr_fps)
+        self.combo_cfr_fps.setEditable(True)
+        # _setup_fixed_combo deja el ancho "Ignored" + mínimo de 1 caracter (pensado para combos
+        # de solo lectura en columnas angostas) — acá hace falta lugar real para escribir/leer un
+        # valor como "29.97 fps" sin que la caja quede achicada a una estampilla.
+        self.combo_cfr_fps.setMinimumWidth(100)
+        self.combo_cfr_fps.setToolTip(self.tr("Elegí un valor común o escribí el FPS que quieras."))
+        from PySide6.QtGui import QDoubleValidator
+        fps_validator = QDoubleValidator(1.0, 300.0, 3, self.combo_cfr_fps)
+        fps_validator.setNotation(QDoubleValidator.StandardNotation)
+        self.combo_cfr_fps.lineEdit().setValidator(fps_validator)
+        for fps in _CFR_FPS_OPTIONS:
+            label = f"{fps:g} fps"
+            self.combo_cfr_fps.addItem(label, fps)
+        self.combo_cfr_fps.setCurrentIndex(_CFR_FPS_OPTIONS.index(30))
+        self.combo_cfr_fps.setEnabled(False)
+        cfr_row.addWidget(self.combo_cfr_fps, 1)
+        v.addLayout(cfr_row)
+
+        self.chk_cfr.toggled.connect(self._on_cfr_toggled)
+        self.combo_cfr_fps.currentIndexChanged.connect(self._update_size_estimate)
+
+        # ── Resolución ───────────────────────────────────────
+        lbl_res = QLabel(self.tr("Resolución:"), frame)
+        lbl_res.setObjectName("menuLabel")
+        v.addWidget(lbl_res)
+
+        self.combo_resolution = AutoPopupComboBox(frame)
+        self._setup_fixed_combo(self.combo_resolution)
+        for key, label, _target in _RESOLUTION_PRESETS:
+            self.combo_resolution.addItem(self.tr(label), key)
+        v.addWidget(self.combo_resolution)
+        self.combo_resolution.currentIndexChanged.connect(self._on_resolution_changed)
+
+        # ── Sub-panel Personalizado ───────────────────────────
+        custom_container = QWidget(frame)
+        custom_layout = QVBoxLayout(custom_container)
+        custom_layout.setContentsMargins(0, 4, 0, 0)
+        custom_layout.setSpacing(6)
+
+        dims_row = QHBoxLayout()
+        dims_row.setSpacing(8)
+
+        w_col = QVBoxLayout()
+        lbl_w = QLabel(self.tr("Ancho:"), custom_container)
+        lbl_w.setObjectName("menuLabel")
+        w_col.addWidget(lbl_w)
+        self.spin_custom_width = QSpinBox(custom_container)
+        self.spin_custom_width.setRange(2, 7680)
+        self.spin_custom_width.setSingleStep(2)
+        self.spin_custom_width.setValue(1920)
+        # Sin esto, valueChanged (y con él el redondeo a par + recálculo del alto vinculado)
+        # dispara en cada tecla que escribís, no solo al terminar — por eso "19" saltaba a "20"
+        # a mitad de escritura en vez de esperar a que sueltes el campo.
+        self.spin_custom_width.setKeyboardTracking(False)
+        w_col.addWidget(self.spin_custom_width)
+        dims_row.addLayout(w_col)
+
+        h_col = QVBoxLayout()
+        lbl_h = QLabel(self.tr("Alto:"), custom_container)
+        lbl_h.setObjectName("menuLabel")
+        h_col.addWidget(lbl_h)
+        self.spin_custom_height = QSpinBox(custom_container)
+        self.spin_custom_height.setRange(2, 7680)
+        self.spin_custom_height.setSingleStep(2)
+        self.spin_custom_height.setValue(1080)
+        self.spin_custom_height.setKeyboardTracking(False)
+        h_col.addWidget(self.spin_custom_height)
+        dims_row.addLayout(h_col)
+
+        custom_layout.addLayout(dims_row)
+
+        self.chk_keep_aspect = QCheckBox(self.tr("Conservar relación de aspecto"), custom_container)
+        self.chk_keep_aspect.setCursor(Qt.PointingHandCursor)
+        self.chk_keep_aspect.setChecked(True)
+        self.chk_keep_aspect.setToolTip(self.tr(
+            "Al escribir un valor, el otro se recalcula solo para mantener la proporción real del "
+            "archivo de origen."
+        ))
+        custom_layout.addWidget(self.chk_keep_aspect)
+
+        self.lbl_source_aspect = QLabel(self.tr("Fuente: -"), custom_container)
+        self.lbl_source_aspect.setObjectName("mutedLabel")
+        custom_layout.addWidget(self.lbl_source_aspect)
+
+        fit_row = QHBoxLayout()
+        fit_row.setSpacing(14)
+        self.fit_mode_group = QButtonGroup(custom_container)
+        self.rb_fit_deformar = QRadioButton(self.tr(_FIT_MODE_LABELS["deformar"]), custom_container)
+        self.rb_fit_ajustar = QRadioButton(self.tr(_FIT_MODE_LABELS["ajustar"]), custom_container)
+        self.rb_fit_crop = QRadioButton(self.tr(_FIT_MODE_LABELS["crop"]), custom_container)
+        self.rb_fit_deformar.setToolTip(self.tr(_FIT_MODE_TOOLTIPS["deformar"]))
+        self.rb_fit_ajustar.setToolTip(self.tr(_FIT_MODE_TOOLTIPS["ajustar"]))
+        self.rb_fit_crop.setToolTip(self.tr(_FIT_MODE_TOOLTIPS["crop"]))
+        self.rb_fit_ajustar.setChecked(True)
+        for rb in (self.rb_fit_deformar, self.rb_fit_ajustar, self.rb_fit_crop):
+            rb.setCursor(Qt.PointingHandCursor)
+            self.fit_mode_group.addButton(rb)
+            fit_row.addWidget(rb)
+        custom_layout.addLayout(fit_row)
+
+        v.addWidget(custom_container)
+        self.widget_custom_resolution = custom_container
+        custom_container.setVisible(False)
+
+        self.spin_custom_width.valueChanged.connect(lambda _v: self._on_custom_dim_changed("width"))
+        self.spin_custom_height.valueChanged.connect(lambda _v: self._on_custom_dim_changed("height"))
+        self.chk_keep_aspect.toggled.connect(self._on_keep_aspect_toggled)
+        for rb in (self.rb_fit_deformar, self.rb_fit_ajustar, self.rb_fit_crop):
+            rb.toggled.connect(self._update_size_estimate)
+
+        self.frame_transform = frame
+        return frame
+
     def _build_container_section(self, parent=None) -> QFrame:
         frame, v = self._card_frame(self.tr("Contenedor de salida"), parent=parent)
 
@@ -692,6 +860,12 @@ class AdvancedRecodePanel(QWidget):
             self.combo_audio_channels.setEnabled(audio_recode)
         if hasattr(self, "combo_audio_samplerate"):
             self.combo_audio_samplerate.setEnabled(audio_recode)
+        if getattr(self, "frame_transform", None):
+            # Un filtro de video (-vf) o -r no puede aplicarse con -c:v copy.
+            self.frame_transform.setEnabled(video_recode)
+            self.frame_transform.setToolTip(
+                "" if video_recode else self.tr("No disponible con Video en modo 'Copiar original'.")
+            )
 
         self._relayout_cards()
         self._update_engine_label()
@@ -710,19 +884,30 @@ class AdvancedRecodePanel(QWidget):
             return
 
         stream_mode = self._current_stream_mode()
+        has_transform = getattr(self, "frame_transform", None) is not None
 
         if stream_mode == "audio_only":
             self.frame_video.hide()
             self.frame_audio.show()
+            if has_transform:
+                self.frame_transform.hide()
             visible_cards = [self.frame_audio, self.frame_container, self.frame_size]
         elif stream_mode == "video_only":
             self.frame_audio.hide()
             self.frame_video.show()
-            visible_cards = [self.frame_video, self.frame_container, self.frame_size]
+            visible_cards = [self.frame_video]
+            if has_transform:
+                self.frame_transform.show()
+                visible_cards.append(self.frame_transform)
+            visible_cards += [self.frame_container, self.frame_size]
         else: # video+audio
             self.frame_video.show()
             self.frame_audio.show()
-            visible_cards = [self.frame_video, self.frame_audio, self.frame_container, self.frame_size]
+            visible_cards = [self.frame_video, self.frame_audio]
+            if has_transform:
+                self.frame_transform.show()
+                visible_cards.append(self.frame_transform)
+            visible_cards += [self.frame_container, self.frame_size]
 
         while self.cards_grid.count():
             self.cards_grid.takeAt(0)
@@ -890,6 +1075,7 @@ class AdvancedRecodePanel(QWidget):
         self._source_meta = meta or None
         self._source_filepath = filepath
         self._update_source_info_label()
+        self._update_source_aspect_label()
         self._evaluate_and_render()
         self._update_size_estimate()
 
@@ -910,6 +1096,171 @@ class AdvancedRecodePanel(QWidget):
             return None
         key = "video_codec" if prefix == "video" else "audio_codec"
         return source_codec_id(self._source_meta.get(key))
+
+    # ─── Transformación de video (CFR / Resolución / Aspecto) ───
+
+    def _source_wh(self) -> tuple[int, int] | None:
+        """Ancho/alto reales del archivo fuente, parseados de meta['resolución'] ('WxH')."""
+        if not self._source_meta:
+            return None
+        raw = self._source_meta.get("resolución", "-")
+        try:
+            w_str, h_str = raw.lower().split("x")
+            w, h = int(w_str), int(h_str)
+            if w > 0 and h > 0:
+                return w, h
+        except (ValueError, AttributeError):
+            pass
+        return None
+
+    def _update_source_aspect_label(self):
+        if not hasattr(self, "lbl_source_aspect"):
+            return
+        wh = self._source_wh()
+        if not wh:
+            self.lbl_source_aspect.setText(self.tr("Fuente: -"))
+            return
+        w, h = wh
+        divisor = math.gcd(w, h) or 1
+        self.lbl_source_aspect.setText(
+            self.tr("Fuente: {0}×{1} ({2}:{3})").format(w, h, w // divisor, h // divisor)
+        )
+
+    def _on_cfr_toggled(self, checked: bool):
+        self.combo_cfr_fps.setEnabled(checked)
+        self._update_size_estimate()
+
+    def _on_resolution_changed(self, *_args):
+        if self._building:
+            return
+        is_custom = self.combo_resolution.currentData() == "custom"
+        self.widget_custom_resolution.setVisible(is_custom)
+        if is_custom:
+            self._update_source_aspect_label()
+            self._update_fit_mode_enabled()
+        self._update_size_estimate()
+
+    def _round_to_even(self, value: int) -> int:
+        return value if value % 2 == 0 else value + 1
+
+    def _on_custom_dim_changed(self, which: str):
+        if self._building:
+            return
+        spin = self.spin_custom_width if which == "width" else self.spin_custom_height
+        rounded = self._round_to_even(spin.value())
+        if rounded != spin.value():
+            self._building = True
+            try:
+                spin.setValue(rounded)
+            finally:
+                self._building = False
+
+        if self.chk_keep_aspect.isChecked():
+            wh = self._source_wh()
+            if wh:
+                src_w, src_h = wh
+                self._building = True
+                try:
+                    if which == "width":
+                        new_h = self._round_to_even(round(self.spin_custom_width.value() * src_h / src_w))
+                        self.spin_custom_height.setValue(max(2, new_h))
+                    else:
+                        new_w = self._round_to_even(round(self.spin_custom_height.value() * src_w / src_h))
+                        self.spin_custom_width.setValue(max(2, new_w))
+                finally:
+                    self._building = False
+
+        self._update_fit_mode_enabled()
+        self._update_size_estimate()
+
+    def _on_keep_aspect_toggled(self, checked: bool):
+        if checked:
+            # Al reactivar el vínculo, recalcular el alto a partir del ancho actual para que
+            # los dos campos vuelvan a quedar coherentes de inmediato.
+            self._on_custom_dim_changed("width")
+        self._update_fit_mode_enabled()
+
+    def _update_fit_mode_enabled(self):
+        """El selector Crop/Ajustar/Deformar solo importa cuando el aspecto conservado está
+        desactivado y el W×H elegido no coincide con el aspecto real del fuente — en cualquier
+        otro caso no hay nada que resolver."""
+        mismatch = False
+        if not self.chk_keep_aspect.isChecked():
+            wh = self._source_wh()
+            if wh:
+                src_w, src_h = wh
+                target_ratio = self.spin_custom_width.value() / self.spin_custom_height.value()
+                source_ratio = src_w / src_h
+                mismatch = abs(target_ratio - source_ratio) > 0.01
+            else:
+                # Sin metadata del fuente no se puede saber si coincide; se habilita por las dudas.
+                mismatch = True
+        enabled = (not self.chk_keep_aspect.isChecked()) and mismatch
+        for rb in (self.rb_fit_deformar, self.rb_fit_ajustar, self.rb_fit_crop):
+            rb.setEnabled(enabled)
+
+    def _current_cfr_fps(self) -> float | None:
+        """FPS elegido para CFR, parseado directo del texto mostrado en el combo (editable): sirve
+        igual para un valor predefinido ("30 fps") que para uno escrito a mano ("48"), sin
+        depender de si currentIndex/currentData quedaron sincronizados con lo que se ve en pantalla."""
+        if not hasattr(self, "combo_cfr_fps"):
+            return None
+        text = self.combo_cfr_fps.currentText().strip().lower().replace("fps", "").replace(",", ".").strip()
+        try:
+            value = float(text)
+            return value if value > 0 else None
+        except ValueError:
+            return None
+
+    def _current_fit_mode(self) -> str:
+        if self.rb_fit_crop.isChecked():
+            return "crop"
+        if self.rb_fit_deformar.isChecked():
+            return "deformar"
+        return "ajustar"
+
+    def _build_vf_expression(self) -> str | None:
+        preset = self.combo_resolution.currentData() if hasattr(self, "combo_resolution") else "original"
+        if not preset or preset == "original":
+            return None
+
+        if preset == "custom":
+            w = self.spin_custom_width.value()
+            h = self.spin_custom_height.value()
+            if self.chk_keep_aspect.isChecked():
+                return f"scale={w}:{h}"
+            fit_mode = self._current_fit_mode()
+            if fit_mode == "deformar":
+                return f"scale={w}:{h}"
+            if fit_mode == "crop":
+                return f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}"
+            return f"scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2"
+
+        target = next((t for key, _label, t in _RESOLUTION_PRESETS if key == preset), None)
+        if not target:
+            return None
+        return f"scale='if(gt(iw,ih),{target},-2)':'if(gt(iw,ih),-2,{target})'"
+
+    def _transform_args(self, video_args: list[str]) -> list[str]:
+        """Fusiona el filtro de resolución/aspecto (si hay) y el -r de CFR (si está activo) con
+        los args que ya trae el perfil de códec — reusando el -vf existente en vez de agregar uno
+        segundo, para no romper perfiles que ya arman su propio filtro (ej. paleta de GIF)."""
+        args = list(video_args) if video_args else []
+
+        vf_expr = self._build_vf_expression()
+        if vf_expr:
+            if "-vf" in args:
+                idx = args.index("-vf") + 1
+                args[idx] = f"{args[idx]},{vf_expr}"
+            else:
+                args += ["-vf", vf_expr]
+
+        if hasattr(self, "chk_cfr") and self.chk_cfr.isChecked():
+            fps = self._current_cfr_fps()
+            if fps:
+                args += ["-r", f"{fps:g}"]
+
+        return args
 
     def _guard_codec(self, prefix: str):
         stream_mode = self._current_stream_mode()
@@ -1241,9 +1592,15 @@ class AdvancedRecodePanel(QWidget):
         stream_mode = self._current_stream_mode()
         v_codec = self._current_video_codec()
         is_gif = (v_codec == "gif" and self.rb_video_recode.isChecked())
-        video_args = self._effective_args("video") if (stream_mode != "audio_only" and self.rb_video_recode.isChecked()) else None
+        video_recode_active = (stream_mode != "audio_only" and self.rb_video_recode.isChecked())
+        video_args = self._effective_args("video") if video_recode_active else None
+        if video_args is not None and video_recode_active:
+            # Fusiona -vf (resolución/aspecto) y -r (CFR) con los args del perfil de códec ANTES
+            # de dividir en pasadas, para que ambas pasadas de un 2-pass usen el mismo filtro.
+            video_args = self._transform_args(video_args)
         passes = 2 if (video_args and self.rb_video_pass2.isChecked() and self.rb_video_pass2.isEnabled() and stream_mode != "audio_only" and not is_gif) else 1
 
+        resolution_preset = self.combo_resolution.currentData() if hasattr(self, "combo_resolution") else "original"
         settings = {
             "stream_mode": stream_mode,
             "video_mode": "copy" if self.rb_video_copy.isChecked() else "recode",
@@ -1254,6 +1611,13 @@ class AdvancedRecodePanel(QWidget):
             "audio_codec": self._current_audio_codec() if not is_gif else None,
             "audio_args": self._effective_args("audio") if (stream_mode != "video_only" and self.rb_audio_recode.isChecked() and not is_gif) else None,
             "container": self.combo_container.currentData(),
+            "resolution_preset": resolution_preset,
+            "custom_width": self.spin_custom_width.value() if (hasattr(self, "spin_custom_width") and resolution_preset == "custom") else None,
+            "custom_height": self.spin_custom_height.value() if (hasattr(self, "spin_custom_height") and resolution_preset == "custom") else None,
+            "keep_aspect_ratio": self.chk_keep_aspect.isChecked() if hasattr(self, "chk_keep_aspect") else True,
+            "fit_mode": self._current_fit_mode() if hasattr(self, "rb_fit_ajustar") else "ajustar",
+            "force_cfr": self.chk_cfr.isChecked() if hasattr(self, "chk_cfr") else False,
+            "target_fps": self._current_cfr_fps() if (hasattr(self, "chk_cfr") and self.chk_cfr.isChecked()) else None,
         }
         if passes == 2:
             settings["video_args_pass1"] = build_pass_args(video_args, 1)

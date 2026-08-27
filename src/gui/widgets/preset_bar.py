@@ -66,6 +66,10 @@ class PresetBar(QWidget):
         layout.setSpacing(6)
 
         self.combo = AutoPopupComboBox(self)
+        # Construido con el parent directo al constructor: el ChildAdded del filtro global de
+        # cursor (HandCursorInstaller, main.py) nunca se dispara en ese caso (ver
+        # advanced_recode_panel.py::_setup_fixed_combo) — se fija a mano.
+        self.combo.setCursor(Qt.PointingHandCursor)
         self.combo.currentIndexChanged.connect(self._on_combo_changed)
         self.combo.setVisible(show_picker)
         layout.addWidget(self.combo)

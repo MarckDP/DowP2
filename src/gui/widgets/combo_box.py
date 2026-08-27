@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtSvg import QSvgRenderer
 
-from gui.styles import get_theme_token
+from gui.styles import get_theme_token, generate_triangle_svg
 from core.utils.paths import get_src_dir
 
 
@@ -201,7 +201,51 @@ class AutoPopupComboBox(QComboBox):
             rect = container.geometry()
             container.setGeometry(rect.x(), rect.y(), popup_w, rect.height())
 
+    def _paint_disabled_arrow_overlay(self, painter, opt):
+        """Repinta la flechita de apertura con la versión atenuada (texto_deshabilitado) exactamente
+        encima de donde el estilo ya dibujó la de acento, para representar visualmente el estado
+        deshabilitado sin depender de un segundo QComboBox::down-arrow por pseudo-estado."""
+        # No se lee vía get_theme_token(): los íconos dinámicos (triángulo, etc.) que arma
+        # load_stylesheet() nunca quedan persistidos en el caché de tokens que get_theme_token()
+        # consulta (load_stylesheet limpia ese caché al final de cada llamada) — se genera acá
+        # directo con el mismo helper, que ya cachea en disco por color y es barato de llamar
+        # de nuevo en cada repintado.
+        muted_color = get_theme_token("texto_deshabilitado", "#555555")
+        icon_path = generate_triangle_svg(muted_color)
+        if not icon_path or not os.path.exists(icon_path):
+            return
+        arrow_rect = self.style().subControlRect(
+            QStyle.ComplexControl.CC_ComboBox, opt, QStyle.SubControl.SC_ComboBoxArrow, self
+        )
+        if arrow_rect.isEmpty():
+            return
+        target_w, target_h = 10, 6
+        muted_pix = QPixmap(icon_path).scaled(
+            target_w, target_h, Qt.KeepAspectRatio, Qt.SmoothTransformation
+        )
+        px = arrow_rect.x() + (arrow_rect.width() - muted_pix.width()) // 2
+        py = arrow_rect.y() + (arrow_rect.height() - muted_pix.height()) // 2
+        painter.drawPixmap(px, py, muted_pix)
+
     def paintEvent(self, event):
+        if self.isEditable():
+            # El dibujado manual de texto de más abajo asume una caja de solo lectura (sin
+            # QLineEdit interno real) — con setEditable(True) sí existe ese QLineEdit propio de
+            # Qt posicionado sobre SC_ComboBoxEditField, y dibujar texto manual encima produce un
+            # doble renderizado (caja achicada/superpuesta). En modo editable alcanza con el
+            # pintado nativo: el QLineEdit ya se dibuja y elide solo.
+            super().paintEvent(event)
+            if not self.isEnabled():
+                # El pintado nativo de arriba ya terminó y liberó su propio QPainter interno —
+                # se abre uno nuevo acá para superponer la flecha atenuada, mismo mecanismo que
+                # el camino no editable de abajo.
+                painter = QPainter(self)
+                painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+                opt = QStyleOptionComboBox()
+                self.initStyleOption(opt)
+                self._paint_disabled_arrow_overlay(painter, opt)
+            return
+
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
@@ -211,6 +255,16 @@ class AutoPopupComboBox(QComboBox):
         opt.currentText = ""  # el texto se dibuja a mano más abajo, con el rect real
 
         self.style().drawComplexControl(QStyle.ComplexControl.CC_ComboBox, opt, painter, self)
+
+        if not self.isEnabled():
+            # No usamos un QSS "QComboBox:disabled::down-arrow" para esto: agregar una segunda
+            # regla de subcontrol image/tamaño para ::down-arrow (aunque redeclare el mismo
+            # width/height que la regla general) rompe el cálculo de geometría del ícono para
+            # TODOS los combobox, habilitados incluidos (flecha gigante superpuesta al texto —
+            # comprobado). En cambio, se repinta a mano la flecha ya dibujada arriba con la
+            # versión atenuada, en el mismo rect exacto que reporta el estilo.
+            self._paint_disabled_arrow_overlay(painter, opt)
+
         self.style().drawControl(QStyle.ControlElement.CE_ComboBoxLabel, opt, painter, self)
 
         if not text:

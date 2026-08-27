@@ -135,6 +135,10 @@ class VideoToolsTab(QWidget):
         self.combo_tags = AutoPopupComboBox(self.output_card)
         self.combo_tags.setObjectName("tagsComboBox")
         self.combo_tags.setPlaceholderText(self.tr("Etiqueta"))
+        # Se construye con el parent directo al constructor, lo que hace que el ChildAdded del
+        # filtro global de cursor (HandCursorInstaller, main.py) nunca se dispare (ver
+        # advanced_recode_panel.py::_setup_fixed_combo) — se fija a mano acá.
+        self.combo_tags.setCursor(Qt.PointingHandCursor)
         self.combo_tags.currentIndexChanged.connect(self._on_label_changed)
 
         # Botón para examinar carpeta

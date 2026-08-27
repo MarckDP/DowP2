@@ -432,6 +432,12 @@ QComboBox::down-arrow {
     height: 6px;
 }
 
+QComboBox:disabled {
+    background-color: {{fondo_secundario}};
+    color: {{texto_deshabilitado}};
+    border: 1px solid {{borde_normal}};
+}
+
 QComboBoxPrivateContainer {
     background-color: transparent;
     border: none;

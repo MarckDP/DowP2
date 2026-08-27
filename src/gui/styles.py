@@ -30,7 +30,7 @@ os.makedirs(_TEMP_DIR, exist_ok=True)
 _THEME_CACHE = {}
 
 
-def _generate_triangle_svg(color: str) -> str:
+def generate_triangle_svg(color: str) -> str:
     """
     Genera un archivo SVG de triángulo invertido (▼) con el color dado.
     Retorna la ruta al archivo SVG generado.
@@ -221,7 +221,7 @@ def load_stylesheet(theme_name: str = "dark") -> str:
     
     # 3. Generar SVGs dinámicos con el color de acento primario
     triangle_color = tokens.get("acento_primario", "#B9E640")
-    triangle_path = _generate_triangle_svg(triangle_color)
+    triangle_path = generate_triangle_svg(triangle_color)
     tokens["icono_triangulo"] = triangle_path
     tokens["icono_spinbox_plus"] = _generate_spinbox_symbol_svg("plus", triangle_color)
     tokens["icono_spinbox_minus"] = _generate_spinbox_symbol_svg("minus", triangle_color)

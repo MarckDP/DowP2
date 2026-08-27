@@ -182,6 +182,29 @@ def get_compatible_containers(codec_ids: list[str]) -> list[str]:
     return sorted(result)
 
 
+def get_dimension_alignment(codec_id: str | None) -> dict:
+    """
+    Requisito de paridad de ancho/alto para un códec de video, según
+    ffmpeg_codec_matrix.json (ver tools/codec_matrix/run_matrix.py::_probe_dimension_alignment,
+    que prueba directo contra el encoder si acepta ancho/alto impar).
+
+    A diferencia de get_channel_support(), acá el faltante de dato NO es permisivo: si el
+    códec no está verificado o no tiene este campo relevado, se asume que hace falta par en
+    los dos ejes (el caso más común, YUV 4:2:0) — al revés de "permitir todo por defecto"
+    sería dejar pasar una resolución que en la práctica hace fallar el export.
+
+    Returns: {"width_even_required": bool, "height_even_required": bool}
+    """
+    default = {"width_even_required": True, "height_even_required": True}
+    if not codec_id:
+        return default
+    matrix = _load_matrix()
+    entry = matrix.get("codecs", {}).get(codec_id)
+    if not entry or not entry.get("verified"):
+        return default
+    return entry.get("dimension_alignment") or default
+
+
 def get_channel_support(codec_id: str | None, container: str | None) -> dict:
     """
     Soporte de canales (mono/estéreo/5.1) de un codec de audio en un contenedor dado.

@@ -78,6 +78,9 @@ def build(run_path, out_path):
             if entry.get("note"):
                 codecs[codec_id]["note"] = entry["note"]
 
+            if kind_short == "video" and entry.get("dimension_alignment"):
+                codecs[codec_id]["dimension_alignment"] = entry["dimension_alignment"]
+
     output = {
         "schema_version": "1.0",
         "source": "empirico: mux real contra el ffmpeg empaquetado, ver tools/codec_matrix/",

@@ -24,7 +24,7 @@ from gui.widgets.mode_selector import ModeSelector
 from gui.widgets.preset_bar import PresetBar
 from gui.widgets.combo_box import CheckmarkComboDelegate, AutoPopupComboBox
 from core.logger.logger_manager import logger
-from core.utils.recode_guard import evaluate_recode, get_video_codecs, get_audio_codecs, get_compatible_containers, resolve_encoder, get_channel_support
+from core.utils.recode_guard import evaluate_recode, get_video_codecs, get_audio_codecs, get_compatible_containers, resolve_encoder, get_channel_support, get_dimension_alignment
 from core.utils.hardware_detector import detect_hardware
 from core.tabs.video_tools.codec_profiles import (
     get_profiles, build_custom_bitrate_args, extract_bitrate_kbps,
@@ -588,7 +588,7 @@ class AdvancedRecodePanel(QWidget):
         # de solo lectura en columnas angostas) — acá hace falta lugar real para escribir/leer un
         # valor como "29.97 fps" sin que la caja quede achicada a una estampilla.
         self.combo_cfr_fps.setMinimumWidth(100)
-        self.combo_cfr_fps.setToolTip(self.tr("Elegí un valor común o escribí el FPS que quieras."))
+        self.combo_cfr_fps.setToolTip(self.tr("Elige un valor común o escribe el FPS que prefieras."))
         from PySide6.QtGui import QDoubleValidator
         fps_validator = QDoubleValidator(1.0, 300.0, 3, self.combo_cfr_fps)
         fps_validator.setNotation(QDoubleValidator.StandardNotation)
@@ -715,7 +715,7 @@ class AdvancedRecodePanel(QWidget):
     def _build_size_estimate_section(self, parent=None) -> QFrame:
         frame, v = self._card_frame(self.tr("Peso final estimado"), parent=parent)
 
-        self.lbl_source_info = QLabel(self.tr("Seleccioná un archivo en la cola para estimar el peso."), frame)
+        self.lbl_source_info = QLabel(self.tr("Selecciona un archivo en la cola para estimar el peso."), frame)
         self.lbl_source_info.setObjectName("mutedLabel")
         self.lbl_source_info.setWordWrap(True)
         v.addWidget(self.lbl_source_info)
@@ -817,6 +817,7 @@ class AdvancedRecodePanel(QWidget):
         video_codec = self._current_video_codec()
         if video_codec and self.rb_audio_recode.isChecked():
             self._apply_audio_recommendation(video_codec)
+        self._revalidate_custom_dimensions()
         self._on_selection_changed()
 
     def _apply_audio_recommendation(self, video_codec_id: str):
@@ -1082,7 +1083,7 @@ class AdvancedRecodePanel(QWidget):
     def _update_source_info_label(self):
         meta = self._source_meta
         if not meta:
-            self.lbl_source_info.setText(self.tr("Seleccioná un archivo en la cola para estimar el peso."))
+            self.lbl_source_info.setText(self.tr("Selecciona un archivo en la cola para estimar el peso."))
             return
         dur = meta.get("duración", "-")
         vcod = meta.get("video_codec", "-")
@@ -1143,17 +1144,27 @@ class AdvancedRecodePanel(QWidget):
     def _round_to_even(self, value: int) -> int:
         return value if value % 2 == 0 else value + 1
 
+    def _current_dimension_alignment(self) -> dict:
+        """Requisito real de paridad ancho/alto para el códec de video elegido (ver
+        core.utils.recode_guard.get_dimension_alignment, generado empíricamente contra el
+        encoder — no todo códec 4:2:2/4:4:4 se comporta igual, ver notas del matrix)."""
+        return get_dimension_alignment(self._current_video_codec())
+
     def _on_custom_dim_changed(self, which: str):
         if self._building:
             return
+        alignment = self._current_dimension_alignment()
+
         spin = self.spin_custom_width if which == "width" else self.spin_custom_height
-        rounded = self._round_to_even(spin.value())
-        if rounded != spin.value():
-            self._building = True
-            try:
-                spin.setValue(rounded)
-            finally:
-                self._building = False
+        needs_even = alignment["width_even_required" if which == "width" else "height_even_required"]
+        if needs_even:
+            rounded = self._round_to_even(spin.value())
+            if rounded != spin.value():
+                self._building = True
+                try:
+                    spin.setValue(rounded)
+                finally:
+                    self._building = False
 
         if self.chk_keep_aspect.isChecked():
             wh = self._source_wh()
@@ -1162,16 +1173,37 @@ class AdvancedRecodePanel(QWidget):
                 self._building = True
                 try:
                     if which == "width":
-                        new_h = self._round_to_even(round(self.spin_custom_width.value() * src_h / src_w))
+                        new_h = round(self.spin_custom_width.value() * src_h / src_w)
+                        if alignment["height_even_required"]:
+                            new_h = self._round_to_even(new_h)
                         self.spin_custom_height.setValue(max(2, new_h))
                     else:
-                        new_w = self._round_to_even(round(self.spin_custom_height.value() * src_w / src_h))
+                        new_w = round(self.spin_custom_height.value() * src_w / src_h)
+                        if alignment["width_even_required"]:
+                            new_w = self._round_to_even(new_w)
                         self.spin_custom_width.setValue(max(2, new_w))
                 finally:
                     self._building = False
 
         self._update_fit_mode_enabled()
         self._update_size_estimate()
+
+    def _revalidate_custom_dimensions(self):
+        """Vuelve a aplicar el redondeo de paridad a los campos Ancho/Alto ya cargados —
+        se usa cuando cambia el códec de video, porque el requisito de paridad puede cambiar
+        (ej. veniás de ProRes sin restricción y pasaste a H.264, que sí la exige)."""
+        if not hasattr(self, "spin_custom_width"):
+            return
+        alignment = self._current_dimension_alignment()
+        self._building = True
+        try:
+            if alignment["width_even_required"]:
+                self.spin_custom_width.setValue(self._round_to_even(self.spin_custom_width.value()))
+            if alignment["height_even_required"]:
+                self.spin_custom_height.setValue(self._round_to_even(self.spin_custom_height.value()))
+        finally:
+            self._building = False
+        self._update_fit_mode_enabled()
 
     def _on_keep_aspect_toggled(self, checked: bool):
         if checked:

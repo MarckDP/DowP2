@@ -120,6 +120,31 @@ def _channels_probe_cmd(ffmpeg, spec, cont_id, muxer, out_path, ac):
     return base_cmd + ["-f", muxer, out_path]
 
 
+def _probe_dimension_alignment(ffmpeg, spec):
+    """Prueba si el encoder de un codec de VIDEO acepta ancho impar y alto impar por
+    separado (perturbando en -1 el 'size' que ya tiene el spec), directo a '-f null -' sin
+    contenedor de por medio — mismo estilo liviano que las pruebas de canales de audio a
+    nivel de encoder. Para codecs de tamano fijo obligatorio (QCIF, DV PAL, DNxHD 1080p) el
+    encoder va a rechazar el tamano alterado igual (por motivo distinto a paridad), y el
+    resultado por defecto queda 'par requerido' - lado seguro, y no importa en la practica
+    porque esos codecs no se usan con resolucion Personalizada de todos modos."""
+    w, h = (int(x) for x in spec.get("size", "256x256").split("x"))
+    odd_w = w if w % 2 == 1 else w - 1
+    odd_h = h if h % 2 == 1 else h - 1
+
+    def _accepts(size_str):
+        spec_copy = dict(spec)
+        spec_copy["size"] = size_str
+        cmd = _video_source_cmd(ffmpeg, spec_copy) + ["-f", "null", "-"]
+        rc, _ = _run(cmd)
+        return rc == 0
+
+    return {
+        "width_even_required": not _accepts(f"{odd_w}x{h}"),
+        "height_even_required": not _accepts(f"{w}x{odd_h}"),
+    }
+
+
 def probe(ffmpeg, kind, name, spec):
     if not spec.get("encoder"):
         return {"testable": False, "skip_reason": spec.get("skip_reason", "Sin encoder disponible."), "containers": {}}
@@ -195,7 +220,10 @@ def probe(ffmpeg, kind, name, spec):
                         pass
             containers_out[cont_id]["channels"] = per_container_channels
 
-    return {"testable": True, "skip_reason": None, "containers": containers_out, "channels": channels_out}
+    result = {"testable": True, "skip_reason": None, "containers": containers_out, "channels": channels_out}
+    if kind == "video":
+        result["dimension_alignment"] = _probe_dimension_alignment(ffmpeg, spec)
+    return result
 
 
 def main():

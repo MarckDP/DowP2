@@ -12,6 +12,7 @@ from .pages.deps_page import DependenciesPage
 from .pages.labels_page import LabelsPage
 from .pages.integrations_page import IntegrationsPage
 from .pages.system_page import SystemPage
+from .pages.console_page import ConsolePage
 
 class SidebarButton(QPushButton):
     """Custom button for sidebar to handle styling via objectName and QSS"""
@@ -125,7 +126,7 @@ class SettingsTab(QWidget):
         self.page_integrations = IntegrationsPage()
         self.page_system = SystemPage()
         self.page_placeholder_models = QWidget()  # Modelos
-        self.page_placeholder_console = QWidget()  # Consola
+        self.page_console = ConsolePage()
 
         self.stacked_widget.addWidget(self.page_general)            # 0
         self.stacked_widget.addWidget(self.page_memory_cache)       # 1
@@ -137,7 +138,7 @@ class SettingsTab(QWidget):
         self.stacked_widget.addWidget(self.page_integrations)       # 7
         self.stacked_widget.addWidget(self.page_system)             # 8
         self.stacked_widget.addWidget(self.page_placeholder_models)  # 9
-        self.stacked_widget.addWidget(self.page_placeholder_console) # 10
+        self.stacked_widget.addWidget(self.page_console)             # 10
 
         content_layout.addWidget(self.stacked_widget)
         self.main_layout.addWidget(self.content_area, 1)

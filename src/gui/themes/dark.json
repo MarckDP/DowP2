@@ -68,6 +68,12 @@
         "etiqueta_estrella": "#f1c40f",
         "etiqueta_peligro": "#e74c3c",
         "ajedrez_c1": "#2a2a2a",
-        "ajedrez_c2": "#181818"
+        "ajedrez_c2": "#181818",
+        "consola_fondo": "#000000",
+        "consola_texto": "#ffffff",
+        "consola_debug": "#4da6ff",
+        "consola_advertencia": "#ffd60a",
+        "consola_error": "#ff6b5f",
+        "consola_critico": "#ff1744"
     }
 }

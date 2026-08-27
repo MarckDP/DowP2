@@ -77,6 +77,9 @@ class TreeListMixin:
             if col_name == "Descargados":
                 accent_color = get_theme_token("acento_primario", "#B9E640")
                 item.setIcon(0, get_colored_svg_icon("download.svg", color or accent_color))
+            elif col_name == "Subclips":
+                accent_color = get_theme_token("acento_primario", "#B9E640")
+                item.setIcon(0, get_colored_svg_icon("content_cut.svg", color or accent_color))
             elif color:
                 item.setIcon(0, get_colored_svg_icon("star.svg", color))
             else:
@@ -878,7 +881,12 @@ class TreeListMixin:
 
         # 1. Acciones específicas si se hace clic sobre uno o varios archivos
         selected_indexes = getattr(self, "_selected_indexes", [])
-        if index.isValid() and index not in selected_indexes:
+        # _selected_indexes solo guarda índices de columna 0 (ver _on_selection_changed), pero en
+        # vista de lista/tabla el clic derecho puede caer en cualquier columna de la fila. Comparar
+        # por fila (no por índice exacto) evita que el menú colapse a un solo ítem cuando el clic
+        # cae fuera de la columna 0 de una fila que sí está seleccionada.
+        selected_rows = {idx.row() for idx in selected_indexes}
+        if index.isValid() and index.row() not in selected_rows:
             selected_indexes = [index] # Si el click derecho fue fuera de la selección, solo usamos el item clickeado
             
         if selected_indexes:
@@ -908,7 +916,7 @@ class TreeListMixin:
                     act_remove.triggered.connect(lambda: [self._remove_file_from_collection(current_col_name, fp) for fp in file_paths])
                 else:
                     submenu = menu.addMenu(self.tr(f"Añadir a Colección{count_str}"))
-                    collections_list = [c for c in self.controller.collections.keys() if c != "Descargados"]
+                    collections_list = [c for c in self.controller.collections.keys() if c not in ("Descargados", "Subclips")]
                     if collections_list:
                         for col_name in collections_list:
                             act_col = submenu.addAction(col_name)

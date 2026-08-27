@@ -320,7 +320,7 @@ class MemoryCachePage(QWidget):
 
         lbl_sub_desc = QLabel(self.tr(
             "Carpeta donde se guardan los recortes rápidos de subclips cuando no hay un editor de video "
-            "conectado. Por defecto se guardan en la carpeta 'subclip_media' de AppData."
+            "conectado. Por defecto se guardan en 'Documentos/DowP2/Subclips'."
         ))
         lbl_sub_desc.setWordWrap(True)
         lbl_sub_desc.setStyleSheet("color: #888888; font-size: 11px;")
@@ -348,6 +348,26 @@ class MemoryCachePage(QWidget):
         sub_path_hbox.addWidget(self.btn_browse_subclip_dir)
         sub_path_hbox.addWidget(self.btn_reset_subclip_dir)
         sub_layout.addLayout(sub_path_hbox)
+
+        # Fila de estadísticas + borrado manual de subclips físicos. Deliberadamente NO forma
+        # parte de CacheManager/"Borrar toda la caché": son medios reales que el usuario puede
+        # tener enlazados en un proyecto de edición externo, así que solo se borran aquí, a mano
+        # y con confirmación explícita.
+        sub_stats_hbox = QHBoxLayout()
+        sub_stats_hbox.setSpacing(8)
+
+        self.lbl_subclip_stats = QLabel(self.tr("Calculando..."))
+        self.lbl_subclip_stats.setStyleSheet("color: #4CAF50; font-size: 11px; font-weight: bold;")
+
+        self.btn_clear_subclips = QPushButton(self.tr("Borrar subclips"))
+        self.btn_clear_subclips.setFixedHeight(30)
+        self.btn_clear_subclips.setCursor(Qt.PointingHandCursor)
+        self.btn_clear_subclips.setProperty("variant", "danger")
+        self.btn_clear_subclips.clicked.connect(self.on_clear_subclips_clicked)
+
+        sub_stats_hbox.addWidget(self.lbl_subclip_stats, 1)
+        sub_stats_hbox.addWidget(self.btn_clear_subclips)
+        sub_layout.addLayout(sub_stats_hbox)
 
         self._refresh_subclip_dir_label()
 
@@ -399,6 +419,8 @@ class MemoryCachePage(QWidget):
                     file_count=p_stat.get("file_count", 0),
                     size_bytes=p_stat.get("size_bytes", 0)
                 )
+
+        self._compute_subclip_dir_stats()
 
     def on_clear_single_clicked(self, key: str, name: str):
         """Elimina la caché de un proveedor específico previa confirmación."""
@@ -483,6 +505,129 @@ class MemoryCachePage(QWidget):
         self.subclip_dir_input.setPlaceholderText(self.tr(f"(Por defecto: {default_path})"))
         if self.subclip_dir_input.text() != current_dir:
             self.subclip_dir_input.setText(current_dir)
+        self._compute_subclip_dir_stats()
+
+    def _resolve_effective_subclip_dir(self) -> str:
+        from core.utils.config_manager import get_config
+        from core.utils.paths import get_subclips_dir
+        return get_config().get("default_subclip_dir") or get_subclips_dir()
+
+    def _compute_subclip_dir_stats(self):
+        """Calcula archivos y tamaño de la carpeta de subclips físicos actual y refresca la
+        etiqueta. Solo cuenta archivos de nivel superior (no hay subcarpetas en uso normal)."""
+        target_dir = self._resolve_effective_subclip_dir()
+        file_count = 0
+        total_size = 0
+        if os.path.exists(target_dir):
+            try:
+                for entry in os.scandir(target_dir):
+                    if entry.is_file():
+                        file_count += 1
+                        try:
+                            total_size += entry.stat().st_size
+                        except Exception:
+                            pass
+            except Exception as e:
+                logger.error(f"MemoryCachePage: Error calculando tamaño de la carpeta de subclips: {e}")
+
+        self.lbl_subclip_stats.setText(f"{file_count} archivos  |  Tamaño: {format_bytes(total_size)}")
+        self.btn_clear_subclips.setEnabled(file_count > 0)
+
+    def on_clear_subclips_clicked(self):
+        """Borra a mano los subclips físicos ya cortados, previa confirmación explícita.
+        Deliberadamente independiente de CacheManager: son medios reales, no una caché
+        regenerable, así que nunca se borran junto con 'Borrar toda la caché'."""
+        target_dir = self._resolve_effective_subclip_dir()
+        file_count = 0
+        total_size = 0
+        files_to_remove = []
+        if os.path.exists(target_dir):
+            for entry in os.scandir(target_dir):
+                if entry.is_file():
+                    file_count += 1
+                    try:
+                        total_size += entry.stat().st_size
+                    except Exception:
+                        pass
+                    files_to_remove.append(entry.path)
+
+        if file_count == 0:
+            QMessageBox.information(
+                self,
+                self.tr("Sin subclips"),
+                self.tr("No hay subclips guardados en esta carpeta.")
+            )
+            return
+
+        formatted_size = format_bytes(total_size)
+        reply = QMessageBox.warning(
+            self,
+            self.tr("Borrar subclips físicos"),
+            self.tr(
+                f"Vas a eliminar permanentemente {file_count} subclips guardados en esta carpeta ({formatted_size}).\n\n"
+                "Estos son archivos de medios reales, no una caché regenerable: si ya usaste alguno en un "
+                "proyecto de edición (Premiere, DaVinci, etc.) que no esté conectado en vivo a DowP en este "
+                "momento, ese proyecto se quedará con el enlace roto al perder el archivo.\n\n"
+                "¿Deseas continuar?"
+            ),
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        if reply != QMessageBox.Yes:
+            return
+
+        removed = 0
+        freed = 0
+        for fpath in files_to_remove:
+            try:
+                size = os.path.getsize(fpath)
+                os.remove(fpath)
+                removed += 1
+                freed += size
+            except Exception as e:
+                logger.error(f"MemoryCachePage: Error borrando subclip '{fpath}': {e}")
+
+        self._sync_subclips_collection_after_clear()
+
+        QMessageBox.information(
+            self,
+            self.tr("Subclips Borrados"),
+            self.tr(f"Se eliminaron {removed} archivos y se liberaron {format_bytes(freed)}.")
+        )
+        self._compute_subclip_dir_stats()
+
+    def _sync_subclips_collection_after_clear(self):
+        """Tras borrar los archivos físicos, vacía también sus entradas en la colección virtual
+        'Subclips' para no dejar enlaces rotos. Si la pestaña de Edición de medios ya está viva en
+        esta sesión, pasa por su instancia real (evita que un save_data() posterior de esa
+        instancia sobrescriba nuestro cambio con su estado en memoria desactualizado). Si no,
+        edita indexed_media.json directamente: es seguro porque no hay ninguna instancia viva que
+        pueda pisar ese cambio."""
+        try:
+            from core.tabs.editing_media.editing_media_logic import EditingMediaController
+            live_controller = EditingMediaController.get_instance()
+            if live_controller:
+                live_controller.clear_collection_entries("Subclips")
+            else:
+                self._prune_subclips_collection_on_disk()
+        except Exception as e:
+            logger.error(f"MemoryCachePage: Error sincronizando la colección 'Subclips' tras el borrado: {e}")
+
+    def _prune_subclips_collection_on_disk(self):
+        import json
+        from core.utils.paths import get_indexed_media_path
+        db_path = get_indexed_media_path()
+        if not os.path.exists(db_path):
+            return
+        with open(db_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        collections = data.get("collections", {})
+        if "Subclips" not in collections or not collections["Subclips"]:
+            return
+        collections["Subclips"] = []
+        data["collections"] = collections
+        with open(db_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=4, ensure_ascii=False)
 
     def _on_subclip_dir_text_changed(self, text: str):
         from core.utils.config_manager import get_config, save_config

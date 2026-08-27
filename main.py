@@ -85,6 +85,11 @@ def main():
     app = QApplication(sys.argv)
     app.setStyle("Fusion")  # Estilo base multiplataforma que previene bugs de QComboBox en Windows
 
+    # Arrancar la captura de la consola en vivo desde el boot (no al abrir Ajustes), para que
+    # ya haya historial reciente disponible en cuanto el usuario active la pestaña Consola.
+    from core.logger.console_log_handler import get_console_log_handler
+    get_console_log_handler()
+
     # Instalar cursor pointer en widgets interactivos (ChildAdded, no Enter — más eficiente)
     app.installEventFilter(HandCursorInstaller(app))
     

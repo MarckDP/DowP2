@@ -1427,28 +1427,10 @@ class MediaTrimPlayerWidget(QWidget):
             self._on_end_of_media()
 
     def _on_end_of_media(self):
-        """Al terminar la reproducción, el backend pasa a StoppedState y el video sink deja
-        de presentar frames: el QGraphicsVideoItem queda vacío y, como el view es transparente,
-        se ve la cuadrícula de fondo ("el video desaparece"). Se re-presenta el último frame
-        decodificable y se restaura el estado visual de los controles."""
+        """Al terminar la reproducción, restaura el estado visual de los controles."""
         apply_player_play_button_style(self.btn_play, is_playing=False, icon_size=18)
         self.audio_meter.reset_levels()
         self.playing_changed.emit(False)
-
-        if self.media_type == "video" and self.media_path:
-            # El mismo truco de _apply_source_restore: el backend resetea la posición de forma
-            # asíncrona justo al terminar, así que el seek se impone con un pequeño delay.
-            QTimer.singleShot(60, self._restore_last_frame)
-
-    def _restore_last_frame(self):
-        """Seek al último frame decodificable (con el colchón de _clamp_seek_ms) para que la
-        vista previa muestre el final del video en vez de quedarse sin imagen."""
-        if self.media_player.playbackState() == QMediaPlayer.PlayingState:
-            # El usuario ya retomó la reproducción por su cuenta; no interrumpirla.
-            return
-        # Mismo orden que _render_initial_frame: pause() primero, setPosition() después.
-        self.media_player.pause()
-        self.media_player.setPosition(self._clamp_seek_ms(self.duration_sec))
 
     def _apply_source_restore(self, pending):
         pos_ms, was_playing = pending

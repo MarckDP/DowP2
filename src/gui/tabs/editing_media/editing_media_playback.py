@@ -222,54 +222,6 @@ class PlaybackMixin:
             return dest_path if (dest_path and os.path.exists(dest_path)) else None
         return orig_path if os.path.exists(orig_path) else None
 
-    def _cut_subclip_ffmpeg(self, input_path: str, output_path: str, start_sec: float, end_sec: float) -> bool:
-        """Recorta con precisión un fragmento de audio usando FFmpeg y lo guarda en output_path."""
-        import subprocess
-        import shutil
-        from core.setup.ffmpeg_setup import get_ffmpeg_dir
-        
-        ffmpeg_exe = os.path.join(get_ffmpeg_dir(), "ffmpeg.exe" if os.name == 'nt' else "ffmpeg")
-        if not os.path.exists(ffmpeg_exe):
-            ffmpeg_exe = shutil.which("ffmpeg") or "ffmpeg"
-
-        cmd = [
-            ffmpeg_exe,
-            "-y",
-            "-ss", f"{start_sec:.3f}",
-            "-to", f"{end_sec:.3f}",
-            "-i", input_path,
-            "-c", "copy",
-            output_path
-        ]
-
-        startupinfo = None
-        if os.name == 'nt':
-            startupinfo = subprocess.STARTUPINFO()
-            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-
-        try:
-            res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, startupinfo=startupinfo, timeout=15)
-            if res.returncode == 0 and os.path.exists(output_path) and os.path.getsize(output_path) > 0:
-                logger.info(f"[EditingMedia] Subclip recortado con éxito (stream copy) -> {output_path}")
-                return True
-
-            cmd_fb = [
-                ffmpeg_exe,
-                "-y",
-                "-ss", f"{start_sec:.3f}",
-                "-to", f"{end_sec:.3f}",
-                "-i", input_path,
-                output_path
-            ]
-            res_fb = subprocess.run(cmd_fb, stdout=subprocess.PIPE, stderr=subprocess.PIPE, startupinfo=startupinfo, timeout=15)
-            if res_fb.returncode == 0 and os.path.exists(output_path) and os.path.getsize(output_path) > 0:
-                logger.info(f"[EditingMedia] Subclip recortado con éxito (re-encode fallback) -> {output_path}")
-                return True
-        except Exception as e:
-            logger.error(f"[EditingMedia] Error ejecutando FFmpeg para recortar subclip: {e}")
-
-        return False
-
     def _on_waveform_subclip_drag_requested(self):
         """El usuario arrastró desde dentro de la selección rápida (lite subclip):
         1. Garantiza que el medio original de alta calidad esté descargado a disco.
@@ -307,44 +259,22 @@ class PlaybackMixin:
                 if dur_sec > 0:
                     in_sec = in_ratio * dur_sec
                     out_sec = out_ratio * dur_sec
-                    
+
                     # Resolver carpeta designada para guardar subclips
                     if is_remote and hasattr(self, "_resolve_freesound_dest_path"):
                         dest_dir = os.path.dirname(self._resolve_freesound_dest_path(item_data))
                     else:
-                        from core.utils.paths import get_subclips_dir
-                        dest_dir = get_subclips_dir()
-                    os.makedirs(dest_dir, exist_ok=True)
+                        dest_dir = None  # export_subclip usa get_subclips_dir() por defecto
 
-                    base_name, ext = os.path.splitext(os.path.basename(local_path))
-                    if not ext: ext = ".wav"
-                    
-                    # Crear nombre único para el subclip en la carpeta de alta calidad
-                    count = 1
-                    sub_filename = f"{base_name}_subclip_{count:02d}{ext}"
-                    sub_path = os.path.join(dest_dir, sub_filename).replace("\\", "/")
-                    while os.path.exists(sub_path):
-                        count += 1
-                        sub_filename = f"{base_name}_subclip_{count:02d}{ext}"
-                        sub_path = os.path.join(dest_dir, sub_filename).replace("\\", "/")
-
-                    if self._cut_subclip_ffmpeg(local_path, sub_path, in_sec, out_sec):
+                    from core.utils.subclip_export import export_subclip
+                    sub_path = export_subclip(local_path, in_sec, out_sec, dest_dir=dest_dir)
+                    if sub_path:
                         drag_path = sub_path
                         if hasattr(self, "controller"):
-                            self.controller.add_to_downloaded_collection(sub_path)
+                            self.controller.add_to_subclips_collection(sub_path)
 
-            from PySide6.QtCore import QMimeData, QUrl as QUrlDrag
-            from PySide6.QtGui import QDrag
-            mime = QMimeData()
-            mime.setUrls([QUrlDrag.fromLocalFile(drag_path)])
-            drag = QDrag(self.waveform_widget)
-            drag.setMimeData(mime)
-            drag.exec(Qt.CopyAction)
-            # Limpieza del estado ':hover' del QSS tras el drag nativo (mismo problema que en las vistas de lista).
-            from PySide6.QtCore import QEvent
-            from PySide6.QtWidgets import QApplication
-            QApplication.sendEvent(self.waveform_widget, QEvent(QEvent.Leave))
-            self.waveform_widget.update()
+            from gui.widgets.native_file_drag import start_native_file_drag
+            start_native_file_drag(self.waveform_widget, [drag_path])
         finally:
             self._in_waveform_drag = False
 

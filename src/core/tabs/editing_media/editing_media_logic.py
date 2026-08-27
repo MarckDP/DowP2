@@ -174,23 +174,27 @@ class AsyncIndexerThread(QThread):
 
 class EditingMediaController(QObject):
     """Controlador que gestiona la lógica de indexación, colecciones y monitoreo en tiempo real."""
-    
+
+    _instance = None
+
     disk_changed = Signal()
     collections_changed = Signal()
-    
+
     indexing_started = Signal()
     indexing_progress = Signal(int)
     indexing_finished = Signal(list)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        
+        EditingMediaController._instance = self
+
         from core.utils.paths import get_indexed_media_path
         self.db_path = get_indexed_media_path()
-        
+
         self.indexed_folders = []
         self.collections = {
             "Descargados": [],
+            "Subclips": [],
             "Favoritos": [],
             "SFX": [],
             "Música": []
@@ -206,6 +210,15 @@ class EditingMediaController(QObject):
         self.load_data()
         self.start_watcher()
 
+    @classmethod
+    def get_instance(cls):
+        """Devuelve la instancia viva de EditingMediaController si la pestaña de Edición de
+        medios ya se creó en esta sesión, o None si todavía no. No es un singleton perezoso
+        (no se autoconstruye): este controller depende de un widget padre real y arranca un
+        Observer de filesystem, así que crearlo desde otro lugar solo para acceder a él
+        duplicaría el watcher. Los llamadores deben manejar el caso None."""
+        return cls._instance
+
     def load_data(self):
         """Carga carpetas indexadas, colecciones y auth OAuth2 desde indexed_media.json."""
         if os.path.exists(self.db_path):
@@ -214,10 +227,16 @@ class EditingMediaController(QObject):
                     data = json.load(f)
                     self.indexed_folders = data.get("indexed_folders", [])
                     loaded_cols = data.get("collections", {})
-                    # Asegurar que Descargados sea la primera colección
-                    self.collections = {"Descargados": []}
+                    # Asegurar que Descargados y Subclips vayan siempre juntas, primero (en ese
+                    # orden), sin importar dónde hayan quedado guardadas en el JSON ni si vienen
+                    # de una instalación vieja que todavía no tenía 'Subclips'.
+                    self.collections = {
+                        "Descargados": loaded_cols.get("Descargados", []),
+                        "Subclips": loaded_cols.get("Subclips", [])
+                    }
                     for k, v in loaded_cols.items():
-                        self.collections[k] = v
+                        if k not in ("Descargados", "Subclips"):
+                            self.collections[k] = v
                     if "Favoritos" not in self.collections:
                         self.collections["Favoritos"] = []
                     # Cargar autenticación OAuth2 (con migración desde formato legacy)
@@ -245,6 +264,38 @@ class EditingMediaController(QObject):
             if hasattr(self, "_media_cache"):
                 self._media_cache.pop("collection:Descargados", None)
             self.collections_changed.emit()
+
+    def add_to_subclips_collection(self, file_path: str):
+        """Registra un fragmento físico cortado por el sistema de subclips en la colección
+        virtual 'Subclips' (separada de 'Descargados', que es solo para descargas completas de
+        medios web)."""
+        if "Subclips" not in self.collections:
+            new_cols = {"Subclips": []}
+            new_cols.update(self.collections)
+            self.collections = new_cols
+
+        norm_p = os.path.normpath(file_path).replace("\\", "/")
+        if norm_p not in self.collections["Subclips"] and file_path not in self.collections["Subclips"]:
+            self.collections["Subclips"].insert(0, norm_p)
+            self.save_data()
+            if hasattr(self, "_media_cache"):
+                self._media_cache.pop("collection:Subclips", None)
+            self.collections_changed.emit()
+
+    def clear_collection_entries(self, collection_name: str) -> int:
+        """Vacía el contenido de una colección virtual sin eliminar la colección en sí (a
+        diferencia de remove_collection), para que siga existiendo y pueda repoblarse después.
+        Devuelve la cantidad de entradas quitadas."""
+        if collection_name not in self.collections:
+            return 0
+        count = len(self.collections[collection_name])
+        if count == 0:
+            return 0
+        self.collections[collection_name] = []
+        self.save_data()
+        self._invalidate_media_cache()
+        self.collections_changed.emit()
+        return count
 
 
 

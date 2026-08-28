@@ -17,11 +17,10 @@ from PySide6.QtWidgets import (
     QStyledItemDelegate,
     QLineEdit,
     QFileDialog,
-    QColorDialog,
     QSlider,
 )
 from PySide6.QtCore import Signal, Qt
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QPixmap
 import math
 import platform
 
@@ -32,7 +31,7 @@ from gui.widgets.combo_box import CheckmarkComboDelegate, AutoPopupComboBox
 from core.logger.logger_manager import logger
 from core.utils.recode_guard import evaluate_recode, get_video_codecs, get_audio_codecs, get_compatible_containers, resolve_encoder, get_channel_support, get_dimension_alignment
 from core.utils.hardware_detector import detect_hardware
-from core.utils.font_manager import get_available_fonts, get_active_font_family, get_font_file_path
+from core.utils.font_manager import get_available_fonts, get_active_font_family, get_static_font_path, STANDARD_WEIGHTS
 from core.utils.watermark_builder import build_drawtext_filter, build_image_overlay_filter, check_watermark_file
 from core.tabs.video_tools.codec_profiles import (
     get_profiles, build_custom_bitrate_args, extract_bitrate_kbps,
@@ -765,6 +764,21 @@ class AdvancedRecodePanel(QWidget):
         font_row.addWidget(self.btn_watermark_text_color)
         text_layout.addLayout(font_row)
 
+        weight_row = QHBoxLayout()
+        weight_row.setSpacing(8)
+        lbl_weight = QLabel(self.tr("Peso:"), text_container)
+        lbl_weight.setObjectName("menuLabel")
+        weight_row.addWidget(lbl_weight)
+        self.combo_watermark_text_weight = AutoPopupComboBox(text_container)
+        self._setup_fixed_combo(self.combo_watermark_text_weight)
+        for label, value in STANDARD_WEIGHTS:
+            self.combo_watermark_text_weight.addItem(self.tr(label), value)
+        default_weight_idx = self.combo_watermark_text_weight.findData(400)
+        if default_weight_idx >= 0:
+            self.combo_watermark_text_weight.setCurrentIndex(default_weight_idx)
+        weight_row.addWidget(self.combo_watermark_text_weight, 1)
+        text_layout.addLayout(weight_row)
+
         size_row = QHBoxLayout()
         size_row.setSpacing(8)
         lbl_size = QLabel(self.tr("Tamaño:"), text_container)
@@ -855,6 +869,7 @@ class AdvancedRecodePanel(QWidget):
         self.chk_watermark_text.toggled.connect(self._on_watermark_text_toggled)
         self.txt_watermark_text.textChanged.connect(self._on_watermark_text_field_changed)
         self.combo_watermark_font.currentIndexChanged.connect(self._on_watermark_text_field_changed)
+        self.combo_watermark_text_weight.currentIndexChanged.connect(self._on_watermark_text_field_changed)
         self.spin_watermark_text_size.valueChanged.connect(self._on_watermark_text_field_changed)
         self.slider_watermark_text_opacity.valueChanged.connect(self._on_watermark_text_field_changed)
 
@@ -871,10 +886,13 @@ class AdvancedRecodePanel(QWidget):
         )
 
     def _on_pick_watermark_text_color(self):
-        color = QColorDialog.getColor(self._watermark_text_color, self, self.tr("Color del texto"))
-        if color.isValid():
-            self._watermark_text_color = color
-            self._update_color_button(self.btn_watermark_text_color, color)
+        # Reusar el selector de color ya existente (mismo que las etiquetas de carpetas/
+        # colecciones en Herramientas Multimedia) en vez de QColorDialog nativo.
+        from gui.dialogs.dialogs import AdobeColorPickerDialog
+        dialog = AdobeColorPickerDialog(self._watermark_text_color.name(), self)
+        if dialog.exec():
+            self._watermark_text_color = QColor(dialog.get_color())
+            self._update_color_button(self.btn_watermark_text_color, self._watermark_text_color)
             self._on_watermark_text_field_changed()
 
     def _on_browse_watermark_image(self):
@@ -942,6 +960,7 @@ class AdvancedRecodePanel(QWidget):
             "enabled": self.chk_watermark_text.isChecked(),
             "text": self.txt_watermark_text.text(),
             "font_family": self.combo_watermark_font.currentData() or self.combo_watermark_font.currentText(),
+            "weight": self.combo_watermark_text_weight.currentData() or 400,
             "size_pct": self.spin_watermark_text_size.value(),
             "color": QColor(self._watermark_text_color),
             "opacity": self.slider_watermark_text_opacity.value() / 100.0,
@@ -989,7 +1008,8 @@ class AdvancedRecodePanel(QWidget):
         if not text:
             return None
         font_family = self.combo_watermark_font.currentData() or self.combo_watermark_font.currentText()
-        font_path = get_font_file_path(font_family)
+        weight = self.combo_watermark_text_weight.currentData() or 400
+        font_path = get_static_font_path(font_family, weight)
         if not font_path:
             return None
         size_expr = f"h*{self.spin_watermark_text_size.value() / 100.0:.4f}"
@@ -1006,7 +1026,11 @@ class AdvancedRecodePanel(QWidget):
         scale_pct = self.spin_watermark_image_scale.value()
         opacity = self.slider_watermark_image_opacity.value() / 100.0
         fx, fy = self._image_watermark_pos
-        overlay_filter = build_image_overlay_filter(scale_pct, opacity, fx, fy)
+        # Aspecto real (alto/ancho) de la imagen: hace falta pasárselo al filtro para
+        # que no se estire al aspecto del video (ver watermark_builder.build_image_overlay_filter).
+        pixmap = QPixmap(self._watermark_image_path)
+        aspect_hw = (pixmap.height() / pixmap.width()) if pixmap.width() > 0 else 1.0
+        overlay_filter = build_image_overlay_filter(scale_pct, opacity, fx, fy, aspect_hw)
         return self._watermark_image_path, overlay_filter
 
     def _check_watermark_issues(self) -> dict | None:

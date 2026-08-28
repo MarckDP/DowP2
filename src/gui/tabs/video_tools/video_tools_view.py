@@ -297,7 +297,7 @@ class VideoToolsTab(QWidget):
     def _on_text_watermark_style_changed(self):
         style = self.options_widget.tab_advanced.get_text_watermark_style()
         self.preview_widget.set_text_watermark(
-            style["enabled"], style["text"], style["font_family"],
+            style["enabled"], style["text"], style["font_family"], style["weight"],
             style["size_pct"], style["color"], style["opacity"],
         )
 

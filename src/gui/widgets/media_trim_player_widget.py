@@ -1194,14 +1194,16 @@ class _TextWatermarkOverlayItem(_DraggableWatermarkItem):
         super().__init__(parent)
         self._text = ""
         self._font_family = "Arial"
+        self._weight = 400
         self._size_pct = 5.0  # % de la altura del cuadro de salida
         self._color = QColor("#FFFFFF")
         self._opacity = 1.0
 
-    def set_style(self, text: str, font_family: str, size_pct: float, color: QColor, opacity: float):
+    def set_style(self, text: str, font_family: str, weight: int, size_pct: float, color: QColor, opacity: float):
         self.prepareGeometryChange()
         self._text = text or ""
         self._font_family = font_family or self._font_family
+        self._weight = weight or 400
         self._size_pct = max(self._MIN_SIZE_PCT, size_pct)
         self._color = QColor(color) if color else self._color
         self._opacity = opacity
@@ -1226,6 +1228,7 @@ class _TextWatermarkOverlayItem(_DraggableWatermarkItem):
             size_px = max(6, int(self._output_rect.height() * (self._size_pct / 100.0)))
         font = QFont(self._font_family)
         font.setPixelSize(size_px)
+        font.setWeight(QFont.Weight(self._weight))
         return font
 
     def _item_size(self) -> QSizeF:
@@ -1880,10 +1883,10 @@ class MediaTrimPlayerWidget(QWidget):
     # ------------------------------------------------------------------
     # Marcas de agua interactivas (texto / imagen)
     # ------------------------------------------------------------------
-    def set_text_watermark(self, enabled: bool, text: str = "", font_family: str = "",
+    def set_text_watermark(self, enabled: bool, text: str = "", font_family: str = "", weight: int = 400,
                             size_pct: float = 5.0, color: QColor = None, opacity: float = 1.0):
         if enabled and text:
-            self.text_watermark_overlay.set_style(text, font_family, size_pct, color, opacity)
+            self.text_watermark_overlay.set_style(text, font_family, weight, size_pct, color, opacity)
             self.text_watermark_overlay.set_output_rect(self._effective_output_rect())
             self.text_watermark_overlay.setVisible(True)
         else:

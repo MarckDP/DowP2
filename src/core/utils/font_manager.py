@@ -10,8 +10,15 @@ import os
 import json
 from PySide6.QtGui import QFontDatabase
 from core.logger.logger_manager import logger
-from core.utils.paths import get_src_dir, get_user_fonts_dir, get_user_themes_dir
+from core.utils.paths import get_src_dir, get_user_fonts_dir, get_user_themes_dir, get_app_data_dir
 from core.utils.config_manager import get_config
+
+# Pesos estándar ofrecidos en el selector de marca de agua (nombre, valor de eje 'wght').
+STANDARD_WEIGHTS = [
+    ("Thin", 100), ("Extra Light", 200), ("Light", 300), ("Regular", 400),
+    ("Medium", 500), ("Semi Bold", 600), ("Bold", 700), ("Extra Bold", 800), ("Black", 900),
+]
+_FONT_CACHE_DIR = None
 
 # Cache de familias detectadas y registradas
 _REGISTERED_FAMILIES = []
@@ -164,3 +171,67 @@ def get_active_font_family(theme_name: str = None) -> str:
             return fallback
 
     return "Segoe UI"
+
+
+def _get_font_cache_dir() -> str:
+    global _FONT_CACHE_DIR
+    if _FONT_CACHE_DIR is None:
+        _FONT_CACHE_DIR = os.path.join(get_app_data_dir(), "font_instances")
+    return _FONT_CACHE_DIR
+
+
+def get_static_font_path(family: str, weight: int = 400) -> str:
+    """Ruta a un archivo de fuente ESTÁTICO (no variable) en el peso pedido, para usar
+    con ffmpeg drawtext (fontfile=...). Necesario porque algunas de las fuentes variables
+    empaquetadas traen el eje 'wght' con su propio default en un extremo poco útil (ej.
+    Outfit y Raleway vienen con default=100/Thin de fábrica) — verificado leyendo la
+    tabla 'fvar' de cada .ttf. Genera y cachea una instancia estática con
+    fontTools.varLib.instancer (pinneando TODOS los ejes presentes, no solo 'wght': dejar
+    alguno sin fijar mantiene el archivo parcialmente variable y ffmpeg lo sigue tratando
+    igual que el original — verificado empíricamente).
+
+    Si la familia no es una fuente variable (no tiene tabla 'fvar'), devuelve el archivo
+    original sin tocar — el peso pedido no tiene efecto en ese caso."""
+    source_path = get_font_file_path(family)
+    if not source_path or not os.path.exists(source_path):
+        return source_path
+
+    try:
+        from fontTools.ttLib import TTFont
+    except ImportError:
+        logger.warning("FontManager: fontTools no está instalado, se usa la fuente sin fijar peso.")
+        return source_path
+
+    try:
+        probe = TTFont(source_path, lazy=True)
+        if "fvar" not in probe:
+            return source_path
+        axes = list(probe["fvar"].axes)
+    except Exception as e:
+        logger.warning(f"FontManager: no se pudo leer los ejes de '{family}': {e}")
+        return source_path
+
+    cache_dir = _get_font_cache_dir()
+    mtime = int(os.path.getmtime(source_path))
+    base_name = os.path.splitext(os.path.basename(source_path))[0]
+    cache_path = os.path.join(cache_dir, f"{base_name}_{weight}_{mtime}.ttf")
+    if os.path.exists(cache_path):
+        return cache_path
+
+    try:
+        from fontTools.varLib.instancer import instantiateVariableFont
+        font = TTFont(source_path)
+        axis_limits = {}
+        for axis in axes:
+            if axis.axisTag == "wght":
+                axis_limits["wght"] = min(max(float(weight), axis.minValue), axis.maxValue)
+            else:
+                axis_limits[axis.axisTag] = axis.defaultValue
+        instance = instantiateVariableFont(font, axis_limits, inplace=False)
+        os.makedirs(cache_dir, exist_ok=True)
+        instance.save(cache_path)
+        logger.info(f"FontManager: instancia estática generada para '{family}' @ {weight}: {cache_path}")
+        return cache_path
+    except Exception as e:
+        logger.warning(f"FontManager: no se pudo generar instancia estática de '{family}' @ {weight}: {e}")
+        return source_path

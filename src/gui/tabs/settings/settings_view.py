@@ -26,6 +26,7 @@ class SidebarButton(QPushButton):
 class SettingsTab(QWidget):
     language_changed = Signal(str)
     theme_changed = Signal(str)
+    font_changed = Signal(str)
     integrations_changed = Signal()
 
     def __init__(self):
@@ -149,6 +150,7 @@ class SettingsTab(QWidget):
         # Pass signals from general page
         self.page_general.language_changed.connect(self.language_changed.emit)
         self.page_general.theme_changed.connect(self.theme_changed.emit)
+        self.page_general.font_changed.connect(self.font_changed.emit)
 
         # Pass signal from integrations page
         self.page_integrations.integration_toggled.connect(lambda app_id, checked: self.integrations_changed.emit())

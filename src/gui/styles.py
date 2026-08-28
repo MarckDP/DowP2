@@ -133,6 +133,20 @@ def _generate_checkbox_checked_svg(color: str) -> str:
     return svg_path.replace("\\", "/")
 
 
+def _get_theme_path(theme_name: str) -> str:
+    """Busca el archivo JSON del tema en AppData (temas de usuario) y luego en el directorio empaquetado."""
+    from core.utils.paths import get_user_themes_dir
+    user_path = os.path.join(get_user_themes_dir(), f"{theme_name}.json")
+    if os.path.exists(user_path):
+        return user_path
+    
+    builtin_path = os.path.join(_THEMES_DIR, f"{theme_name}.json")
+    if os.path.exists(builtin_path):
+        return builtin_path
+    
+    return ""
+
+
 def _load_theme_tokens(theme_name: str) -> dict:
     """
     Carga los tokens de color desde el archivo JSON del tema con cache.
@@ -140,10 +154,10 @@ def _load_theme_tokens(theme_name: str) -> dict:
     if theme_name in _THEME_CACHE:
         return _THEME_CACHE[theme_name]
 
-    json_path = os.path.join(_THEMES_DIR, f"{theme_name}.json")
+    json_path = _get_theme_path(theme_name)
     
-    if not os.path.exists(json_path):
-        logger.error(f"Temas: Archivo de tema no encontrado: {json_path}")
+    if not json_path or not os.path.exists(json_path):
+        logger.error(f"Temas: Archivo de tema no encontrado: {theme_name}.json")
         return {}
     
     try:
@@ -175,15 +189,52 @@ def _load_base_template() -> str:
 
 def get_available_themes() -> list:
     """
-    Retorna una lista de temas disponibles (nombres sin extensión).
-    Útil para poblar el selector de temas en Ajustes.
+    Retorna una lista de temas disponibles con sus metadatos (id, nombre, is_user).
+    Escanea tanto los temas empaquetados como los temas personalizados del usuario en AppData.
     """
+    from core.utils.paths import get_user_themes_dir
     themes = []
+    seen_ids = set()
+
+    # 1. Temas empaquetados
     if os.path.isdir(_THEMES_DIR):
         for filename in os.listdir(_THEMES_DIR):
             if filename.endswith(".json"):
-                themes.append(filename.replace(".json", ""))
+                theme_id = filename[:-5]
+                name = _read_theme_display_name(os.path.join(_THEMES_DIR, filename), theme_id)
+                themes.append({"id": theme_id, "name": name, "is_user": False})
+                seen_ids.add(theme_id)
+
+    # 2. Temas de usuario (%APPDATA%/DowP2/themes)
+    user_dir = get_user_themes_dir()
+    if os.path.isdir(user_dir):
+        for filename in os.listdir(user_dir):
+            if filename.endswith(".json"):
+                theme_id = filename[:-5]
+                if theme_id not in seen_ids:
+                    name = _read_theme_display_name(os.path.join(user_dir, filename), theme_id)
+                    themes.append({"id": theme_id, "name": f"{name} (Usuario)", "is_user": True})
+                    seen_ids.add(theme_id)
+
     return themes
+
+
+def _read_theme_display_name(json_path: str, default_id: str) -> str:
+    """Lee el nombre amigable del tema desde su metadata si existe."""
+    try:
+        with open(json_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            meta_name = data.get("meta", {}).get("nombre")
+            if meta_name:
+                return meta_name
+    except Exception:
+        pass
+    # Nombres por defecto bonitos
+    if default_id == "dark":
+        return "Modo Oscuro"
+    elif default_id == "light":
+        return "Modo Claro"
+    return default_id.replace("_", " ").title()
 
 
 def get_theme_token(token_key: str, default_value: str = None) -> str:
@@ -197,16 +248,19 @@ def get_theme_token(token_key: str, default_value: str = None) -> str:
     return tokens.get(token_key, default_value)
 
 
-def load_stylesheet(theme_name: str = "dark") -> str:
+def load_stylesheet(theme_name: str = "dark", font_family: str = None) -> str:
     """
     Genera el QSS final para el tema solicitado.
     
     1. Lee _base.qss (template con {{variables}})
     2. Lee {theme_name}.json (definición de colores)
-    3. Genera los SVGs dinámicos con el color de acento
-    4. Reemplaza todas las {{variables}} por sus valores
-    5. Retorna el QSS listo para aplicar
+    3. Inyecta la fuente activa (font_manager o tema) en {{fuente_principal}}
+    4. Genera los SVGs dinámicos con el color de acento
+    5. Reemplaza todas las {{variables}} por sus valores
+    6. Retorna el QSS listo para aplicar
     """
+    from core.utils.font_manager import get_active_font_family
+    
     # 1. Cargar template base
     template = _load_base_template()
     if not template:
@@ -219,7 +273,11 @@ def load_stylesheet(theme_name: str = "dark") -> str:
         logger.warning(f"Temas: No se pudieron cargar tokens para '{theme_name}'")
         return ""
     
-    # 3. Generar SVGs dinámicos con el color de acento primario
+    # 3. Inyectar tipografía activa
+    active_font = font_family or get_active_font_family(theme_name)
+    tokens["fuente_principal"] = active_font
+    
+    # 4. Generar SVGs dinámicos con el color de acento primario
     triangle_color = tokens.get("acento_primario", "#B9E640")
     triangle_path = generate_triangle_svg(triangle_color)
     tokens["icono_triangulo"] = triangle_path
@@ -229,12 +287,12 @@ def load_stylesheet(theme_name: str = "dark") -> str:
     check_icon_color = tokens.get("boton_texto", "#000000")
     tokens["icono_checkbox_checked"] = _generate_checkbox_checked_svg(check_icon_color)
     
-    # 4. Reemplazar todas las {{variables}}
+    # 5. Reemplazar todas las {{variables}}
     result = template
     for key, value in tokens.items():
         result = result.replace("{{" + key + "}}", value)
     
-    # 5. Verificar si quedaron variables sin reemplazar
+    # 6. Verificar si quedaron variables sin resolver
     import re
     unresolved = re.findall(r"\{\{(\w+)\}\}", result)
     if unresolved:
@@ -243,7 +301,7 @@ def load_stylesheet(theme_name: str = "dark") -> str:
     # Limpiar cache al recargar el stylesheet para asegurar que los cambios se apliquen
     _THEME_CACHE.clear()
     
-    logger.info(f"Temas: Tema '{theme_name}' cargado exitosamente")
+    logger.info(f"Temas: Tema '{theme_name}' cargado con tipografía '{active_font}'")
     return result
 
 

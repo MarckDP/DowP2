@@ -610,6 +610,7 @@ class MainWindow(QMainWindow):
 
         # ── Conexiones ────────────────────────────────────────────────────────
         self.tab_settings.theme_changed.connect(self.update_theme)
+        self.tab_settings.font_changed.connect(self.update_font)
         self.tab_settings.integrations_changed.connect(self.editor_status_widget.refresh_app_icons)
         self.tabs.currentChanged.connect(self.on_tab_changed)
 
@@ -651,6 +652,12 @@ class MainWindow(QMainWindow):
 
     def update_theme(self, theme_name):
         logger.info(f"MainWindow: Cambiando tema a {theme_name}")
+        self.setStyleSheet(load_stylesheet(theme_name))
+
+    def update_font(self, font_name):
+        logger.info(f"MainWindow: Cambiando tipografía activa a {font_name}")
+        config = get_config()
+        theme_name = config.get("theme", "dark")
         self.setStyleSheet(load_stylesheet(theme_name))
 
     def nativeEvent(self, eventType, message):

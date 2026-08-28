@@ -96,15 +96,9 @@ def main():
     # Calculate absolute base directory
     base_dir = os.path.dirname(os.path.abspath(__file__))
     
-    # Load Fonts
-    font_path = os.path.join(base_dir, "src", "assets", "fonts", "Raleway.ttf")
-    if os.path.exists(font_path):
-        font_id = QFontDatabase.addApplicationFont(font_path)
-        if font_id != -1:
-            family = QFontDatabase.applicationFontFamilies(font_id)[0]
-            logger.info(f"Fuente cargada: {family}")
-        else:
-            logger.warning("No se pudo cargar la fuente Raleway (formato no soportado o archivo corrupto).")
+    # Load Fonts (Centralizado vía FontManager: internas + de usuario en AppData)
+    from core.utils.font_manager import init_fonts
+    init_fonts()
     
     app.setApplicationName("DowP")
     app.setApplicationVersion(__version__)

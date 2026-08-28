@@ -107,7 +107,8 @@ class QueueTriggerBar(QWidget):
         painter.rotate(-90.0)
         
         # Configurar fuente
-        font = QFont("Raleway" if "Raleway" in QFontDatabase.families() else "Segoe UI", 9)
+        from core.utils.font_manager import get_active_font_family
+        font = QFont(get_active_font_family(), 9)
         font.setBold(True)
         painter.setFont(font)
         

@@ -98,6 +98,20 @@ def get_subclips_dir() -> str:
 
 
 
+def get_user_fonts_dir() -> str:
+    """Retorna el directorio de fuentes personalizadas del usuario (%APPDATA%/DowP2/fonts)."""
+    fonts_dir = os.path.join(get_app_data_dir(), "fonts")
+    os.makedirs(fonts_dir, exist_ok=True)
+    return fonts_dir
+
+
+def get_user_themes_dir() -> str:
+    """Retorna el directorio de temas personalizados del usuario (%APPDATA%/DowP2/themes)."""
+    themes_dir = os.path.join(get_app_data_dir(), "themes")
+    os.makedirs(themes_dir, exist_ok=True)
+    return themes_dir
+
+
 def get_config_path() -> str:
     """Retorna la ruta al archivo de configuración general config.json."""
     return os.path.join(get_app_data_dir(), "config.json")

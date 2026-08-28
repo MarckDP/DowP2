@@ -176,7 +176,7 @@ El triángulo ▼ que aparece en los menús desplegables se genera **automática
 
 Copia `dark.json` o `light.json` y renómbralo. Ejemplo: `monokai.json`.
 
-### Paso 2: Editar la metadata
+### Paso 2: Editar la metadata y tipografía
 
 ```json
 {
@@ -185,11 +185,14 @@ Copia `dark.json` o `light.json` y renómbralo. Ejemplo: `monokai.json`.
         "autor": "Tu Nombre",
         "version": "1.0"
     },
+    "fuente": "Google Sans Flex",
     "colores": {
         ...
     }
 }
 ```
+
+> **Tipografía personalizada:** Puedes definir `"fuente": "NombreDeFuente"` (por ejemplo `"Google Sans Flex"`, `"Raleway"`, `"Roboto"`, o el nombre de cualquier fuente `.ttf`/`.otf` que coloques en `%APPDATA%/DowP2/fonts/`). Si no se especifica, la app usará la fuente predeterminada del sistema o la configurada globalmente por el usuario.
 
 ### Paso 3: Cambiar los colores
 
@@ -206,7 +209,10 @@ Edita los valores hexadecimales en la sección `"colores"`. Usa la referencia de
 
 ### Paso 4: Guardar y seleccionar
 
-Guarda el archivo en `src/gui/themes/` y selecciónalo desde **Ajustes → Tema visual** en la app.
+Guarda el archivo en `src/gui/themes/` (si eres desarrollador) o directamente en la carpeta de temas de usuario:
+`%APPDATA%/DowP2/themes/` (puedes abrirla con el botón de carpeta en **Ajustes → General → Aspecto**).
+
+Luego selecciónalo en **Ajustes → Tema visual** en la app.
 
 > **Importante:** El archivo debe tener **todos** los tokens listados arriba. Si falta alguno, ese elemento se verá sin estilo.
 

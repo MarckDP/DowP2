@@ -1,13 +1,20 @@
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QSpacerItem, QSizePolicy, QStyledItemDelegate, QScrollArea, QPushButton, QMessageBox
-from PySide6.QtCore import Signal, Qt
-from core.utils.i18n import logger
+from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, 
+                                 QSpacerItem, QSizePolicy, QStyledItemDelegate, QScrollArea, 
+                                 QPushButton, QMessageBox, QToolButton)
+from PySide6.QtCore import Signal, Qt, QUrl
+from PySide6.QtGui import QDesktopServices
+from core.logger.logger_manager import logger
 from core.utils.config_manager import get_config, save_config
+from core.utils.paths import get_user_themes_dir, get_user_fonts_dir
+from core.utils.font_manager import get_available_fonts, init_fonts
+from gui.styles import get_available_themes, apply_folder_open_button_style
 from gui.widgets.toggle_switch import ToggleSwitch
 from gui.widgets.combo_box import AutoPopupComboBox
 
 class GeneralPage(QWidget):
     language_changed = Signal(str)
     theme_changed = Signal(str)
+    font_changed = Signal(str)
 
     def __init__(self):
         super().__init__()
@@ -61,7 +68,7 @@ class GeneralPage(QWidget):
         self.lang_label.setObjectName("settingsLabel")
         
         self.lang_combo = AutoPopupComboBox()
-        self.lang_combo.setFixedWidth(180) # Smaller
+        self.lang_combo.setFixedWidth(180)
         self.lang_combo.addItem("Español", "es")
         self.lang_combo.addItem("English", "en")
         
@@ -76,14 +83,37 @@ class GeneralPage(QWidget):
         self.theme_label.setObjectName("settingsLabel")
         
         self.theme_combo = AutoPopupComboBox()
-        self.theme_combo.setFixedWidth(180) # Smaller
-        self.theme_combo.addItem(self.tr("Modo Oscuro"), "dark")
-        self.theme_combo.addItem(self.tr("Modo Claro"), "light")
+        self.theme_combo.setFixedWidth(180)
         
+        self.btn_open_themes = QPushButton()
+        self.btn_open_themes.setFixedSize(30, 30)
+        apply_folder_open_button_style(self.btn_open_themes, tooltip=self.tr("Abrir carpeta de temas personalizados (%APPDATA%/DowP2/themes)"), icon_size=15)
+        self.btn_open_themes.clicked.connect(self._open_user_themes_dir)
+
         self.theme_row.addWidget(self.theme_label)
         self.theme_row.addStretch()
         self.theme_row.addWidget(self.theme_combo)
+        self.theme_row.addWidget(self.btn_open_themes)
         self.content_layout.addLayout(self.theme_row)
+
+        # 3. Tipografía / Fuente
+        self.font_row = QHBoxLayout()
+        self.font_label = QLabel(self.tr("Tipografía / Fuente"))
+        self.font_label.setObjectName("settingsLabel")
+        
+        self.font_combo = AutoPopupComboBox()
+        self.font_combo.setFixedWidth(180)
+
+        self.btn_open_fonts = QPushButton()
+        self.btn_open_fonts.setFixedSize(30, 30)
+        apply_folder_open_button_style(self.btn_open_fonts, tooltip=self.tr("Abrir carpeta de fuentes personalizadas (%APPDATA%/DowP2/fonts)"), icon_size=15)
+        self.btn_open_fonts.clicked.connect(self._open_user_fonts_dir)
+
+        self.font_row.addWidget(self.font_label)
+        self.font_row.addStretch()
+        self.font_row.addWidget(self.font_combo)
+        self.font_row.addWidget(self.btn_open_fonts)
+        self.content_layout.addLayout(self.font_row)
 
         # --- SECCIÓN: COMPORTAMIENTO ---
         self.comp_label = QLabel(self.tr("Comportamiento"))
@@ -151,10 +181,43 @@ class GeneralPage(QWidget):
         # Connections
         self.lang_combo.currentIndexChanged.connect(self.on_language_selection)
         self.theme_combo.currentIndexChanged.connect(self.on_theme_selection)
+        self.font_combo.currentIndexChanged.connect(self.on_font_selection)
         self.auto_switch.toggled.connect(self.on_auto_analyze_toggled)
         self.paste_switch.toggled.connect(self.on_auto_paste_toggled)
         self.adobe_switch.toggled.connect(self.on_adobe_compat_toggled)
 
+
+    def _open_user_themes_dir(self):
+        """Abre la carpeta de temas personalizados del usuario en el explorador de archivos."""
+        themes_dir = get_user_themes_dir()
+        QDesktopServices.openUrl(QUrl.fromLocalFile(themes_dir))
+        logger.info(f"GeneralPage: Abierta carpeta de temas: {themes_dir}")
+
+    def _open_user_fonts_dir(self):
+        """Abre la carpeta de fuentes personalizadas del usuario en el explorador de archivos."""
+        fonts_dir = get_user_fonts_dir()
+        QDesktopServices.openUrl(QUrl.fromLocalFile(fonts_dir))
+        logger.info(f"GeneralPage: Abierta carpeta de fuentes: {fonts_dir}")
+
+    def _populate_themes(self):
+        """Carga los temas disponibles dinámicamente."""
+        self.theme_combo.blockSignals(True)
+        self.theme_combo.clear()
+        themes = get_available_themes()
+        for t in themes:
+            self.theme_combo.addItem(t["name"], t["id"])
+        self.theme_combo.blockSignals(False)
+
+    def _populate_fonts(self):
+        """Carga las fuentes disponibles dinámicamente."""
+        self.font_combo.blockSignals(True)
+        self.font_combo.clear()
+        self.font_combo.addItem(self.tr("Por defecto del tema"), "theme_default")
+        
+        fonts = get_available_fonts()
+        for f in fonts:
+            self.font_combo.addItem(f, f)
+        self.font_combo.blockSignals(False)
 
     def update_switch_colors(self):
         config = get_config()
@@ -172,11 +235,21 @@ class GeneralPage(QWidget):
         if index >= 0:
             self.lang_combo.setCurrentIndex(index)
             
-        # Load Theme
+        # Load Themes
+        self._populate_themes()
         theme = config.get("theme", "dark")
         index = self.theme_combo.findData(theme)
         if index >= 0:
             self.theme_combo.setCurrentIndex(index)
+            
+        # Load Fonts
+        self._populate_fonts()
+        font_family = config.get("font_family", "theme_default")
+        index = self.font_combo.findData(font_family)
+        if index >= 0:
+            self.font_combo.setCurrentIndex(index)
+        else:
+            self.font_combo.setCurrentIndex(0) # fallback a por defecto
             
         # Load Switches
         self.auto_switch.setChecked(config.get("auto_analyze", True))
@@ -196,6 +269,7 @@ class GeneralPage(QWidget):
     def on_theme_selection(self, index):
         if self._is_loading: return
         theme_code = self.theme_combo.itemData(index)
+        if not theme_code: return
         config = get_config()
         if config.get("theme") != theme_code:
             config["theme"] = theme_code
@@ -203,6 +277,17 @@ class GeneralPage(QWidget):
             self.update_switch_colors()
             logger.info(f"GeneralPage: Tema cambiado a {theme_code}")
             self.theme_changed.emit(theme_code)
+
+    def on_font_selection(self, index):
+        if self._is_loading: return
+        font_code = self.font_combo.itemData(index)
+        if font_code is None: return
+        config = get_config()
+        if config.get("font_family") != font_code:
+            config["font_family"] = font_code
+            save_config(config)
+            logger.info(f"GeneralPage: Tipografía cambiada a {font_code}")
+            self.font_changed.emit(font_code)
 
     def on_auto_analyze_toggled(self, checked):
         if self._is_loading: return

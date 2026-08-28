@@ -24,6 +24,7 @@ from PySide6.QtSvgWidgets import QSvgWidget
 from gui.styles import get_theme_token
 from core.logger.logger_manager import logger
 from core.utils.paths import get_src_dir
+from core.utils.font_manager import get_active_font_family
 
 
 class DependencyCheckWorker(QThread):
@@ -213,12 +214,14 @@ class SplashScreen(QWidget):
         warning = get_theme_token("estado_aviso", "#d8c94a")
         error = get_theme_token("estado_error", "#ff6b5f")
 
-        # Guardar colores para uso posterior
+        # Guardar colores y fuente para uso posterior
+        self._font_family = f"'{get_active_font_family()}', 'Segoe UI', sans-serif"
         self._colors = {
             "bg": bg, "text_main": text_main,
             "text_sec": text_sec, "accent": accent,
             "success": success, "warning": warning, "error": error,
             "bg_dark": bg_dark, "border": border,
+            "font": self._font_family
         }
 
         # ── Layout raíz ──
@@ -270,7 +273,7 @@ class SplashScreen(QWidget):
         title_lbl = QLabel("DowP 2.0.0", container)
         title_lbl.setStyleSheet(f"""
             color: {text_main};
-            font-family: 'Raleway', 'Segoe UI', sans-serif;
+            font-family: {self._font_family};
             font-size: 26px;
             font-weight: 800;
             background: transparent;
@@ -283,7 +286,7 @@ class SplashScreen(QWidget):
         self.status_label = QLabel("Iniciando...", container)
         self.status_label.setStyleSheet(f"""
             color: {text_sec};
-            font-family: 'Raleway', 'Segoe UI', sans-serif;
+            font-family: {self._font_family};
             font-size: 11px;
             font-weight: 300;
             background: transparent;
@@ -375,7 +378,7 @@ class SplashScreen(QWidget):
         name_lbl = QLabel(f"<b>{name}</b>", self.deps_container)
         name_lbl.setStyleSheet(f"""
             color: #cccccc;
-            font-family: 'Raleway', 'Segoe UI', sans-serif;
+            font-family: {self._font_family};
             font-size: 11px;
         """)
         name_lbl.setFixedWidth(60)
@@ -394,7 +397,7 @@ class SplashScreen(QWidget):
         status = QLabel("Esperando...", self.deps_container)
         status.setStyleSheet(f"""
             color: {colors['text_sec']};
-            font-family: 'Raleway', 'Segoe UI', sans-serif;
+            font-family: {self._font_family};
             font-size: 10px;
             font-weight: 600;
         """)
@@ -439,7 +442,7 @@ class SplashScreen(QWidget):
                 row["status"].setText(v_text or "OK")
                 row["status"].setStyleSheet(f"""
                     color: {self._colors['success']};
-                    font-family: 'Raleway', 'Segoe UI', sans-serif;
+                    font-family: {self._font_family};
                     font-size: 10px; font-weight: 600;
                 """)
             else:
@@ -448,7 +451,7 @@ class SplashScreen(QWidget):
                 row["status"].setText("Pendiente")
                 row["status"].setStyleSheet(f"""
                     color: {self._colors['text_sec']};
-                    font-family: 'Raleway', 'Segoe UI', sans-serif;
+                    font-family: {self._font_family};
                     font-size: 10px; font-weight: 600;
                 """)
 
@@ -464,7 +467,7 @@ class SplashScreen(QWidget):
         row["status"].setText("Descargando... 0%")
         row["status"].setStyleSheet(f"""
             color: {self._colors['warning']};
-            font-family: 'Raleway', 'Segoe UI', sans-serif;
+            font-family: {self._font_family};
             font-size: 10px; font-weight: 600;
         """)
         row["bar"].setValue(0)
@@ -500,7 +503,7 @@ class SplashScreen(QWidget):
             row["status"].setText(v_text or "OK")
             row["status"].setStyleSheet(f"""
                 color: {self._colors['success']};
-                font-family: 'Raleway', 'Segoe UI', sans-serif;
+                font-family: {self._font_family};
                 font-size: 10px; font-weight: 600;
             """)
         else:
@@ -508,7 +511,7 @@ class SplashScreen(QWidget):
             row["status"].setText("Error")
             row["status"].setStyleSheet(f"""
                 color: {self._colors['error']};
-                font-family: 'Raleway', 'Segoe UI', sans-serif;
+                font-family: {self._font_family};
                 font-size: 10px; font-weight: 600;
             """)
 
@@ -518,7 +521,7 @@ class SplashScreen(QWidget):
         self.status_label.setText("Iniciando aplicación...")
         self.status_label.setStyleSheet(f"""
             color: {self._colors['text_sec']};
-            font-family: 'Raleway', 'Segoe UI', sans-serif;
+            font-family: {self._font_family};
             font-size: 11px;
             font-weight: 300;
             background: transparent;
@@ -545,7 +548,7 @@ class SplashScreen(QWidget):
         self.status_label.setText(f"Error: {msg}")
         self.status_label.setStyleSheet(f"""
             color: {self._colors['error']};
-            font-family: 'Raleway', 'Segoe UI', sans-serif;
+            font-family: {self._font_family};
             font-size: 11px;
             font-weight: 600;
             background: transparent;

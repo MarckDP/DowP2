@@ -280,7 +280,7 @@ class IntegrationsPage(QWidget):
         layout.addLayout(path_row)
         
         # Connect checkbox
-        checkbox.toggled.connect(lambda checked: self._on_app_toggled(app_id, checked, icon_lbl, path_input, default_path))
+        checkbox.toggled.connect(lambda checked: self._on_app_toggled(app_id, checked, icon_lbl, path_input, btn_browse, default_path))
         path_input.setEnabled(is_enabled)
         btn_browse.setEnabled(is_enabled)
         
@@ -296,10 +296,11 @@ class IntegrationsPage(QWidget):
             line_edit.setText(file_path)
             self._save_integration_setting(app_id, "path", file_path)
             
-    def _on_app_toggled(self, app_id, checked, icon_lbl, path_input, default_path):
+    def _on_app_toggled(self, app_id, checked, icon_lbl, path_input, btn_browse, default_path):
         self._save_integration_setting(app_id, "enabled", checked)
         self.set_icon(icon_lbl, icon_lbl.property("icon_name") or f"{app_id}.svg", opacity=1.0 if checked else 0.3)
         path_input.setEnabled(checked)
+        btn_browse.setEnabled(checked)
         
         # Auto-fill if enabling and empty
         if checked and not path_input.text() and os.path.exists(default_path):

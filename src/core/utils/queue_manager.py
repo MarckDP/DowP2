@@ -7,6 +7,21 @@ from uuid import uuid4
 from PySide6.QtCore import QObject, Signal, QThread, QMutex, QRecursiveMutex, QMutexLocker
 from core.logger.logger_manager import logger
 
+
+def _extract_vf_value(args: list) -> tuple:
+    """Separa el valor de '-vf' (si está) del resto de una lista de argumentos de
+    ffmpeg. Necesario para la marca de agua de imagen: no se puede pasar '-vf' y
+    '-filter_complex' juntos apuntando al mismo stream de video de salida, así que el
+    -vf que ya armó advanced_recode_panel.py (escala/recorte/texto) se reinyecta como
+    primera etapa del filter_complex en vez de quedar como -vf suelto."""
+    if "-vf" not in args:
+        return None, list(args)
+    idx = args.index("-vf")
+    value = args[idx + 1] if idx + 1 < len(args) else None
+    remaining = args[:idx] + args[idx + 2:]
+    return value, remaining
+
+
 class JobStatus:
     PENDING = "PENDING"
     ANALYZING = "ANALYZING"
@@ -572,6 +587,20 @@ class QueueWorker(QThread):
             cmd.extend(["-to", f"{trim_out:.3f}"])
         cmd.extend(["-i", input_file])
 
+        # Marca de agua de imagen: segundo input (índice 1), en loop porque una imagen es
+        # un solo frame — sin -loop 1 el overlay corta el video entero en el frame 0. Si
+        # el archivo se borró/movió después de armar la cola (ej. desde un preajuste
+        # viejo), se degrada en silencio a "sin marca de agua" en vez de fallar el job
+        # entero — el aviso real ya debería haber pasado en la UI antes de llegar acá.
+        watermark_image_path = settings.get("watermark_image_path")
+        watermark_overlay_filter = settings.get("watermark_overlay_filter")
+        use_watermark_image = bool(watermark_image_path and watermark_overlay_filter)
+        if use_watermark_image and not os.path.exists(watermark_image_path):
+            logger.warning(f"QueueWorker: Imagen de marca de agua no encontrada, se omite: {watermark_image_path}")
+            use_watermark_image = False
+        if use_watermark_image:
+            cmd.extend(["-loop", "1", "-i", watermark_image_path])
+
         stream_mode = settings.get("stream_mode", "video+audio")
 
         # Selección explícita de pistas de audio a conservar (ver advanced_recode_panel.py):
@@ -587,12 +616,25 @@ class QueueWorker(QThread):
         explicit_mapping = audio_track_selection is not None
 
         # Opciones de Video
+        video_mode = settings.get("video_mode", "recode")
         if stream_mode == "audio_only":
             cmd.append("-vn")
+        elif use_watermark_image and video_mode != "copy":
+            # No se puede usar -vf junto con -filter_complex apuntando al mismo stream:
+            # se extrae el valor de -vf que ya armó advanced_recode_panel.py (escala/
+            # recorte/texto) y se reinyecta como primera etapa del grafo fusionado.
+            v_args = settings.get("video_args", [])
+            vf_value, v_args = _extract_vf_value(v_args)
+            main_stage = vf_value if vf_value else "null"  # 'null' = passthrough de ffmpeg
+            filter_complex = f"[0:v]{main_stage}[main];{watermark_overlay_filter}"
+            cmd.extend(["-filter_complex", filter_complex, "-map", "[vout]"])
+            if v_args:
+                cmd.extend(v_args)
+            else:
+                cmd.extend(["-c:v", "libx264", "-crf", "23"])
         else:
             if explicit_mapping:
                 cmd.extend(["-map", "0:v:0?"])
-            video_mode = settings.get("video_mode", "recode")
             if video_mode == "copy":
                 cmd.extend(["-c:v", "copy"])
             else:
@@ -611,6 +653,11 @@ class QueueWorker(QThread):
                 cmd.extend(["-map", "0:a"])
             elif isinstance(audio_track_selection, int):
                 cmd.extend(["-map", f"0:a:{audio_track_selection}"])
+            elif use_watermark_image and video_mode != "copy":
+                # El -map "[vout]" de arriba ya apagó la auto-selección de streams de
+                # ffmpeg para TODO el output (ver comentario más arriba) — sin este mapeo
+                # explícito, el audio desaparecería en vez de incluirse automáticamente.
+                cmd.extend(["-map", "0:a?"])
 
             audio_mode = settings.get("audio_mode", "recode")
             if audio_mode == "copy":
@@ -622,8 +669,17 @@ class QueueWorker(QThread):
                 else:
                     cmd.extend(["-c:a", "aac", "-b:a", "192k"])
 
+        if use_watermark_image:
+            # La imagen de marca de agua entra con -loop 1 (stream infinito, ver más
+            # arriba). El filtro overlay por defecto espera a que TODOS sus inputs
+            # terminen antes de cerrar la salida (shortest=0) — sin este flag, ffmpeg
+            # nunca ve EOF en el input infinito y el proceso queda corriendo para
+            # siempre después de terminar de codificar el video real (se ve como
+            # progreso pegado en 100% que nunca llega a completarse).
+            cmd.append("-shortest")
+
         cmd.append(output_file)
-        
+
         logger.info(f"QueueWorker: Iniciando RECODE con comando: {' '.join(cmd)}")
         
         startupinfo = None

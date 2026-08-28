@@ -6,10 +6,10 @@ import array
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit,
     QFrame, QSizePolicy, QScrollArea, QSlider, QGraphicsView, QGraphicsScene,
-    QToolButton, QMenu, QCheckBox
+    QToolButton, QMenu, QCheckBox, QGraphicsObject
 )
 from PySide6.QtCore import Qt, QUrl, QSize, QSizeF, QPointF, QTimer, Signal, QEvent, QRectF
-from PySide6.QtGui import QPainter, QColor, QPen, QPainterPath, QPixmap, QImage
+from PySide6.QtGui import QPainter, QColor, QPen, QPainterPath, QPixmap, QImage, QFont, QFontMetricsF
 from PySide6.QtMultimedia import (
     QMediaPlayer, QAudioOutput, QMediaMetaData, QAudioBufferOutput, QAudioFormat
 )
@@ -577,6 +577,8 @@ class _TransparentVideoView(QGraphicsView):
     - Doble clic para restablecer el zoom a 1.0x (Fit to Window).
     """
 
+    video_rect_changed = Signal(QRectF)  # rect (pos+size) del video_item en coords de escena
+
     def __init__(self, scene: QGraphicsScene, video_item: QGraphicsVideoItem, parent=None):
         super().__init__(scene, parent)
         self._video_item = video_item
@@ -585,6 +587,7 @@ class _TransparentVideoView(QGraphicsView):
         self._max_zoom = 10.0
         self._is_panning = False
         self._pan_start = None
+        self._crop_edit_mode = False
 
         self.setFrameShape(QFrame.NoFrame)
         self.setStyleSheet("QGraphicsView { background: transparent; border: none; }")
@@ -609,13 +612,22 @@ class _TransparentVideoView(QGraphicsView):
         if native.isEmpty() or native.width() <= 0 or native.height() <= 0:
             self._video_item.setSize(QSizeF(vp_w, vp_h))
             self._video_item.setPos(0, 0)
-            return
+        else:
+            scale = min(vp_w / native.width(), vp_h / native.height())
+            scaled_w = native.width() * scale
+            scaled_h = native.height() * scale
+            self._video_item.setSize(QSizeF(scaled_w, scaled_h))
+            self._video_item.setPos((vp_w - scaled_w) / 2.0, (vp_h - scaled_h) / 2.0)
 
-        scale = min(vp_w / native.width(), vp_h / native.height())
-        scaled_w = native.width() * scale
-        scaled_h = native.height() * scale
-        self._video_item.setSize(QSizeF(scaled_w, scaled_h))
-        self._video_item.setPos((vp_w - scaled_w) / 2.0, (vp_h - scaled_h) / 2.0)
+        pos = self._video_item.pos()
+        size = self._video_item.size()
+        self.video_rect_changed.emit(QRectF(pos.x(), pos.y(), size.width(), size.height()))
+
+    def set_crop_edit_mode(self, enabled: bool):
+        """Mientras el modo de recorte interactivo está activo, un clic con zoom > 1.0 no
+        debe iniciar el paneo de la vista — el rectángulo de recorte necesita recibir esos
+        eventos de mouse (ver _CropOverlayItem)."""
+        self._crop_edit_mode = enabled
 
     def reset_zoom(self):
         """Restablece el zoom y centra el video (1.0x Fit)."""
@@ -651,7 +663,7 @@ class _TransparentVideoView(QGraphicsView):
         event.accept()
 
     def mousePressEvent(self, event):
-        if event.button() in (Qt.LeftButton, Qt.MiddleButton):
+        if not self._crop_edit_mode and event.button() in (Qt.LeftButton, Qt.MiddleButton):
             if self._zoom_level > 1.0:
                 self._is_panning = True
                 self._pan_start = event.position().toPoint()
@@ -696,6 +708,592 @@ class _TransparentVideoView(QGraphicsView):
             self.refit()
 
 
+class _CropOverlayItem(QGraphicsObject):
+    """Rectángulo de recorte interactivo — cada lado (y cada esquina) se arrastra libre e
+    independientemente, sin aspecto bloqueado: el tamaño resultante se refleja en vivo en
+    los campos Ancho/Alto del panel (ver AdvancedRecodePanel.sync_dimensions_from_crop).
+    Dibujado como ítem hermano de video_item en video_scene — así hereda gratis el
+    zoom/paneo de _TransparentVideoView sin ningún código extra.
+
+    El ítem no usa pos()/transform propios (queda siempre en el origen de la escena), así
+    que todas las coordenadas de _video_rect/_crop_rect usadas acá son directamente
+    coordenadas de escena, sin necesidad de mapToScene/mapFromScene.
+    """
+
+    changed = Signal()  # se emite al final de cada arrastre/resize que modificó el recorte
+
+    _HANDLE_SIZE = 12.0
+    _MIN_SIZE_RATIO = 0.15  # tamaño mínimo del recorte, como fracción del lado de video_rect
+    _CURSORS = {
+        "nw": Qt.SizeFDiagCursor, "se": Qt.SizeFDiagCursor,
+        "ne": Qt.SizeBDiagCursor, "sw": Qt.SizeBDiagCursor,
+        "n": Qt.SizeVerCursor, "s": Qt.SizeVerCursor,
+        "e": Qt.SizeHorCursor, "w": Qt.SizeHorCursor,
+        "move": Qt.SizeAllCursor,
+    }
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._video_rect = QRectF()
+        self._crop_rect = QRectF()
+        self._min_w = 20.0
+        self._min_h = 20.0
+        self._drag_mode = None
+        self._drag_start_mouse = QPointF()
+        self._drag_start_rect = QRectF()
+        self._touched = False
+        self.setAcceptHoverEvents(True)
+        self.setAcceptedMouseButtons(Qt.LeftButton)
+        self.setZValue(10)
+
+    def boundingRect(self):
+        return self._video_rect
+
+    def is_touched(self) -> bool:
+        return self._touched
+
+    def hide_and_reset(self):
+        self.setVisible(False)
+        self._touched = False
+
+    def set_video_rect(self, rect: QRectF):
+        """Llamado en cada refit() de la vista. Reescala el recorte actual manteniendo sus
+        fracciones respecto al cuadro de video en vez de resetearlo (para que sobreviva a
+        cambios de tamaño de ventana/zoom mientras se está editando)."""
+        self.prepareGeometryChange()
+        old_rect = self._video_rect
+        self._video_rect = QRectF(rect)
+        if old_rect.width() > 0 and old_rect.height() > 0 and not self._crop_rect.isEmpty():
+            fx = (self._crop_rect.x() - old_rect.x()) / old_rect.width()
+            fy = (self._crop_rect.y() - old_rect.y()) / old_rect.height()
+            fw = self._crop_rect.width() / old_rect.width()
+            fh = self._crop_rect.height() / old_rect.height()
+            self._apply_fraction(fx, fy, fw, fh)
+        self._update_min_size()
+        self.update()
+
+    def _update_min_size(self):
+        if self._video_rect.isEmpty():
+            return
+        self._min_w = max(20.0, self._video_rect.width() * self._MIN_SIZE_RATIO)
+        self._min_h = max(20.0, self._video_rect.height() * self._MIN_SIZE_RATIO)
+
+    def activate(self, fw: float, fh: float):
+        """Activa el overlay centrado con el tamaño fraccional (fw, fh) dado — se usa al
+        entrar en modo recorte interactivo (siempre que la resolución sea personalizada y
+        el ajuste sea "Recortar")."""
+        self._touched = False
+        vr = self._video_rect
+        if vr.isEmpty():
+            return
+        fw = min(max(fw, 0.02), 1.0)
+        fh = min(max(fh, 0.02), 1.0)
+        w, h = fw * vr.width(), fh * vr.height()
+        x = vr.x() + (vr.width() - w) / 2.0
+        y = vr.y() + (vr.height() - h) / 2.0
+        self.prepareGeometryChange()
+        self._crop_rect = QRectF(x, y, w, h)
+        self._update_min_size()
+        self.update()
+
+    def resize_keep_center(self, fw: float, fh: float):
+        """Redimensiona el recorte activo a un tamaño fraccional específico mantenido su
+        centro actual — se usa cuando el usuario tipea Ancho/Alto a mano mientras el modo
+        interactivo ya está activo (dirección opuesta a get_crop_fraction)."""
+        vr = self._video_rect
+        if vr.isEmpty() or self._crop_rect.isEmpty():
+            return
+        fw = min(max(fw, 0.02), 1.0)
+        fh = min(max(fh, 0.02), 1.0)
+        w, h = fw * vr.width(), fh * vr.height()
+        cx, cy = self._crop_rect.center().x(), self._crop_rect.center().y()
+        x = min(max(cx - w / 2.0, vr.left()), vr.right() - w)
+        y = min(max(cy - h / 2.0, vr.top()), vr.bottom() - h)
+        self.prepareGeometryChange()
+        self._crop_rect = QRectF(x, y, w, h)
+        self._update_min_size()
+        self.update()
+
+    def _apply_fraction(self, fx, fy, fw, fh):
+        vr = self._video_rect
+        self._crop_rect = QRectF(vr.x() + fx * vr.width(), vr.y() + fy * vr.height(),
+                                  fw * vr.width(), fh * vr.height())
+
+    def get_crop_rect_scene(self) -> QRectF:
+        """Rect actual del recorte en coordenadas de escena — usado por
+        MediaTrimPlayerWidget para saber cuál es el "cuadro de salida efectivo" donde
+        pueden moverse las marcas de agua (ver _effective_output_rect)."""
+        return QRectF(self._crop_rect)
+
+    def get_crop_fraction(self):
+        vr = self._video_rect
+        if vr.isEmpty() or vr.width() <= 0 or vr.height() <= 0 or self._crop_rect.isEmpty():
+            return None
+        fx = (self._crop_rect.x() - vr.x()) / vr.width()
+        fy = (self._crop_rect.y() - vr.y()) / vr.height()
+        fw = self._crop_rect.width() / vr.width()
+        fh = self._crop_rect.height() / vr.height()
+        return (fx, fy, fw, fh)
+
+    # ------------------------------------------------------------------
+    # Dibujo
+    # ------------------------------------------------------------------
+    def paint(self, painter, option, widget=None):
+        if self._video_rect.isEmpty() or self._crop_rect.isEmpty():
+            return
+        painter.setRenderHint(QPainter.Antialiasing, True)
+
+        vr, cr = self._video_rect, self._crop_rect
+        mask_color = QColor(0, 0, 0, 140)
+        painter.fillRect(QRectF(vr.left(), vr.top(), vr.width(), cr.top() - vr.top()), mask_color)
+        painter.fillRect(QRectF(vr.left(), cr.bottom(), vr.width(), vr.bottom() - cr.bottom()), mask_color)
+        painter.fillRect(QRectF(vr.left(), cr.top(), cr.left() - vr.left(), cr.height()), mask_color)
+        painter.fillRect(QRectF(cr.right(), cr.top(), vr.right() - cr.right(), cr.height()), mask_color)
+
+        scale = self._current_scale()
+        painter.setPen(QPen(QColor("#1DC038"), 2.0 / scale))
+        painter.setBrush(Qt.NoBrush)
+        painter.drawRect(cr)
+
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor("#B9E640"))
+        handle_size = self._HANDLE_SIZE / scale
+        half = handle_size / 2.0
+        for hx, hy in self._handle_centers():
+            painter.drawRect(QRectF(hx - half, hy - half, handle_size, handle_size))
+
+    def _handle_centers(self):
+        cr = self._crop_rect
+        return [
+            (cr.left(), cr.top()), (cr.right(), cr.top()),
+            (cr.left(), cr.bottom()), (cr.right(), cr.bottom()),
+        ]
+
+    def _current_scale(self) -> float:
+        """Factor de zoom actual de la vista que contiene esta escena. El ítem vive en
+        coordenadas de escena, así que sin esto las manijas (dibujadas con un tamaño fijo
+        en esas coordenadas) crecen junto con el zoom y terminan tapando la imagen — se usa
+        para achicar su tamaño en escena proporcionalmente, y que el tamaño EN PANTALLA se
+        mantenga constante sin importar el zoom."""
+        scene = self.scene()
+        if scene:
+            views = scene.views()
+            if views:
+                scale = views[0].transform().m11()
+                if scale > 0:
+                    return scale
+        return 1.0
+
+    def _zone_at(self, pos: QPointF) -> str | None:
+        """Determina qué parte del recorte hay bajo el cursor: una esquina (resize
+        diagonal libre), un lado (resize de un solo eje), el cuerpo (mover), o nada."""
+        cr = self._crop_rect
+        if cr.isEmpty():
+            return None
+        m = self._HANDLE_SIZE / self._current_scale()
+        near_left = abs(pos.x() - cr.left()) <= m
+        near_right = abs(pos.x() - cr.right()) <= m
+        near_top = abs(pos.y() - cr.top()) <= m
+        near_bottom = abs(pos.y() - cr.bottom()) <= m
+        within_x = cr.left() - m <= pos.x() <= cr.right() + m
+        within_y = cr.top() - m <= pos.y() <= cr.bottom() + m
+
+        if near_top and near_left and within_x and within_y:
+            return "nw"
+        if near_top and near_right and within_x and within_y:
+            return "ne"
+        if near_bottom and near_left and within_x and within_y:
+            return "sw"
+        if near_bottom and near_right and within_x and within_y:
+            return "se"
+        if near_top and within_x:
+            return "n"
+        if near_bottom and within_x:
+            return "s"
+        if near_left and within_y:
+            return "w"
+        if near_right and within_y:
+            return "e"
+        if cr.contains(pos):
+            return "move"
+        return None
+
+    # ------------------------------------------------------------------
+    # Interacción de mouse
+    # ------------------------------------------------------------------
+    def hoverMoveEvent(self, event):
+        zone = self._zone_at(event.pos())
+        cursor = self._CURSORS.get(zone) if zone else None
+        if cursor is not None:
+            self.setCursor(cursor)
+        else:
+            self.unsetCursor()
+        super().hoverMoveEvent(event)
+
+    def mousePressEvent(self, event):
+        zone = self._zone_at(event.pos())
+        if not zone:
+            self._drag_mode = None
+            event.ignore()
+            return
+        self._drag_mode = zone
+        self._drag_start_mouse = event.pos()
+        self._drag_start_rect = QRectF(self._crop_rect)
+        event.accept()
+
+    def mouseMoveEvent(self, event):
+        if not self._drag_mode:
+            event.ignore()
+            return
+        delta = event.pos() - self._drag_start_mouse
+        if self._drag_mode == "move":
+            new_rect = self._clamp_move(self._drag_start_rect.translated(delta))
+        else:
+            new_rect = self._resize_rect(self._drag_mode, delta)
+        if new_rect != self._crop_rect:
+            self.prepareGeometryChange()
+            self._crop_rect = new_rect
+            if delta.x() or delta.y():
+                self._touched = True
+            self.update()
+            self.changed.emit()
+        event.accept()
+
+    def mouseReleaseEvent(self, event):
+        self._drag_mode = None
+        event.accept()
+
+    def _clamp_move(self, rect: QRectF) -> QRectF:
+        vr = self._video_rect
+        dx = dy = 0.0
+        if rect.left() < vr.left():
+            dx = vr.left() - rect.left()
+        elif rect.right() > vr.right():
+            dx = vr.right() - rect.right()
+        if rect.top() < vr.top():
+            dy = vr.top() - rect.top()
+        elif rect.bottom() > vr.bottom():
+            dy = vr.bottom() - rect.bottom()
+        return rect.translated(dx, dy)
+
+    def _resize_rect(self, zone: str, delta: QPointF) -> QRectF:
+        """Redimensiona SOLO los lados que forman parte de 'zone' (uno para un lado, dos
+        para una esquina), sin ninguna relación de aspecto entre ancho y alto."""
+        start = self._drag_start_rect
+        vr = self._video_rect
+        left, top, right, bottom = start.left(), start.top(), start.right(), start.bottom()
+
+        if "w" in zone:
+            left = min(start.right() - self._min_w, start.left() + delta.x())
+        if "e" in zone:
+            right = max(start.left() + self._min_w, start.right() + delta.x())
+        if "n" in zone:
+            top = min(start.bottom() - self._min_h, start.top() + delta.y())
+        if "s" in zone:
+            bottom = max(start.top() + self._min_h, start.bottom() + delta.y())
+
+        left = max(left, vr.left())
+        top = max(top, vr.top())
+        right = min(right, vr.right())
+        bottom = min(bottom, vr.bottom())
+
+        # El clamp contra los bordes del video puede haber apretado por debajo del mínimo
+        # (ej. arrastrando "w" hasta pegarse al borde izquierdo) — se reaplica el mínimo
+        # empujando el lado que SÍ se está moviendo, nunca el lado fijo opuesto.
+        if right - left < self._min_w:
+            if "w" in zone:
+                left = right - self._min_w
+            else:
+                right = left + self._min_w
+        if bottom - top < self._min_h:
+            if "n" in zone:
+                top = bottom - self._min_h
+            else:
+                bottom = top + self._min_h
+
+        return QRectF(QPointF(left, top), QPointF(right, bottom))
+
+
+class _DraggableWatermarkItem(QGraphicsObject):
+    """Base para las marcas de agua interactivas (texto/imagen) sobre la vista previa:
+    se pueden MOVER (arrastrando el cuerpo) y REDIMENSIONAR (arrastrando la manija de
+    la esquina inferior-derecha, con la esquina superior-izquierda fija como ancla —
+    igual convención que arrastrar el borde de una ventana), dentro del "cuadro de
+    salida efectivo" (el recorte si está activo, si no el cuadro de video completo —
+    ver MediaTrimPlayerWidget._effective_output_rect). Misma convención que
+    _CropOverlayItem: sin pos()/transform propios, todo en coordenadas de escena, y la
+    manija se dibuja a tamaño constante en pantalla dividiendo por el zoom actual
+    (_current_scale) — mismo arreglo que ya se aplicó al recorte para que no tape la
+    imagen al hacer zoom.
+
+    fx/fy son la posición de la esquina superior-izquierda como fracción del espacio de
+    arrastre disponible (0 = pegado arriba/izquierda, 1 = pegado abajo/derecha) — mismo
+    fx/fy que consume watermark_builder.py para armar las expresiones de ffmpeg
+    (w-tw)*fx / (h-th)*fy, así que lo que se ve acá corresponde 1 a 1 con la fórmula
+    que realmente va a aplicar ffmpeg. El "tamaño" (size_pct de texto, scale_pct de
+    imagen) también se puede arrastrar acá, y se sincroniza en vivo con el slider del
+    panel — ver AdvancedRecodePanel.set_text_watermark_size/set_image_watermark_size."""
+
+    changed = Signal()  # se emite al final de cada arrastre real (mover o redimensionar)
+
+    _HANDLE_SIZE = 12.0
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._output_rect = QRectF()
+        self._fx = 0.9
+        self._fy = 0.9
+        self._drag_mode = None  # None | "move" | "resize"
+        self._drag_start_mouse = QPointF()
+        self._drag_start_fx = 0.9
+        self._drag_start_fy = 0.9
+        self._drag_start_size_value = 0.0
+        self._drag_anchor = QPointF()  # esquina superior-izquierda fija durante el resize
+        self.setAcceptHoverEvents(True)
+        self.setAcceptedMouseButtons(Qt.LeftButton)
+        self.setZValue(20)
+
+    def _item_size(self) -> QSizeF:
+        raise NotImplementedError
+
+    def _size_value(self) -> float:
+        """Tamaño ajustable por arrastre (size_pct de texto o scale_pct de imagen)."""
+        raise NotImplementedError
+
+    def _set_size_value(self, value: float):
+        raise NotImplementedError
+
+    def _resize_delta_to_value(self, delta: QPointF) -> float:
+        raise NotImplementedError
+
+    def get_size_pct(self) -> float:
+        return self._size_value()
+
+    def _current_scale(self) -> float:
+        scene = self.scene()
+        if scene:
+            views = scene.views()
+            if views:
+                scale = views[0].transform().m11()
+                if scale > 0:
+                    return scale
+        return 1.0
+
+    def set_output_rect(self, rect: QRectF):
+        self.prepareGeometryChange()
+        self._output_rect = QRectF(rect)
+        self.update()
+
+    def get_position_fraction(self) -> tuple[float, float]:
+        return (self._fx, self._fy)
+
+    def _item_rect(self) -> QRectF:
+        size = self._item_size()
+        avail_w = max(0.0, self._output_rect.width() - size.width())
+        avail_h = max(0.0, self._output_rect.height() - size.height())
+        x = self._output_rect.x() + self._fx * avail_w
+        y = self._output_rect.y() + self._fy * avail_h
+        return QRectF(x, y, size.width(), size.height())
+
+    def _handle_center(self) -> QPointF:
+        rect = self._item_rect()
+        return QPointF(rect.right(), rect.bottom())
+
+    def boundingRect(self):
+        if self._output_rect.isEmpty():
+            return QRectF()
+        return self._item_rect().adjusted(-4, -4, 4, 4)
+
+    def _paint_resize_handle(self, painter):
+        m = self._HANDLE_SIZE / self._current_scale()
+        center = self._handle_center()
+        painter.setOpacity(1.0)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor("#B9E640"))
+        painter.drawRect(QRectF(center.x() - m / 2.0, center.y() - m / 2.0, m, m))
+
+    def _zone_at(self, pos: QPointF) -> str | None:
+        m = self._HANDLE_SIZE / self._current_scale()
+        center = self._handle_center()
+        if abs(pos.x() - center.x()) <= m and abs(pos.y() - center.y()) <= m:
+            return "resize"
+        if self._item_rect().contains(pos):
+            return "move"
+        return None
+
+    def hoverMoveEvent(self, event):
+        zone = self._zone_at(event.pos())
+        if zone == "resize":
+            self.setCursor(Qt.SizeFDiagCursor)
+        elif zone == "move":
+            self.setCursor(Qt.SizeAllCursor)
+        else:
+            self.unsetCursor()
+        super().hoverMoveEvent(event)
+
+    def mousePressEvent(self, event):
+        zone = self._zone_at(event.pos())
+        if not zone:
+            self._drag_mode = None
+            event.ignore()
+            return
+        self._drag_mode = zone
+        self._drag_start_mouse = event.pos()
+        self._drag_start_fx, self._drag_start_fy = self._fx, self._fy
+        self._drag_start_size_value = self._size_value()
+        self._drag_anchor = self._item_rect().topLeft()
+        event.accept()
+
+    def mouseMoveEvent(self, event):
+        if not self._drag_mode:
+            event.ignore()
+            return
+        delta = event.pos() - self._drag_start_mouse
+        changed = False
+        if self._drag_mode == "move":
+            size = self._item_size()
+            avail_w = max(1e-6, self._output_rect.width() - size.width())
+            avail_h = max(1e-6, self._output_rect.height() - size.height())
+            new_fx = min(max(self._drag_start_fx + delta.x() / avail_w, 0.0), 1.0)
+            new_fy = min(max(self._drag_start_fy + delta.y() / avail_h, 0.0), 1.0)
+            if new_fx != self._fx or new_fy != self._fy:
+                self.prepareGeometryChange()
+                self._fx, self._fy = new_fx, new_fy
+                changed = True
+        else:  # resize: la esquina superior-izquierda (_drag_anchor) queda fija en
+               # coordenadas de escena; la de abajo-a-la-derecha sigue al cursor.
+            new_value = self._resize_delta_to_value(delta)
+            if new_value != self._size_value():
+                self.prepareGeometryChange()
+                self._set_size_value(new_value)
+                new_size = self._item_size()
+                avail_w = max(1e-6, self._output_rect.width() - new_size.width())
+                avail_h = max(1e-6, self._output_rect.height() - new_size.height())
+                self._fx = min(max((self._drag_anchor.x() - self._output_rect.x()) / avail_w, 0.0), 1.0)
+                self._fy = min(max((self._drag_anchor.y() - self._output_rect.y()) / avail_h, 0.0), 1.0)
+                changed = True
+        if changed:
+            self.update()
+            if delta.x() or delta.y():
+                self.changed.emit()
+        event.accept()
+
+    def mouseReleaseEvent(self, event):
+        self._drag_mode = None
+        event.accept()
+
+
+class _TextWatermarkOverlayItem(_DraggableWatermarkItem):
+    """Aproxima visualmente el resultado de drawtext: dibuja el texto real con la
+    fuente/tamaño elegidos, para que arrastrar en la vista previa sea WYSIWYG."""
+
+    _MIN_SIZE_PCT = 1.0
+    _MAX_SIZE_PCT = 60.0
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._text = ""
+        self._font_family = "Arial"
+        self._size_pct = 5.0  # % de la altura del cuadro de salida
+        self._color = QColor("#FFFFFF")
+        self._opacity = 1.0
+
+    def set_style(self, text: str, font_family: str, size_pct: float, color: QColor, opacity: float):
+        self.prepareGeometryChange()
+        self._text = text or ""
+        self._font_family = font_family or self._font_family
+        self._size_pct = max(self._MIN_SIZE_PCT, size_pct)
+        self._color = QColor(color) if color else self._color
+        self._opacity = opacity
+        self.update()
+
+    def _size_value(self) -> float:
+        return self._size_pct
+
+    def _set_size_value(self, value: float):
+        self._size_pct = min(max(value, self._MIN_SIZE_PCT), self._MAX_SIZE_PCT)
+
+    def _resize_delta_to_value(self, delta: QPointF) -> float:
+        if self._output_rect.isEmpty() or self._output_rect.height() <= 0:
+            return self._drag_start_size_value
+        start_px = self._output_rect.height() * (self._drag_start_size_value / 100.0)
+        new_px = max(6.0, start_px + delta.y())
+        return (new_px / self._output_rect.height()) * 100.0
+
+    def _font(self) -> QFont:
+        size_px = 12
+        if not self._output_rect.isEmpty():
+            size_px = max(6, int(self._output_rect.height() * (self._size_pct / 100.0)))
+        font = QFont(self._font_family)
+        font.setPixelSize(size_px)
+        return font
+
+    def _item_size(self) -> QSizeF:
+        if not self._text:
+            return QSizeF(1.0, 1.0)
+        rect = QFontMetricsF(self._font()).boundingRect(self._text)
+        return QSizeF(max(1.0, rect.width()), max(1.0, rect.height()))
+
+    def paint(self, painter, option, widget=None):
+        if self._output_rect.isEmpty() or not self._text:
+            return
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setFont(self._font())
+        color = QColor(self._color)
+        color.setAlphaF(max(0.0, min(1.0, self._opacity)))
+        painter.setPen(color)
+        painter.drawText(self._item_rect(), Qt.AlignLeft | Qt.AlignTop, self._text)
+        self._paint_resize_handle(painter)
+
+
+class _ImageWatermarkOverlayItem(_DraggableWatermarkItem):
+    """Dibuja la imagen elegida escalada al % configurado, para arrastre WYSIWYG."""
+
+    _MIN_SCALE_PCT = 1.0
+    _MAX_SCALE_PCT = 100.0
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._pixmap = QPixmap()
+        self._scale_pct = 15.0  # % del ancho del cuadro de salida
+        self._opacity = 1.0
+
+    def set_style(self, image_path: str, scale_pct: float, opacity: float):
+        self.prepareGeometryChange()
+        self._pixmap = QPixmap(image_path) if image_path else QPixmap()
+        self._scale_pct = max(self._MIN_SCALE_PCT, scale_pct)
+        self._opacity = opacity
+        self.update()
+
+    def _size_value(self) -> float:
+        return self._scale_pct
+
+    def _set_size_value(self, value: float):
+        self._scale_pct = min(max(value, self._MIN_SCALE_PCT), self._MAX_SCALE_PCT)
+
+    def _resize_delta_to_value(self, delta: QPointF) -> float:
+        if self._output_rect.isEmpty() or self._output_rect.width() <= 0:
+            return self._drag_start_size_value
+        start_px = self._output_rect.width() * (self._drag_start_size_value / 100.0)
+        new_px = max(8.0, start_px + delta.x())
+        return (new_px / self._output_rect.width()) * 100.0
+
+    def _item_size(self) -> QSizeF:
+        if self._pixmap.isNull() or self._output_rect.isEmpty() or self._pixmap.width() <= 0:
+            return QSizeF(1.0, 1.0)
+        target_w = max(1.0, self._output_rect.width() * (self._scale_pct / 100.0))
+        aspect = self._pixmap.height() / self._pixmap.width()
+        return QSizeF(target_w, target_w * aspect)
+
+    def paint(self, painter, option, widget=None):
+        if self._output_rect.isEmpty() or self._pixmap.isNull():
+            return
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        painter.setOpacity(max(0.0, min(1.0, self._opacity)))
+        painter.drawPixmap(self._item_rect(), self._pixmap, QRectF(self._pixmap.rect()))
+        self._paint_resize_handle(painter)
+
+
 class MediaTrimPlayerWidget(QWidget):
     """
     Reproductor de video/audio con extractor de waveform de alta resolución y selección de
@@ -709,6 +1307,9 @@ class MediaTrimPlayerWidget(QWidget):
 
     range_changed = Signal(float, float)  # in_sec, out_sec
     playing_changed = Signal(bool)
+    crop_rect_changed = Signal()
+    text_watermark_changed = Signal()
+    image_watermark_changed = Signal()
 
     def __init__(self, parent=None, card_style: bool = False):
         super().__init__(parent)
@@ -783,6 +1384,30 @@ class MediaTrimPlayerWidget(QWidget):
         self.video_widget = _TransparentVideoView(self.video_scene, self.video_item)
         self.video_widget.setVisible(False)
         prev_layout.addWidget(self.video_widget)
+
+        # Rectángulo de recorte interactivo: ítem hermano de video_item en la misma escena,
+        # oculto hasta que se active el modo de edición visual desde AdvancedRecodePanel.
+        self._current_video_rect = QRectF()
+        self.crop_overlay = _CropOverlayItem()
+        self.crop_overlay.setVisible(False)
+        self.video_scene.addItem(self.crop_overlay)
+        self.video_widget.video_rect_changed.connect(self._on_video_rect_changed)
+        self.crop_overlay.changed.connect(self._on_crop_overlay_changed)
+
+        # Marcas de agua interactivas (texto/imagen): mismo patrón que el recorte, pero
+        # solo se mueven (el tamaño lo controla un slider del panel) y se ubican dentro
+        # del "cuadro de salida efectivo" (el recorte si está activo, si no el video
+        # completo — ver _effective_output_rect). A diferencia del recorte, NO se
+        # resetean al cambiar de archivo: la posición es una regla del lote entero.
+        self.text_watermark_overlay = _TextWatermarkOverlayItem()
+        self.text_watermark_overlay.setVisible(False)
+        self.video_scene.addItem(self.text_watermark_overlay)
+        self.text_watermark_overlay.changed.connect(self.text_watermark_changed.emit)
+
+        self.image_watermark_overlay = _ImageWatermarkOverlayItem()
+        self.image_watermark_overlay.setVisible(False)
+        self.video_scene.addItem(self.image_watermark_overlay)
+        self.image_watermark_overlay.changed.connect(self.image_watermark_changed.emit)
 
         self.lbl_audio_art = QLabel(self.tr("Vista Previa de Audio"))
         self.lbl_audio_art.setAlignment(Qt.AlignCenter)
@@ -1117,6 +1742,10 @@ class MediaTrimPlayerWidget(QWidget):
         self._native_size_known = False
         self._native_size = None
 
+        # El recorte interactivo es por archivo, igual que in_sec/out_sec: no debe
+        # sobrevivir al cambiar de archivo previsualizado.
+        self.crop_overlay.hide_and_reset()
+
         has_media = bool(self.media_path and os.path.exists(self.media_path))
         is_video = has_media and self.media_type in ("video", "video+audio", "imagen")
         is_audio = has_media and not is_video
@@ -1187,6 +1816,113 @@ class MediaTrimPlayerWidget(QWidget):
 
     def get_in_out(self):
         return self.in_sec, self.out_sec
+
+    # ------------------------------------------------------------------
+    # Recorte interactivo (crop)
+    # ------------------------------------------------------------------
+    def _on_video_rect_changed(self, rect: QRectF):
+        """Llamado en cada refit() de la vista (resize/zoom). Actualiza el recorte y,
+        como el cuadro de video cambió, también el "cuadro de salida efectivo" que usan
+        las marcas de agua para posicionarse (ver _effective_output_rect)."""
+        self._current_video_rect = QRectF(rect)
+        self.crop_overlay.set_video_rect(rect)
+        self._refresh_watermark_output_rect()
+
+    def _effective_output_rect(self) -> QRectF:
+        """El cuadro que realmente sobrevive al export: el recorte activo si está
+        visible, si no el cuadro de video completo. Las marcas de agua se posicionan
+        siempre relativas a esto, nunca al video sin recortar."""
+        if self.crop_overlay.isVisible():
+            return self.crop_overlay.get_crop_rect_scene()
+        return self._current_video_rect
+
+    def _refresh_watermark_output_rect(self):
+        out_rect = self._effective_output_rect()
+        self.text_watermark_overlay.set_output_rect(out_rect)
+        self.image_watermark_overlay.set_output_rect(out_rect)
+
+    def _on_crop_overlay_changed(self):
+        self._refresh_watermark_output_rect()
+        self.crop_rect_changed.emit()
+
+    def set_crop_editing_enabled(self, enabled: bool, fw: float | None = None, fh: float | None = None):
+        """Activa/desactiva el rectángulo de recorte interactivo sobre el video. Al
+        activarlo arranca centrado con el tamaño fraccional (fw, fh) dado (fracción del
+        cuadro de video) — normalmente el que corresponde al Ancho/Alto elegidos."""
+        self.video_widget.set_crop_edit_mode(enabled)
+        if enabled and fw and fh:
+            self.crop_overlay.activate(fw, fh)
+            self.crop_overlay.setVisible(True)
+        else:
+            self.crop_overlay.hide_and_reset()
+        self._refresh_watermark_output_rect()
+
+    def update_crop_size(self, fw: float, fh: float):
+        """Redimensiona el recorte activo a un tamaño fraccional específico, manteniendo
+        su centro — se llama cuando el usuario tipea Ancho/Alto a mano mientras el modo
+        interactivo ya está activo (dirección opuesta a get_crop_rect)."""
+        if self.crop_overlay.isVisible() and fw and fh:
+            self.crop_overlay.resize_keep_center(fw, fh)
+            self._refresh_watermark_output_rect()
+
+    def get_crop_rect(self):
+        """(fx, fy, fw, fh) del recorte activo, como fracción del cuadro de video, o None
+        si el modo interactivo está desactivado."""
+        if not self.crop_overlay.isVisible():
+            return None
+        return self.crop_overlay.get_crop_fraction()
+
+    def has_custom_crop(self) -> bool:
+        """True si el usuario efectivamente arrastró/redimensionó el recorte (no solo
+        activó el modo de edición)."""
+        return self.crop_overlay.isVisible() and self.crop_overlay.is_touched()
+
+    # ------------------------------------------------------------------
+    # Marcas de agua interactivas (texto / imagen)
+    # ------------------------------------------------------------------
+    def set_text_watermark(self, enabled: bool, text: str = "", font_family: str = "",
+                            size_pct: float = 5.0, color: QColor = None, opacity: float = 1.0):
+        if enabled and text:
+            self.text_watermark_overlay.set_style(text, font_family, size_pct, color, opacity)
+            self.text_watermark_overlay.set_output_rect(self._effective_output_rect())
+            self.text_watermark_overlay.setVisible(True)
+        else:
+            self.text_watermark_overlay.setVisible(False)
+
+    def set_image_watermark(self, enabled: bool, image_path: str = "",
+                             scale_pct: float = 15.0, opacity: float = 1.0):
+        if enabled and image_path:
+            self.image_watermark_overlay.set_style(image_path, scale_pct, opacity)
+            self.image_watermark_overlay.set_output_rect(self._effective_output_rect())
+            self.image_watermark_overlay.setVisible(True)
+        else:
+            self.image_watermark_overlay.setVisible(False)
+
+    def get_text_watermark_position(self):
+        """(fx, fy) de la marca de agua de texto, o None si está desactivada."""
+        if not self.text_watermark_overlay.isVisible():
+            return None
+        return self.text_watermark_overlay.get_position_fraction()
+
+    def get_image_watermark_position(self):
+        """(fx, fy) de la marca de agua de imagen, o None si está desactivada."""
+        if not self.image_watermark_overlay.isVisible():
+            return None
+        return self.image_watermark_overlay.get_position_fraction()
+
+    def get_text_watermark_size_pct(self):
+        """% de tamaño actual (puede haber cambiado por arrastre de la manija), o None
+        si la marca de agua de texto está desactivada."""
+        if not self.text_watermark_overlay.isVisible():
+            return None
+        return self.text_watermark_overlay.get_size_pct()
+
+    def get_image_watermark_size_pct(self):
+        """% de escala actual (puede haber cambiado por arrastre de la manija), o None
+        si la marca de agua de imagen está desactivada."""
+        if not self.image_watermark_overlay.isVisible():
+            return None
+        return self.image_watermark_overlay.get_size_pct()
 
     def set_in_out(self, in_sec: float, out_sec: float):
         self.in_sec = max(0.0, in_sec)

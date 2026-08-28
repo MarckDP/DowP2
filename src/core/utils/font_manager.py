@@ -16,6 +16,10 @@ from core.utils.config_manager import get_config
 # Cache de familias detectadas y registradas
 _REGISTERED_FAMILIES = []
 _INITIALIZED = False
+# Familia -> ruta absoluta del .ttf/.otf que la registró. QFontDatabase solo expone
+# nombres de familia (registro en memoria de la app, no instalado a nivel de SO), pero
+# ffmpeg (drawtext=fontfile=...) necesita la ruta real del archivo — ver watermark_builder.py.
+_FAMILY_TO_PATH = {}
 
 DEFAULT_FALLBACK_FONT = "Google Sans Flex"
 
@@ -76,6 +80,7 @@ def _scan_and_register_dir(directory: str, families_set: set, is_user: bool = Fa
                         # Usar el nombre principal de la familia (el primero)
                         primary_family = fams[0]
                         families_set.add(primary_family)
+                        _FAMILY_TO_PATH.setdefault(primary_family, font_path)
                         prefix = "Usuario" if is_user else "Interna"
                         logger.debug(f"FontManager: [{prefix}] Fuente registrada: {primary_family} ({file_name})")
                 else:
@@ -90,6 +95,16 @@ def get_available_fonts() -> list:
     if not _INITIALIZED:
         init_fonts()
     return list(_REGISTERED_FAMILIES)
+
+
+def get_font_file_path(family: str) -> str:
+    """Ruta absoluta al archivo .ttf/.otf que registró esta familia, o "" si no se
+    encontró (ej. la familia no fue escaneada por DowP). Necesaria para 'fontfile=' en
+    el filtro drawtext de ffmpeg — ver el docstring de _FAMILY_TO_PATH más arriba."""
+    global _INITIALIZED
+    if not _INITIALIZED:
+        init_fonts()
+    return _FAMILY_TO_PATH.get(family, "")
 
 
 def get_theme_defined_font(theme_name: str) -> str:

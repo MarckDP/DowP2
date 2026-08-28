@@ -9,10 +9,13 @@ from PySide6.QtWidgets import (
     QMessageBox,
 )
 
+import os
+
 from gui.widgets.combo_box import AutoPopupComboBox
 from gui.dialogs.dialogs import SavePresetDialog
 from core.logger.logger_manager import logger
 from core.utils.preset_manager import get_preset_manager
+from core.utils.watermark_builder import check_watermark_file
 
 _NO_PRESET_DATA = None  # dato del item "Sin preset" (siempre el primero del combo)
 
@@ -178,6 +181,16 @@ class PresetBar(QWidget):
         )
         if file_path:
             get_preset_manager().export_preset(self.namespace, name, file_path)
+            watermark_path = get_preset_manager().get_settings(self.namespace, name).get("watermark_image_path")
+            if watermark_path:
+                QMessageBox.information(
+                    self, self.tr("Marca de agua no incluida"),
+                    self.tr(
+                        "Este preset usa una imagen de marca de agua ({0}); el archivo de "
+                        "imagen no viaja dentro del .json exportado — compartilo aparte si "
+                        "vas a usar este preset en otra PC."
+                    ).format(os.path.basename(watermark_path)),
+                )
 
     def _on_import_clicked(self):
         file_path, _ = QFileDialog.getOpenFileName(
@@ -188,6 +201,9 @@ class PresetBar(QWidget):
         name = get_preset_manager().import_preset(self.namespace, file_path)
         if name:
             self.refresh(select_name=name)
+            warning = check_watermark_file(get_preset_manager().get_settings(self.namespace, name))
+            if warning:
+                QMessageBox.warning(self, self.tr("Marca de agua no encontrada"), warning)
         else:
             QMessageBox.warning(
                 self, self.tr("Error"), self.tr("No se pudo importar el preset desde el archivo seleccionado.")

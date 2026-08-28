@@ -98,6 +98,27 @@ class VideoToolsTab(QWidget):
         self.options_widget.start_status_changed.connect(self._on_start_status_changed)
         right_layout.addWidget(self.options_widget, 1)
 
+        # Recorte interactivo: siempre activo en Personalizado + Recortar (no hay casilla
+        # de encendido). El panel Avanzado activa/desactiva el rectángulo sobre la vista
+        # previa según su propia configuración (crop_edit_toggled) y sincroniza en vivo con
+        # los campos Ancho/Alto en ambas direcciones: arrastrar el recorte actualiza los
+        # campos (crop_rect_changed) y tipear los campos redimensiona el recorte
+        # (crop_dimensions_changed).
+        self.options_widget.tab_advanced.crop_edit_toggled.connect(self._on_crop_edit_toggled)
+        self.options_widget.tab_advanced.crop_dimensions_changed.connect(self._on_crop_dimensions_changed)
+        self.preview_widget.crop_rect_changed.connect(self._on_preview_crop_changed)
+
+        # Marcas de agua interactivas: el panel Avanzado empuja el ESTILO (texto/fuente/
+        # tamaño/color/opacidad, o archivo/escala/opacidad) hacia la vista previa; la
+        # vista previa empuja de vuelta la POSICIÓN (arrastrada a mano) hacia el panel,
+        # que la guarda como estado propio — a diferencia del recorte, no hace falta un
+        # override por-llamada, get_settings() ya la lee directo (ver conversación:
+        # esto también resuelve que "Guardar como preajuste" capture la posición actual).
+        self.options_widget.tab_advanced.text_watermark_style_changed.connect(self._on_text_watermark_style_changed)
+        self.options_widget.tab_advanced.image_watermark_style_changed.connect(self._on_image_watermark_style_changed)
+        self.preview_widget.text_watermark_changed.connect(self._on_text_watermark_position_changed)
+        self.preview_widget.image_watermark_changed.connect(self._on_image_watermark_position_changed)
+
         # 2. Cubo Inferior de Opciones de Salida y Ejecución
         self.output_card = QFrame(self.right_container)
         self.output_card.setObjectName("outputOptionsContainer")
@@ -197,12 +218,15 @@ class VideoToolsTab(QWidget):
         self.progress_bar.setTextVisible(True)
         out_layout.addWidget(self.progress_bar)
 
-        # Botón Acción Principal Iniciar Recodificación
+        # Botón Acción Principal: un solo botón que cambia de rol — "Iniciar
+        # Recodificación" mientras no hay nada corriendo, "Cancelar" mientras hay un
+        # lote en curso (mismo botón, no dos aparte — ver _set_start_button_running).
+        self._batch_active = False
         self.btn_start = AnimatedButton(self.tr("Iniciar Recodificación"), self.output_card)
         self.btn_start.setProperty("variant", "primary")
         self.btn_start.setObjectName("downloadButton")
         self.btn_start.setFixedHeight(36)
-        self.btn_start.clicked.connect(self._on_start_recoding_clicked)
+        self.btn_start.clicked.connect(self._on_start_button_clicked)
         out_layout.addWidget(self.btn_start)
 
         # Estado y texto inicial contextual del botón
@@ -234,16 +258,70 @@ class VideoToolsTab(QWidget):
 
         self.preview_widget.load_media(filepath, media_type, duration_sec, fps_val)
         self.options_widget.tab_advanced.set_source_media(meta, filepath)
+        # preview_widget.load_media ya ocultó el rectángulo (el encuadre elegido no tiene
+        # sentido para otro archivo); esto lo vuelve a mostrar de una para el archivo nuevo
+        # si el recorte interactivo sigue activo (personalizado + Recortar es config. del
+        # panel, no del archivo, así que no se "apaga" solo al cambiar de ítem).
+        self.options_widget.tab_advanced.hide_apply_to_all_checkbox()
+        self._on_crop_edit_toggled(self.options_widget.tab_advanced.is_crop_active())
 
     def _on_metadata_ready(self, path: str, meta: dict):
         if path == self.current_preview_file:
             self.preview_widget.set_fps(self._parse_fps(meta.get("fps", "30")))
             self.options_widget.tab_advanced.set_source_media(meta, path)
+            # La metadata rápida inicial puede no traer resolución todavía; si el recorte
+            # ya está activo, se re-arma ahora con la resolución real recién confirmada.
+            self._on_crop_edit_toggled(self.options_widget.tab_advanced.is_crop_active())
 
     def _on_trim_range_changed(self, in_sec: float, out_sec: float):
         self.in_point_ms = int(in_sec * 1000)
         self.out_point_ms = int(out_sec * 1000)
         logger.debug(f"VideoToolsTab: Trim points actualizados: In={self.in_point_ms}ms, Out={self.out_point_ms}ms")
+
+    def _on_crop_edit_toggled(self, enabled: bool):
+        fw, fh = self.options_widget.tab_advanced.get_crop_target_fraction() if enabled else (None, None)
+        self.preview_widget.set_crop_editing_enabled(enabled, fw, fh)
+
+    def _on_crop_dimensions_changed(self, width_px: int, height_px: int):
+        fw, fh = self.options_widget.tab_advanced.pixels_to_crop_fraction(width_px, height_px)
+        if fw and fh:
+            self.preview_widget.update_crop_size(fw, fh)
+
+    def _on_preview_crop_changed(self):
+        if self.preview_widget.has_custom_crop():
+            self.options_widget.tab_advanced.show_apply_to_all_checkbox()
+        crop_frac = self.preview_widget.get_crop_rect()
+        if crop_frac is not None:
+            self.options_widget.tab_advanced.sync_dimensions_from_crop(crop_frac)
+
+    def _on_text_watermark_style_changed(self):
+        style = self.options_widget.tab_advanced.get_text_watermark_style()
+        self.preview_widget.set_text_watermark(
+            style["enabled"], style["text"], style["font_family"],
+            style["size_pct"], style["color"], style["opacity"],
+        )
+
+    def _on_image_watermark_style_changed(self):
+        style = self.options_widget.tab_advanced.get_image_watermark_style()
+        self.preview_widget.set_image_watermark(
+            style["enabled"], style["image_path"], style["scale_pct"], style["opacity"],
+        )
+
+    def _on_text_watermark_position_changed(self):
+        pos = self.preview_widget.get_text_watermark_position()
+        if pos is not None:
+            self.options_widget.tab_advanced.set_text_watermark_position(*pos)
+        size_pct = self.preview_widget.get_text_watermark_size_pct()
+        if size_pct is not None:
+            self.options_widget.tab_advanced.set_text_watermark_size(size_pct)
+
+    def _on_image_watermark_position_changed(self):
+        pos = self.preview_widget.get_image_watermark_position()
+        if pos is not None:
+            self.options_widget.tab_advanced.set_image_watermark_position(*pos)
+        size_pct = self.preview_widget.get_image_watermark_size_pct()
+        if size_pct is not None:
+            self.options_widget.tab_advanced.set_image_watermark_size(size_pct)
 
     def _parse_duration_to_seconds(self, dur_str) -> float:
         if not dur_str or dur_str == "-":
@@ -372,6 +450,25 @@ class VideoToolsTab(QWidget):
             self.btn_start.setEnabled(is_valid)
             self.btn_start.setText(text)
 
+    def _set_start_button_running(self, running: bool):
+        """Un solo botón cambia de rol: "Iniciar Recodificación" <-> "Cancelar", en vez
+        de mostrar/ocultar un segundo botón aparte."""
+        self._batch_active = running
+        if running:
+            self.btn_start.setText(self.tr("Cancelar"))
+            self.btn_start.setObjectName("redButton")
+            self.btn_start.setEnabled(True)
+        else:
+            self.btn_start.setObjectName("downloadButton")
+        self.btn_start.style().unpolish(self.btn_start)
+        self.btn_start.style().polish(self.btn_start)
+
+    def _on_start_button_clicked(self):
+        if self._batch_active:
+            self._on_cancel_recoding_clicked()
+        else:
+            self._on_start_recoding_clicked()
+
     def _on_start_recoding_clicked(self):
         is_valid, reason = self.options_widget.get_current_status()
         if not is_valid:
@@ -394,6 +491,15 @@ class VideoToolsTab(QWidget):
         if not settings:
             QMessageBox.warning(self, self.tr("Sin configuración"), self.tr("Selecciona un preajuste o una configuración válida."))
             return
+
+        # Recorte interactivo: si el usuario lo modificó en la vista previa y marcó
+        # "Aplicar a todos", se reconstruye 'settings' completo con ese recorte ya
+        # incluido (afecta a todo el lote); si no, cada archivo arma el suyo más abajo,
+        # y solo el archivo previsualizado recibe el recorte personalizado.
+        crop_frac = self.preview_widget.get_crop_rect()
+        apply_crop_to_all = bool(settings.get("crop_apply_to_all")) and crop_frac is not None
+        if apply_crop_to_all:
+            settings = self.options_widget.tab_advanced.get_settings(crop_fraction_override=crop_frac)
 
         prefix = self.txt_prefix.text() if hasattr(self, "txt_prefix") else ""
         suffix = self.txt_suffix.text() if hasattr(self, "txt_suffix") else ""
@@ -431,6 +537,9 @@ class VideoToolsTab(QWidget):
                 if in_sec > 0.05 or (duration_sec > 0 and out_sec < (duration_sec - 0.05)):
                     file_settings["trim_in_sec"] = in_sec
                     file_settings["trim_out_sec"] = out_sec
+                if crop_frac is not None and not apply_crop_to_all:
+                    crop_settings = self.options_widget.tab_advanced.get_settings(crop_fraction_override=crop_frac)
+                    file_settings["video_args"] = crop_settings["video_args"]
             else:
                 streams = meta.get("audio_streams", [])
                 if len(streams) > 1:
@@ -450,11 +559,20 @@ class VideoToolsTab(QWidget):
             # Actualizamos visualmente la cola
             self.queue_widget.update_file_status(filepath, self.tr("En cola"))
             
-        self.btn_start.setEnabled(False)
+        self._set_start_button_running(True)
         self.progress_bar.setProperty("status", "downloading")
         self.progress_bar.style().unpolish(self.progress_bar)
         self.progress_bar.style().polish(self.progress_bar)
         qm.start_queue()
+
+    def _on_cancel_recoding_clicked(self):
+        qm = get_queue_manager()
+        for job_id in list(self._recode_jobs):
+            job = qm.get_job(job_id)
+            if job and job.status in (JobStatus.PENDING, JobStatus.RUNNING):
+                qm.cancel_job(job_id)
+        self.btn_start.setEnabled(False)
+        self.progress_bar.setFormat(self.tr("Cancelando..."))
 
     def _on_job_progress(self, job_id: str, percent: float, speed: str, eta: str):
         if job_id in self._recode_jobs:
@@ -495,6 +613,7 @@ class VideoToolsTab(QWidget):
                 
         if all_done:
             self._recode_jobs.clear()
+            self._set_start_button_running(False)
             self._on_start_status_changed(*self.options_widget.get_current_status())
             self.progress_bar.setValue(100)
             self.progress_bar.setFormat(self.tr("Finalizado"))

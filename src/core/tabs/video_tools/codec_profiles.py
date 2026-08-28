@@ -233,8 +233,8 @@ AUDIO_ENCODER_PROFILES = {
 # hardware_detector.py elige libsvtav1 automaticamente como "software" preferido).
 ENCODER_VARIANTS = {
     "prores": [
-        ("prores_ks", "prores_ks (más preciso, recomendado)"),
-        ("prores_aw", "prores_aw (más rápido en algunos sistemas)"),
+        ("prores_ks", "Preciso (prores_ks)"),
+        ("prores_aw", "Rápido (prores_aw)"),
     ],
 }
 

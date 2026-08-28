@@ -15,9 +15,15 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QPushButton,
     QStyledItemDelegate,
+    QLineEdit,
+    QFileDialog,
+    QColorDialog,
+    QSlider,
 )
 from PySide6.QtCore import Signal, Qt
+from PySide6.QtGui import QColor
 import math
+import platform
 
 from gui.styles import get_theme_token
 from gui.widgets.mode_selector import ModeSelector
@@ -26,6 +32,8 @@ from gui.widgets.combo_box import CheckmarkComboDelegate, AutoPopupComboBox
 from core.logger.logger_manager import logger
 from core.utils.recode_guard import evaluate_recode, get_video_codecs, get_audio_codecs, get_compatible_containers, resolve_encoder, get_channel_support, get_dimension_alignment
 from core.utils.hardware_detector import detect_hardware
+from core.utils.font_manager import get_available_fonts, get_active_font_family, get_font_file_path
+from core.utils.watermark_builder import build_drawtext_filter, build_image_overlay_filter, check_watermark_file
 from core.tabs.video_tools.codec_profiles import (
     get_profiles, build_custom_bitrate_args, extract_bitrate_kbps,
     recommend_audio_codec, supports_two_pass, encoder_is_two_pass_capable, build_pass_args, ENCODER_VARIANTS,
@@ -161,6 +169,10 @@ class AdvancedRecodePanel(QWidget):
     + hardware_detector) antes de permitir iniciar el proceso.
     """
     validity_changed = Signal(bool)
+    crop_edit_toggled = Signal(bool)
+    crop_dimensions_changed = Signal(int, int)  # width_px, height_px (tipeados a mano en Ancho/Alto)
+    text_watermark_style_changed = Signal()
+    image_watermark_style_changed = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -169,6 +181,7 @@ class AdvancedRecodePanel(QWidget):
         self._force_cpu_engine = False
         self._last_profile_codec = {"video": None, "audio": None}
         self._source_meta = None
+        self._crop_active = False
         self._source_filepath = None
         self._init_ui()
         self._reload_codec_lists()
@@ -219,6 +232,7 @@ class AdvancedRecodePanel(QWidget):
         self._build_stream_section(self.tr("Video"), "video", is_video=True, parent=content)
         self._build_stream_section(self.tr("Audio"), "audio", is_video=False, parent=content)
         self._build_transform_section(content)
+        self._build_watermark_section(content)
         self._build_container_section(content)
         self._build_size_estimate_section(content)
 
@@ -683,6 +697,11 @@ class AdvancedRecodePanel(QWidget):
             fit_row.addWidget(rb)
         custom_layout.addLayout(fit_row)
 
+        self.chk_apply_crop_to_all = QCheckBox(self.tr("Aplicar a todos los medios"), custom_container)
+        self.chk_apply_crop_to_all.setCursor(Qt.PointingHandCursor)
+        self.chk_apply_crop_to_all.setVisible(False)
+        custom_layout.addWidget(self.chk_apply_crop_to_all)
+
         v.addWidget(custom_container)
         self.widget_custom_resolution = custom_container
         custom_container.setVisible(False)
@@ -692,9 +711,317 @@ class AdvancedRecodePanel(QWidget):
         self.chk_keep_aspect.toggled.connect(self._on_keep_aspect_toggled)
         for rb in (self.rb_fit_deformar, self.rb_fit_ajustar, self.rb_fit_crop):
             rb.toggled.connect(self._update_size_estimate)
+            # Sin esto, elegir "Recortar" no activaba el recorte interactivo hasta que
+            # además cambiara algún valor de Ancho/Alto (lo único que antes disparaba
+            # _update_fit_mode_enabled) — debía activarse apenas se selecciona el radio.
+            rb.toggled.connect(self._update_fit_mode_enabled)
 
         self.frame_transform = frame
         return frame
+
+    def _build_watermark_section(self, parent=None) -> QFrame:
+        """Texto y/o imagen combinables. La posición NO se elige acá — se arrastra sobre
+        la vista previa (ver media_trim_player_widget.py::_DraggableWatermarkItem); este
+        panel solo controla estilo (texto/fuente/tamaño/color/opacidad para texto,
+        archivo/escala/opacidad para imagen)."""
+        frame, v = self._card_frame(self.tr("Marca de agua"), parent=parent)
+
+        lbl_hint = QLabel(self.tr("La posición se elige arrastrando sobre la vista previa."), frame)
+        lbl_hint.setObjectName("mutedLabel")
+        lbl_hint.setWordWrap(True)
+        v.addWidget(lbl_hint)
+
+        # ── Texto ──────────────────────────────────────────────
+        self.chk_watermark_text = QCheckBox(self.tr("Agregar texto"), frame)
+        self.chk_watermark_text.setCursor(Qt.PointingHandCursor)
+        v.addWidget(self.chk_watermark_text)
+
+        text_container = QWidget(frame)
+        text_layout = QVBoxLayout(text_container)
+        text_layout.setContentsMargins(18, 2, 0, 0)
+        text_layout.setSpacing(6)
+
+        self.txt_watermark_text = QLineEdit(text_container)
+        self.txt_watermark_text.setPlaceholderText(self.tr("Texto de la marca de agua"))
+        text_layout.addWidget(self.txt_watermark_text)
+
+        font_row = QHBoxLayout()
+        font_row.setSpacing(8)
+        self.combo_watermark_font = AutoPopupComboBox(text_container)
+        self._setup_fixed_combo(self.combo_watermark_font)
+        for family in get_available_fonts():
+            self.combo_watermark_font.addItem(family, family)
+        default_idx = self.combo_watermark_font.findData(get_active_font_family())
+        if default_idx >= 0:
+            self.combo_watermark_font.setCurrentIndex(default_idx)
+        font_row.addWidget(self.combo_watermark_font, 1)
+
+        self._watermark_text_color = QColor("#FFFFFF")
+        self.btn_watermark_text_color = QPushButton(text_container)
+        self.btn_watermark_text_color.setFixedSize(28, 28)
+        self.btn_watermark_text_color.setCursor(Qt.PointingHandCursor)
+        self._update_color_button(self.btn_watermark_text_color, self._watermark_text_color)
+        self.btn_watermark_text_color.clicked.connect(self._on_pick_watermark_text_color)
+        font_row.addWidget(self.btn_watermark_text_color)
+        text_layout.addLayout(font_row)
+
+        size_row = QHBoxLayout()
+        size_row.setSpacing(8)
+        lbl_size = QLabel(self.tr("Tamaño:"), text_container)
+        lbl_size.setObjectName("menuLabel")
+        size_row.addWidget(lbl_size)
+        self.spin_watermark_text_size = QSpinBox(text_container)
+        self.spin_watermark_text_size.setRange(1, 30)
+        self.spin_watermark_text_size.setValue(5)
+        self.spin_watermark_text_size.setSuffix("%")
+        self.spin_watermark_text_size.setToolTip(self.tr("Porcentaje de la altura del video de salida."))
+        size_row.addWidget(self.spin_watermark_text_size)
+        size_row.addStretch(1)
+        text_layout.addLayout(size_row)
+
+        opacity_row = QHBoxLayout()
+        opacity_row.setSpacing(8)
+        lbl_opacity = QLabel(self.tr("Opacidad:"), text_container)
+        lbl_opacity.setObjectName("menuLabel")
+        opacity_row.addWidget(lbl_opacity)
+        self.slider_watermark_text_opacity = QSlider(Qt.Horizontal, text_container)
+        self.slider_watermark_text_opacity.setRange(0, 100)
+        self.slider_watermark_text_opacity.setValue(100)
+        self.slider_watermark_text_opacity.setCursor(Qt.PointingHandCursor)
+        opacity_row.addWidget(self.slider_watermark_text_opacity)
+        text_layout.addLayout(opacity_row)
+
+        v.addWidget(text_container)
+        self.widget_watermark_text = text_container
+        text_container.setVisible(False)
+
+        # ── Imagen ─────────────────────────────────────────────
+        self.chk_watermark_image = QCheckBox(self.tr("Agregar imagen"), frame)
+        self.chk_watermark_image.setCursor(Qt.PointingHandCursor)
+        v.addWidget(self.chk_watermark_image)
+
+        image_container = QWidget(frame)
+        image_layout = QVBoxLayout(image_container)
+        image_layout.setContentsMargins(18, 2, 0, 0)
+        image_layout.setSpacing(6)
+
+        file_row = QHBoxLayout()
+        file_row.setSpacing(8)
+        self.txt_watermark_image_path = QLineEdit(image_container)
+        self.txt_watermark_image_path.setPlaceholderText(self.tr("Ningún archivo seleccionado"))
+        self.txt_watermark_image_path.setReadOnly(True)
+        file_row.addWidget(self.txt_watermark_image_path, 1)
+        self.btn_watermark_image_browse = QPushButton(self.tr("Examinar…"), image_container)
+        self.btn_watermark_image_browse.setObjectName("secondaryButton")
+        self.btn_watermark_image_browse.setCursor(Qt.PointingHandCursor)
+        self.btn_watermark_image_browse.clicked.connect(self._on_browse_watermark_image)
+        file_row.addWidget(self.btn_watermark_image_browse)
+        image_layout.addLayout(file_row)
+
+        scale_row = QHBoxLayout()
+        scale_row.setSpacing(8)
+        lbl_scale = QLabel(self.tr("Tamaño:"), image_container)
+        lbl_scale.setObjectName("menuLabel")
+        scale_row.addWidget(lbl_scale)
+        self.spin_watermark_image_scale = QSpinBox(image_container)
+        self.spin_watermark_image_scale.setRange(1, 100)
+        self.spin_watermark_image_scale.setValue(15)
+        self.spin_watermark_image_scale.setSuffix("%")
+        self.spin_watermark_image_scale.setToolTip(self.tr("Porcentaje del ancho del video de salida."))
+        scale_row.addWidget(self.spin_watermark_image_scale)
+        scale_row.addStretch(1)
+        image_layout.addLayout(scale_row)
+
+        image_opacity_row = QHBoxLayout()
+        image_opacity_row.setSpacing(8)
+        lbl_image_opacity = QLabel(self.tr("Opacidad:"), image_container)
+        lbl_image_opacity.setObjectName("menuLabel")
+        image_opacity_row.addWidget(lbl_image_opacity)
+        self.slider_watermark_image_opacity = QSlider(Qt.Horizontal, image_container)
+        self.slider_watermark_image_opacity.setRange(0, 100)
+        self.slider_watermark_image_opacity.setValue(100)
+        self.slider_watermark_image_opacity.setCursor(Qt.PointingHandCursor)
+        image_opacity_row.addWidget(self.slider_watermark_image_opacity)
+        image_layout.addLayout(image_opacity_row)
+
+        v.addWidget(image_container)
+        self.widget_watermark_image = image_container
+        image_container.setVisible(False)
+
+        self._watermark_image_path = ""
+        self._text_watermark_pos = (0.9, 0.9)
+        self._image_watermark_pos = (0.9, 0.9)
+
+        self.chk_watermark_text.toggled.connect(self._on_watermark_text_toggled)
+        self.txt_watermark_text.textChanged.connect(self._on_watermark_text_field_changed)
+        self.combo_watermark_font.currentIndexChanged.connect(self._on_watermark_text_field_changed)
+        self.spin_watermark_text_size.valueChanged.connect(self._on_watermark_text_field_changed)
+        self.slider_watermark_text_opacity.valueChanged.connect(self._on_watermark_text_field_changed)
+
+        self.chk_watermark_image.toggled.connect(self._on_watermark_image_toggled)
+        self.spin_watermark_image_scale.valueChanged.connect(self._on_watermark_image_field_changed)
+        self.slider_watermark_image_opacity.valueChanged.connect(self._on_watermark_image_field_changed)
+
+        self.frame_watermark = frame
+        return frame
+
+    def _update_color_button(self, button: QPushButton, color: QColor):
+        button.setStyleSheet(
+            f"QPushButton {{ background-color: {color.name()}; border: 1px solid #555555; border-radius: 4px; }}"
+        )
+
+    def _on_pick_watermark_text_color(self):
+        color = QColorDialog.getColor(self._watermark_text_color, self, self.tr("Color del texto"))
+        if color.isValid():
+            self._watermark_text_color = color
+            self._update_color_button(self.btn_watermark_text_color, color)
+            self._on_watermark_text_field_changed()
+
+    def _on_browse_watermark_image(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, self.tr("Seleccionar imagen de marca de agua"), "",
+            self.tr("Imágenes (*.png *.jpg *.jpeg *.webp *.bmp);;Todos los archivos (*.*)"),
+        )
+        if file_path:
+            self._watermark_image_path = file_path
+            self.txt_watermark_image_path.setText(file_path)
+            # A diferencia de un cambio de estilo cualquiera, la ruta del archivo sí
+            # puede afectar la validez (aviso de "no existe") — revalidar acá.
+            self.image_watermark_style_changed.emit()
+            self._evaluate_and_render()
+
+    def _show_watermark_container(self, container: QWidget, visible: bool):
+        """setVisible() solo no alcanza acá: el contenedor arranca oculto desde que se
+        construye (nunca se activó su layout una vez), y al mostrarlo dentro del
+        QScrollArea del panel, Qt no siempre vuelve a calcular la geometría de los
+        sub-layouts (los QHBoxLayout de cada fila) — quedaban superpuestos entre sí en
+        vez de apilados. Forzar invalidate()+activate() del layout del contenedor y
+        updateGeometry() en la cadena de padres soluciona esa geometría contenida."""
+        container.setVisible(visible)
+        if visible:
+            layout = container.layout()
+            if layout:
+                layout.invalidate()
+                layout.activate()
+            container.updateGeometry()
+            container.adjustSize()
+            self.frame_watermark.updateGeometry()
+            self.frame_watermark.adjustSize()
+
+    def _on_watermark_text_toggled(self, checked: bool):
+        if self._building:
+            return
+        self._show_watermark_container(self.widget_watermark_text, checked)
+        self.text_watermark_style_changed.emit()
+        self._evaluate_and_render()
+
+    def _on_watermark_text_field_changed(self, *_args):
+        """Cambios de texto/fuente/tamaño/color/opacidad: solo re-empujan el estilo a
+        la vista previa. A propósito NO llaman a _show_watermark_container ni
+        _evaluate_and_render en cada tick — eso es lo que hacía saltar la UI mientras
+        se arrastraba el slider de opacidad (reconstruía la tarjeta de mensajes y
+        forzaba adjustSize() en cada movimiento del mouse)."""
+        if self._building:
+            return
+        self.text_watermark_style_changed.emit()
+
+    def _on_watermark_image_toggled(self, checked: bool):
+        if self._building:
+            return
+        self._show_watermark_container(self.widget_watermark_image, checked)
+        self.image_watermark_style_changed.emit()
+        self._evaluate_and_render()
+
+    def _on_watermark_image_field_changed(self, *_args):
+        if self._building:
+            return
+        self.image_watermark_style_changed.emit()
+
+    def get_text_watermark_style(self) -> dict:
+        return {
+            "enabled": self.chk_watermark_text.isChecked(),
+            "text": self.txt_watermark_text.text(),
+            "font_family": self.combo_watermark_font.currentData() or self.combo_watermark_font.currentText(),
+            "size_pct": self.spin_watermark_text_size.value(),
+            "color": QColor(self._watermark_text_color),
+            "opacity": self.slider_watermark_text_opacity.value() / 100.0,
+        }
+
+    def get_image_watermark_style(self) -> dict:
+        return {
+            "enabled": self.chk_watermark_image.isChecked(),
+            "image_path": self._watermark_image_path,
+            "scale_pct": self.spin_watermark_image_scale.value(),
+            "opacity": self.slider_watermark_image_opacity.value() / 100.0,
+        }
+
+    def set_text_watermark_position(self, fx: float, fy: float):
+        self._text_watermark_pos = (fx, fy)
+
+    def set_image_watermark_position(self, fx: float, fy: float):
+        self._image_watermark_pos = (fx, fy)
+
+    def set_text_watermark_size(self, size_pct: float):
+        """Refleja en el slider el tamaño arrastrado desde la manija de la vista previa
+        (dirección opuesta al spin_watermark_text_size -> preview vía set_style)."""
+        if self._building or round(size_pct) == self.spin_watermark_text_size.value():
+            return
+        self._building = True
+        try:
+            self.spin_watermark_text_size.setValue(round(size_pct))
+        finally:
+            self._building = False
+
+    def set_image_watermark_size(self, scale_pct: float):
+        """Refleja en el slider la escala arrastrada desde la manija de la vista previa."""
+        if self._building or round(scale_pct) == self.spin_watermark_image_scale.value():
+            return
+        self._building = True
+        try:
+            self.spin_watermark_image_scale.setValue(round(scale_pct))
+        finally:
+            self._building = False
+
+    def _build_text_watermark_filter(self) -> str | None:
+        if not self.chk_watermark_text.isChecked():
+            return None
+        text = self.txt_watermark_text.text().strip()
+        if not text:
+            return None
+        font_family = self.combo_watermark_font.currentData() or self.combo_watermark_font.currentText()
+        font_path = get_font_file_path(font_family)
+        if not font_path:
+            return None
+        size_expr = f"h*{self.spin_watermark_text_size.value() / 100.0:.4f}"
+        color_hex = self._watermark_text_color.name()
+        opacity = self.slider_watermark_text_opacity.value() / 100.0
+        fx, fy = self._text_watermark_pos
+        return build_drawtext_filter(text, font_path, size_expr, color_hex, opacity, fx, fy)
+
+    def _build_image_watermark_settings(self) -> tuple[str | None, str | None]:
+        """(watermark_image_path, watermark_overlay_filter) — ambos None si la marca de
+        agua de imagen está desactivada o sin archivo elegido."""
+        if not self.chk_watermark_image.isChecked() or not self._watermark_image_path:
+            return None, None
+        scale_pct = self.spin_watermark_image_scale.value()
+        opacity = self.slider_watermark_image_opacity.value() / 100.0
+        fx, fy = self._image_watermark_pos
+        overlay_filter = build_image_overlay_filter(scale_pct, opacity, fx, fy)
+        return self._watermark_image_path, overlay_filter
+
+    def _check_watermark_issues(self) -> dict | None:
+        text_active = self.chk_watermark_text.isChecked() and bool(self.txt_watermark_text.text().strip())
+        image_active = self.chk_watermark_image.isChecked() and bool(self._watermark_image_path)
+        if not text_active and not image_active:
+            return None
+        if hasattr(self, "rb_video_copy") and self.rb_video_copy.isChecked():
+            return {"severity": "blocked", "message": self.tr(
+                "La marca de agua necesita recodificar el video: no funciona con 'Copiar original'.")}
+        if image_active:
+            warning = check_watermark_file({"watermark_image_path": self._watermark_image_path})
+            if warning:
+                return {"severity": "blocked", "message": warning}
+        return None
 
     def _build_container_section(self, parent=None) -> QFrame:
         frame, v = self._card_frame(self.tr("Contenedor de salida"), parent=parent)
@@ -886,12 +1213,15 @@ class AdvancedRecodePanel(QWidget):
 
         stream_mode = self._current_stream_mode()
         has_transform = getattr(self, "frame_transform", None) is not None
+        has_watermark = getattr(self, "frame_watermark", None) is not None
 
         if stream_mode == "audio_only":
             self.frame_video.hide()
             self.frame_audio.show()
             if has_transform:
                 self.frame_transform.hide()
+            if has_watermark:
+                self.frame_watermark.hide()
             visible_cards = [self.frame_audio, self.frame_container, self.frame_size]
         elif stream_mode == "video_only":
             self.frame_audio.hide()
@@ -900,6 +1230,9 @@ class AdvancedRecodePanel(QWidget):
             if has_transform:
                 self.frame_transform.show()
                 visible_cards.append(self.frame_transform)
+            if has_watermark:
+                self.frame_watermark.show()
+                visible_cards.append(self.frame_watermark)
             visible_cards += [self.frame_container, self.frame_size]
         else: # video+audio
             self.frame_video.show()
@@ -908,6 +1241,9 @@ class AdvancedRecodePanel(QWidget):
             if has_transform:
                 self.frame_transform.show()
                 visible_cards.append(self.frame_transform)
+            if has_watermark:
+                self.frame_watermark.show()
+                visible_cards.append(self.frame_watermark)
             visible_cards += [self.frame_container, self.frame_size]
 
         while self.cards_grid.count():
@@ -918,6 +1254,20 @@ class AdvancedRecodePanel(QWidget):
             col = idx % 2
             self.cards_grid.addWidget(card, row, col)
             card.show()
+
+    # Preferencia de encoder por defecto en Windows para códecs con más de una
+    # implementación válida (ver ENCODER_VARIANTS en codec_profiles.py): no es un dato
+    # verificado por probe-encode como el resto de hardware_detector.py, es una preferencia
+    # de campo (medida a mano en Windows por el desarrollador) — no se probó en Linux/macOS,
+    # así que ahí se deja el orden original tal cual. Sigue siendo 100% reversible: el
+    # usuario puede elegir el otro encoder de la combo en cualquier momento.
+    _WINDOWS_PREFERRED_ENCODER = {"prores": "prores_aw"}
+
+    def _ordered_variants(self, codec_id, variants: list[tuple[str, str]]) -> list[tuple[str, str]]:
+        preferred = self._WINDOWS_PREFERRED_ENCODER.get(codec_id) if platform.system() == "Windows" else None
+        if not preferred:
+            return variants
+        return sorted(variants, key=lambda item: item[0] != preferred)
 
     def _refresh_variant_combo(self, prefix: str, codec_id):
         combo = getattr(self, f"combo_{prefix}_variant")
@@ -930,6 +1280,7 @@ class AdvancedRecodePanel(QWidget):
                 combo.setVisible(False)
                 lbl.setVisible(False)
                 return
+            variants = self._ordered_variants(codec_id, variants)
             for encoder, label in variants:
                 combo.addItem(label, encoder)
             combo.setVisible(True)
@@ -1188,6 +1539,52 @@ class AdvancedRecodePanel(QWidget):
         self._update_fit_mode_enabled()
         self._update_size_estimate()
 
+        if self._crop_active:
+            self.crop_dimensions_changed.emit(self.spin_custom_width.value(), self.spin_custom_height.value())
+
+    def is_crop_active(self) -> bool:
+        """True cuando el recorte interactivo debería estar visible en la vista previa:
+        resolución personalizada + ajuste "Recortar" + aspecto no conservado. Es un estado
+        derivado de la configuración del panel, no algo que se prenda/apague a mano — por
+        eso se re-evalúa automáticamente en cada cambio relevante (ver _update_fit_mode_enabled)
+        y también hay que volver a consultarlo al cambiar de archivo previsualizado."""
+        return self._crop_active
+
+    def get_crop_target_fraction(self) -> tuple[float | None, float | None]:
+        """(fw, fh) — Ancho/Alto elegidos como fracción de la resolución real de la fuente
+        previsualizada. None si todavía no hay metadata del archivo fuente."""
+        return self.pixels_to_crop_fraction(self.spin_custom_width.value(), self.spin_custom_height.value())
+
+    def pixels_to_crop_fraction(self, width_px: int, height_px: int) -> tuple[float | None, float | None]:
+        src_wh = self._source_wh()
+        if not src_wh:
+            return None, None
+        src_w, src_h = src_wh
+        return min(width_px / src_w, 1.0), min(height_px / src_h, 1.0)
+
+    def sync_dimensions_from_crop(self, crop_fraction: tuple[float, float, float, float]):
+        """Refleja en vivo, en los campos Ancho/Alto, el tamaño del recorte que se está
+        arrastrando en la vista previa — dirección opuesta a crop_dimensions_changed (que
+        sincroniza cuando se tipea Ancho/Alto a mano). A propósito NO se suprime con
+        self._building: dejar que pase por _on_custom_dim_changed normalmente hace que el
+        redondeo a par se aplique en vivo mientras se arrastra (el rectángulo "encastra" al
+        valor par más cercano), sin loop infinito porque resize_keep_center() en el overlay
+        no vuelve a emitir 'changed' (solo lo hace un arrastre real del usuario)."""
+        src_wh = self._source_wh()
+        if not src_wh or not hasattr(self, "spin_custom_width"):
+            return
+        src_w, src_h = src_wh
+        _, _, fw, fh = crop_fraction
+        self.spin_custom_width.setValue(max(2, round(fw * src_w)))
+        self.spin_custom_height.setValue(max(2, round(fh * src_h)))
+
+    def show_apply_to_all_checkbox(self):
+        self.chk_apply_crop_to_all.setVisible(True)
+
+    def hide_apply_to_all_checkbox(self):
+        self.chk_apply_crop_to_all.setChecked(False)
+        self.chk_apply_crop_to_all.setVisible(False)
+
     def _revalidate_custom_dimensions(self):
         """Vuelve a aplicar el redondeo de paridad a los campos Ancho/Alto ya cargados —
         se usa cuando cambia el códec de video, porque el requisito de paridad puede cambiar
@@ -1214,22 +1611,24 @@ class AdvancedRecodePanel(QWidget):
 
     def _update_fit_mode_enabled(self):
         """El selector Crop/Ajustar/Deformar solo importa cuando el aspecto conservado está
-        desactivado y el W×H elegido no coincide con el aspecto real del fuente — en cualquier
-        otro caso no hay nada que resolver."""
-        mismatch = False
-        if not self.chk_keep_aspect.isChecked():
-            wh = self._source_wh()
-            if wh:
-                src_w, src_h = wh
-                target_ratio = self.spin_custom_width.value() / self.spin_custom_height.value()
-                source_ratio = src_w / src_h
-                mismatch = abs(target_ratio - source_ratio) > 0.01
-            else:
-                # Sin metadata del fuente no se puede saber si coincide; se habilita por las dudas.
-                mismatch = True
-        enabled = (not self.chk_keep_aspect.isChecked()) and mismatch
+        desactivado. Se habilita apenas se destilda "Conservar relación de aspecto", sin
+        esperar a que además cambie algún valor de Ancho/Alto — al desactivarlo, W×H todavía
+        coinciden con el aspecto real (eso es justamente lo que mantenía activado), así que
+        exigir además un "mismatch" actual dejaba los radios apagados hasta el primer cambio,
+        que se sentía como que no respondía."""
+        enabled = not self.chk_keep_aspect.isChecked()
         for rb in (self.rb_fit_deformar, self.rb_fit_ajustar, self.rb_fit_crop):
             rb.setEnabled(enabled)
+
+        # El recorte interactivo no es una casilla aparte: se activa/desactiva solo,
+        # siguiendo exactamente la misma condición que habilita el selector Crop/Ajustar/
+        # Deformar, restringida además al ajuste "Recortar" en sí.
+        crop_available = enabled and self._current_fit_mode() == "crop"
+        if crop_available != self._crop_active:
+            self._crop_active = crop_available
+            self.crop_edit_toggled.emit(crop_available)
+            if not crop_available and hasattr(self, "chk_apply_crop_to_all"):
+                self.hide_apply_to_all_checkbox()
 
     def _current_cfr_fps(self) -> float | None:
         """FPS elegido para CFR, parseado directo del texto mostrado en el combo (editable): sirve
@@ -1251,7 +1650,7 @@ class AdvancedRecodePanel(QWidget):
             return "deformar"
         return "ajustar"
 
-    def _build_vf_expression(self) -> str | None:
+    def _build_vf_expression(self, crop_fraction_override: tuple[float, float, float, float] | None = None) -> str | None:
         preset = self.combo_resolution.currentData() if hasattr(self, "combo_resolution") else "original"
         if not preset or preset == "original":
             return None
@@ -1265,6 +1664,8 @@ class AdvancedRecodePanel(QWidget):
             if fit_mode == "deformar":
                 return f"scale={w}:{h}"
             if fit_mode == "crop":
+                if crop_fraction_override is not None:
+                    return self._build_vf_expression_with_crop(crop_fraction_override, w, h)
                 return f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}"
             return f"scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2"
 
@@ -1273,13 +1674,46 @@ class AdvancedRecodePanel(QWidget):
             return None
         return f"scale='if(gt(iw,ih),{target},-2)':'if(gt(iw,ih),-2,{target})'"
 
-    def _transform_args(self, video_args: list[str]) -> list[str]:
+    def _build_vf_expression_with_crop(self, crop_fraction: tuple[float, float, float, float],
+                                         target_w: int, target_h: int) -> str:
+        """Arma crop=cw:ch:cx:cy,scale=target_w:target_h a partir de la fracción elegida
+        interactivamente en la vista previa (MediaTrimPlayerWidget.get_crop_rect).
+
+        A propósito usa las variables de ffmpeg iw/ih (ancho/alto reales del archivo que se
+        está codificando EN ESE MOMENTO) en vez de precalcular píxeles contra la resolución
+        de un solo archivo: con "Aplicar a todos los medios" el mismo filtro se aplica a
+        cada archivo de la cola, y si tuvieran resoluciones distintas entre sí, unos píxeles
+        fijos calculados sobre el archivo previsualizado quedarían mal en cualquier otro. Con
+        iw/ih, ffmpeg resuelve el recorte correcto para cada archivo por su cuenta.
+
+        El redondeo a par (get_dimension_alignment) se expresa con trunc(.../2)*2 dentro de
+        la propia fórmula de ffmpeg, por la misma razón: tiene que evaluarse por archivo. A
+        propósito NO se agrega ':exact=1' al filtro crop — verificado empíricamente que sin
+        él, un offset impar se autocorrige en silencio a lo sumo 1px sin artefactos; con
+        exact=1 se respeta el offset pero puede introducir corrimiento de croma."""
+        fx, fy, fw, fh = crop_fraction
+        alignment = self._current_dimension_alignment()
+
+        def axis(expr: str, even_required: bool) -> str:
+            return f"trunc(({expr})/2)*2" if even_required else f"trunc({expr})"
+
+        cw = axis(f"iw*{fw}", alignment["width_even_required"])
+        ch = axis(f"ih*{fh}", alignment["height_even_required"])
+        cx = axis(f"iw*{fx}", alignment["width_even_required"])
+        cy = axis(f"ih*{fy}", alignment["height_even_required"])
+        return f"crop={cw}:{ch}:{cx}:{cy},scale={target_w}:{target_h}"
+
+    def _transform_args(self, video_args: list[str],
+                         crop_fraction_override: tuple[float, float, float, float] | None = None) -> list[str]:
         """Fusiona el filtro de resolución/aspecto (si hay) y el -r de CFR (si está activo) con
         los args que ya trae el perfil de códec — reusando el -vf existente en vez de agregar uno
         segundo, para no romper perfiles que ya arman su propio filtro (ej. paleta de GIF)."""
         args = list(video_args) if video_args else []
 
-        vf_expr = self._build_vf_expression()
+        vf_expr = self._build_vf_expression(crop_fraction_override)
+        text_watermark_expr = self._build_text_watermark_filter()
+        if text_watermark_expr:
+            vf_expr = f"{vf_expr},{text_watermark_expr}" if vf_expr else text_watermark_expr
         if vf_expr:
             if "-vf" in args:
                 idx = args.index("-vf") + 1
@@ -1559,6 +1993,14 @@ class AdvancedRecodePanel(QWidget):
 
         self._last_valid = result["verdict"] != "blocked"
         self._invalid_reason = self.tr("Combinación no compatible") if not self._last_valid else ""
+
+        watermark_issue = self._check_watermark_issues()
+        if watermark_issue:
+            self._add_message(watermark_issue["severity"], watermark_issue["message"])
+            if watermark_issue["severity"] == "blocked":
+                self._last_valid = False
+                self._invalid_reason = watermark_issue["message"]
+
         self.validity_changed.emit(self._last_valid)
 
     def _format_playback_risk_message(self, risk: dict) -> str:
@@ -1620,7 +2062,7 @@ class AdvancedRecodePanel(QWidget):
             return False, self._invalid_reason or self.tr("Combinación no compatible")
         return True, self.tr("Iniciar Recodificación")
 
-    def get_settings(self) -> dict:
+    def get_settings(self, crop_fraction_override: tuple[float, float, float, float] | None = None) -> dict:
         stream_mode = self._current_stream_mode()
         v_codec = self._current_video_codec()
         is_gif = (v_codec == "gif" and self.rb_video_recode.isChecked())
@@ -1629,10 +2071,13 @@ class AdvancedRecodePanel(QWidget):
         if video_args is not None and video_recode_active:
             # Fusiona -vf (resolución/aspecto) y -r (CFR) con los args del perfil de códec ANTES
             # de dividir en pasadas, para que ambas pasadas de un 2-pass usen el mismo filtro.
-            video_args = self._transform_args(video_args)
+            video_args = self._transform_args(video_args, crop_fraction_override)
         passes = 2 if (video_args and self.rb_video_pass2.isChecked() and self.rb_video_pass2.isEnabled() and stream_mode != "audio_only" and not is_gif) else 1
 
         resolution_preset = self.combo_resolution.currentData() if hasattr(self, "combo_resolution") else "original"
+        watermark_image_path, watermark_overlay_filter = (
+            self._build_image_watermark_settings() if video_recode_active else (None, None)
+        )
         settings = {
             "stream_mode": stream_mode,
             "video_mode": "copy" if self.rb_video_copy.isChecked() else "recode",
@@ -1650,6 +2095,13 @@ class AdvancedRecodePanel(QWidget):
             "fit_mode": self._current_fit_mode() if hasattr(self, "rb_fit_ajustar") else "ajustar",
             "force_cfr": self.chk_cfr.isChecked() if hasattr(self, "chk_cfr") else False,
             "target_fps": self._current_cfr_fps() if (hasattr(self, "chk_cfr") and self.chk_cfr.isChecked()) else None,
+            "crop_apply_to_all": bool(
+                hasattr(self, "chk_apply_crop_to_all")
+                and self.chk_apply_crop_to_all.isVisible()
+                and self.chk_apply_crop_to_all.isChecked()
+            ),
+            "watermark_image_path": watermark_image_path,
+            "watermark_overlay_filter": watermark_overlay_filter,
         }
         if passes == 2:
             settings["video_args_pass1"] = build_pass_args(video_args, 1)

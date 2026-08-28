@@ -16,7 +16,7 @@ from PySide6.QtMultimedia import (
 from PySide6.QtMultimediaWidgets import QGraphicsVideoItem
 
 from gui.styles import get_theme_token, apply_player_play_button_style
-from gui.tabs.editing_media.editing_media_icons import get_svg_icon
+from gui.tabs.editing_media.editing_media_icons import get_svg_icon, get_colored_svg_icon
 from gui.widgets.timeline_ruler import TimelineRulerWidget
 from gui.widgets.audio_meter import MultiChannelMeterWidget
 from gui.widgets.volume_control import VolumeControlWidget
@@ -526,8 +526,6 @@ class _CheckerboardFrame(QFrame):
     Photoshop) de fondo cuando se reproduce un video, o un fondo oscuro sólido si no hay medio o es solo audio."""
 
     SQUARE = 10
-    COLOR_A = QColor(42, 42, 42)
-    COLOR_B = QColor(30, 30, 30)
 
     def __init__(self, border_color: str, radius: int = 6, parent=None):
         super().__init__(parent)
@@ -549,19 +547,25 @@ class _CheckerboardFrame(QFrame):
         painter.setClipPath(path)
 
         if self._show_checkerboard:
+            c1_hex = get_theme_token('ajedrez_c1', '#2a2a2a')
+            c2_hex = get_theme_token('ajedrez_c2', '#181818')
+            color_a = QColor(c1_hex)
+            color_b = QColor(c2_hex)
             size = self.SQUARE
             cols = int(rect.width() // size) + 2
             rows = int(rect.height() // size) + 2
             for row in range(rows):
                 for col in range(cols):
-                    color = self.COLOR_A if (row + col) % 2 == 0 else self.COLOR_B
+                    color = color_a if (row + col) % 2 == 0 else color_b
                     painter.fillRect(col * size, row * size, size, size, color)
         else:
-            painter.fillRect(rect, QColor(14, 14, 14))
+            bg_dark = get_theme_token('fondo_principal', '#0a0a0a')
+            painter.fillRect(rect, QColor(bg_dark))
 
         painter.setClipping(False)
         painter.setRenderHint(QPainter.Antialiasing, True)
-        painter.setPen(QPen(self._border_color, 1))
+        borde_color = get_theme_token('borde_normal', '#222222')
+        painter.setPen(QPen(QColor(borde_color), 1))
         painter.setBrush(Qt.NoBrush)
         painter.drawPath(path)
         painter.end()
@@ -1420,29 +1424,40 @@ class MediaTrimPlayerWidget(QWidget):
 
         # Widget para estado vacío cuando no hay medio cargado
         self.empty_preview_widget = QWidget(self.preview_container)
-        empty_layout = QVBoxLayout(self.empty_preview_widget)
+        self.empty_preview_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        empty_outer = QVBoxLayout(self.empty_preview_widget)
+        empty_outer.setContentsMargins(0, 0, 0, 0)
+        empty_outer.setSpacing(0)
+        empty_outer.addStretch(1)
+
+        empty_inner = QWidget()
+        empty_layout = QVBoxLayout(empty_inner)
         empty_layout.setAlignment(Qt.AlignCenter)
-        empty_layout.setContentsMargins(10, 10, 10, 10)
+        empty_layout.setContentsMargins(10, 0, 10, 0)
         empty_layout.setSpacing(6)
 
         lbl_empty_icon = QLabel()
         lbl_empty_icon.setAlignment(Qt.AlignCenter)
-        ico = get_svg_icon("play_arrow.svg")
-        if not ico.isNull():
-            lbl_empty_icon.setPixmap(ico.pixmap(32, 32))
+        icon_color = get_theme_token('texto_deshabilitado', '#555555')
+        empty_ico = get_colored_svg_icon("play_arrow.svg", icon_color, size=36)
+        if not empty_ico.isNull():
+            lbl_empty_icon.setPixmap(empty_ico.pixmap(36, 36))
         empty_layout.addWidget(lbl_empty_icon)
 
         self.lbl_empty_title = QLabel(self.tr("Vista Previa y Recorte"))
         self.lbl_empty_title.setAlignment(Qt.AlignCenter)
-        self.lbl_empty_title.setStyleSheet("font-weight: bold; font-size: 13px; color: #777777; background: transparent;")
+        self.lbl_empty_title.setStyleSheet(f"font-weight: bold; font-size: 13px; color: {get_theme_token('texto_secundario', '#777777')}; background: transparent;")
         empty_layout.addWidget(self.lbl_empty_title)
 
         self.lbl_empty_subtitle = QLabel(self.tr("Carga o selecciona un medio para previsualizarlo y ajustar sus puntos In / Out"))
         self.lbl_empty_subtitle.setAlignment(Qt.AlignCenter)
-        self.lbl_empty_subtitle.setStyleSheet("font-size: 11px; color: #555555; background: transparent;")
+        self.lbl_empty_subtitle.setStyleSheet(f"font-size: 11px; color: {get_theme_token('texto_deshabilitado', '#555555')}; background: transparent;")
         empty_layout.addWidget(self.lbl_empty_subtitle)
 
-        prev_layout.addWidget(self.empty_preview_widget)
+        empty_outer.addWidget(empty_inner, 0, Qt.AlignCenter)
+        empty_outer.addStretch(1)
+
+        prev_layout.addWidget(self.empty_preview_widget, 1)
 
         # Botón flotante para selección de resolución de previsualización (esquina superior derecha del visor)
         self.btn_quality = QToolButton(self.preview_container)

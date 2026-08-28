@@ -43,7 +43,7 @@ def build_quick_request_data(url, title, mode, quality, output_path, speed_limit
         format_selector = "best"
     else:
         mode_selector = mode
-        format_selector = quick_format_selector(mode, quality)
+        format_selector = quick_format_selector(mode, quality, url=url)
 
     request_title = title
     if is_playlist and title:

@@ -1972,6 +1972,16 @@ Log in and authorize the application. This window will update automatically once
         <source>no disp.</source>
         <translation>n/a</translation>
     </message>
+    <message>
+        <location filename="../../gui/widgets/media_trim_player_widget.py" line="1435"/>
+        <source>Vista Previa y Recorte</source>
+        <translation>Preview and Trim</translation>
+    </message>
+    <message>
+        <location filename="../../gui/widgets/media_trim_player_widget.py" line="1440"/>
+        <source>Carga o selecciona un medio para previsualizarlo y ajustar sus puntos In / Out</source>
+        <translation>Load or select a media file to preview it and adjust its In / Out points</translation>
+    </message>
 </context>
 <context>
     <name>MemoryCachePage</name>

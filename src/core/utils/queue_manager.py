@@ -449,7 +449,7 @@ class QueueWorker(QThread):
                 "title": f"{prefix}{item_title}",
                 "mode": mode,
                 "output_path": playlist_output,
-                "format_selector": self._playlist_format_selector(mode, quality),
+                "format_selector": self._playlist_format_selector(mode, quality, url=item_url),
                 "speed_limit": job.config.get("speed_limit"),
                 "embed_metadata": job.config.get("embed_metadata", True),
                 "embed_thumbnail": job.config.get("embed_thumbnail", True),
@@ -548,9 +548,9 @@ class QueueWorker(QThread):
         return url
 
     @staticmethod
-    def _playlist_format_selector(mode, quality):
+    def _playlist_format_selector(mode, quality, url=""):
         from core.ytdlp_logic.format_selectors import playlist_format_selector
-        return playlist_format_selector(mode, quality)
+        return playlist_format_selector(mode, quality, url=url)
 
     def _execute_recode(self, job, cancellation_event=None, worker_ref=None):
         import subprocess

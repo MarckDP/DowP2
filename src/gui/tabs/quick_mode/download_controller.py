@@ -133,7 +133,7 @@ class QuickDownloadController(QObject):
             
             req["mode"] = dialog.result_data.get("playlist_mode") or req["mode"]
             from core.ytdlp_logic.format_selectors import quick_format_selector
-            req["format_selector"] = quick_format_selector(req["mode"], dialog.result_data.get("playlist_quality") or quality)
+            req["format_selector"] = quick_format_selector(req["mode"], dialog.result_data.get("playlist_quality") or quality, url=req.get("url", ""))
 
             selected_entries = [entries[i] for i in selected if 0 <= i < len(entries)]
             self.start_worker(req, selected_entries=selected_entries, selected_indices=selected)

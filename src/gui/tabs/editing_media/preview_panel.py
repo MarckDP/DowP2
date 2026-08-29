@@ -210,24 +210,7 @@ class PreviewContainerWidget(QFrame):
         self.time_slider = QSlider(Qt.Horizontal)
         self.time_slider.setRange(0, 100)
         self.time_slider.setValue(0)
-        self.time_slider.setStyleSheet("""
-            QSlider::groove:horizontal {
-                border-radius: 2px;
-                height: 4px;
-                background: #444;
-            }
-            QSlider::sub-page:horizontal {
-                background: #1DC038;
-                border-radius: 2px;
-            }
-            QSlider::handle:horizontal {
-                background: #fff;
-                width: 10px;
-                margin-top: -3px;
-                margin-bottom: -3px;
-                border-radius: 5px;
-            }
-        """)
+        self.time_slider.setCursor(Qt.PointingHandCursor)
         self.time_slider.sliderPressed.connect(self._on_slider_pressed)
         self.time_slider.sliderMoved.connect(self._on_slider_moved)
         self.time_slider.sliderReleased.connect(self._on_slider_released)

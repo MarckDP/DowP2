@@ -127,6 +127,115 @@ QLineEdit#titleInput {
 }
 
 /* ═══════════════════════════════════════════
+   SLIDERS (QSlider — Barras Deslizantes)
+   ═══════════════════════════════════════════ */
+
+QSlider {
+    background: transparent;
+}
+
+QSlider:horizontal {
+    min-height: 20px;
+}
+
+QSlider::groove:horizontal {
+    border: none;
+    height: 4px;
+    background-color: {{checkbox_borde}};
+    border-radius: 2px;
+}
+
+QSlider::sub-page:horizontal {
+    background-color: {{acento_secundario}};
+    border-radius: 2px;
+}
+
+QSlider::sub-page:horizontal:disabled {
+    background-color: {{borde_normal}};
+}
+
+QSlider::groove:horizontal:disabled {
+    background-color: {{fondo_secundario}};
+}
+
+QSlider::handle:horizontal {
+    background-color: #ffffff;
+    border: 1px solid rgba(0, 0, 0, 0.15);
+    width: 12px;
+    margin-top: -4px;
+    margin-bottom: -4px;
+    border-radius: 6px;
+}
+
+QSlider::handle:horizontal:hover {
+    background-color: {{acento_primario}};
+    border-color: {{acento_primario}};
+}
+
+QSlider::handle:horizontal:pressed {
+    background-color: {{acento_primario}};
+    border-color: {{acento_primario}};
+}
+
+QSlider::handle:horizontal:disabled {
+    background-color: {{texto_deshabilitado}};
+    border: none;
+}
+
+QSlider:vertical {
+    min-width: 20px;
+}
+
+QSlider::groove:vertical {
+    border: none;
+    width: 4px;
+    background-color: {{checkbox_borde}};
+    border-radius: 2px;
+}
+
+QSlider::sub-page:vertical {
+    background-color: {{checkbox_borde}};
+    border-radius: 2px;
+}
+
+QSlider::add-page:vertical {
+    background-color: {{acento_secundario}};
+    border-radius: 2px;
+}
+
+QSlider::add-page:vertical:disabled {
+    background-color: {{borde_normal}};
+}
+
+QSlider::groove:vertical:disabled {
+    background-color: {{fondo_secundario}};
+}
+
+QSlider::handle:vertical {
+    background-color: #ffffff;
+    border: 1px solid rgba(0, 0, 0, 0.15);
+    height: 12px;
+    margin-left: -4px;
+    margin-right: -4px;
+    border-radius: 6px;
+}
+
+QSlider::handle:vertical:hover {
+    background-color: {{acento_primario}};
+    border-color: {{acento_primario}};
+}
+
+QSlider::handle:vertical:pressed {
+    background-color: {{acento_primario}};
+    border-color: {{acento_primario}};
+}
+
+QSlider::handle:vertical:disabled {
+    background-color: {{texto_deshabilitado}};
+    border: none;
+}
+
+/* ═══════════════════════════════════════════
    SISTEMA DE BOTONES CENTRALIZADO (DOWP 2.0)
    ═══════════════════════════════════════════ */
 

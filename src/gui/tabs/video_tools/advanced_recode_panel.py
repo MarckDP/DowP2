@@ -210,6 +210,7 @@ class AdvancedRecodePanel(QWidget):
 
         content = QWidget(scroll)
         content.setObjectName("advancedContent")
+        self._content_widget = content
         layout = QVBoxLayout(content)
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(10)
@@ -245,6 +246,7 @@ class AdvancedRecodePanel(QWidget):
             show_picker=False, show_save_button=True,
         )
         preset_card_layout.addWidget(self.preset_bar)
+        preset_card_layout.addStretch(1)
         layout.addWidget(preset_card)
 
         layout.addStretch(1)
@@ -271,6 +273,7 @@ class AdvancedRecodePanel(QWidget):
         if title:
             lbl = QLabel(title, frame)
             lbl.setObjectName("sectionTitle")
+            lbl.setAlignment(Qt.AlignCenter)
             v.addWidget(lbl)
         return frame, v
 
@@ -292,21 +295,21 @@ class AdvancedRecodePanel(QWidget):
     def _build_stream_section(self, title: str, prefix: str, is_video: bool, parent=None) -> QFrame:
         frame, v = self._card_frame(parent=parent)
 
-        # Cabecera de la columna (Título + Badge CPU/GPU si es video)
+        # Cabecera de la columna (Título centrado + Badge CPU/GPU a la derecha si es video)
         header_row = QHBoxLayout()
         header_row.setContentsMargins(0, 0, 0, 2)
         header_row.setSpacing(8)
 
         lbl_title = QLabel(title, frame)
         lbl_title.setObjectName("sectionTitle")
-        header_row.addWidget(lbl_title)
-        header_row.addStretch(1)
+        lbl_title.setAlignment(Qt.AlignCenter)
+        header_row.addWidget(lbl_title, 1)
 
         engine_badge = QPushButton("", frame)
         engine_badge.setObjectName(f"{prefix}EngineBadge")
         engine_badge.setCursor(Qt.PointingHandCursor)
         engine_badge.setVisible(False)
-        header_row.addWidget(engine_badge)
+        header_row.addWidget(engine_badge, 0, Qt.AlignRight)
         v.addLayout(header_row)
 
         # Selector de Modo (Recodificar / Copiar original)
@@ -715,6 +718,7 @@ class AdvancedRecodePanel(QWidget):
             # _update_fit_mode_enabled) — debía activarse apenas se selecciona el radio.
             rb.toggled.connect(self._update_fit_mode_enabled)
 
+        v.addStretch(1)
         self.frame_transform = frame
         return frame
 
@@ -803,6 +807,10 @@ class AdvancedRecodePanel(QWidget):
         self.slider_watermark_text_opacity.setValue(100)
         self.slider_watermark_text_opacity.setCursor(Qt.PointingHandCursor)
         opacity_row.addWidget(self.slider_watermark_text_opacity)
+        self.lbl_watermark_text_opacity_val = QLabel("100%", text_container)
+        self.lbl_watermark_text_opacity_val.setFixedWidth(36)
+        self.lbl_watermark_text_opacity_val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        opacity_row.addWidget(self.lbl_watermark_text_opacity_val)
         text_layout.addLayout(opacity_row)
 
         v.addWidget(text_container)
@@ -856,6 +864,10 @@ class AdvancedRecodePanel(QWidget):
         self.slider_watermark_image_opacity.setValue(100)
         self.slider_watermark_image_opacity.setCursor(Qt.PointingHandCursor)
         image_opacity_row.addWidget(self.slider_watermark_image_opacity)
+        self.lbl_watermark_image_opacity_val = QLabel("100%", image_container)
+        self.lbl_watermark_image_opacity_val.setFixedWidth(36)
+        self.lbl_watermark_image_opacity_val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        image_opacity_row.addWidget(self.lbl_watermark_image_opacity_val)
         image_layout.addLayout(image_opacity_row)
 
         v.addWidget(image_container)
@@ -877,6 +889,7 @@ class AdvancedRecodePanel(QWidget):
         self.spin_watermark_image_scale.valueChanged.connect(self._on_watermark_image_field_changed)
         self.slider_watermark_image_opacity.valueChanged.connect(self._on_watermark_image_field_changed)
 
+        v.addStretch(1)
         self.frame_watermark = frame
         return frame
 
@@ -909,22 +922,13 @@ class AdvancedRecodePanel(QWidget):
             self._evaluate_and_render()
 
     def _show_watermark_container(self, container: QWidget, visible: bool):
-        """setVisible() solo no alcanza acá: el contenedor arranca oculto desde que se
-        construye (nunca se activó su layout una vez), y al mostrarlo dentro del
-        QScrollArea del panel, Qt no siempre vuelve a calcular la geometría de los
-        sub-layouts (los QHBoxLayout de cada fila) — quedaban superpuestos entre sí en
-        vez de apilados. Forzar invalidate()+activate() del layout del contenedor y
-        updateGeometry() en la cadena de padres soluciona esa geometría contenida."""
         container.setVisible(visible)
-        if visible:
-            layout = container.layout()
-            if layout:
-                layout.invalidate()
-                layout.activate()
-            container.updateGeometry()
-            container.adjustSize()
-            self.frame_watermark.updateGeometry()
-            self.frame_watermark.adjustSize()
+        if hasattr(self, "cards_grid") and hasattr(self, "_content_widget"):
+            self.cards_grid.invalidate()
+            self.cards_grid.activate()
+            if self._content_widget.layout():
+                self._content_widget.layout().invalidate()
+                self._content_widget.layout().activate()
 
     def _on_watermark_text_toggled(self, checked: bool):
         if self._building:
@@ -939,6 +943,8 @@ class AdvancedRecodePanel(QWidget):
         _evaluate_and_render en cada tick — eso es lo que hacía saltar la UI mientras
         se arrastraba el slider de opacidad (reconstruía la tarjeta de mensajes y
         forzaba adjustSize() en cada movimiento del mouse)."""
+        if hasattr(self, "lbl_watermark_text_opacity_val") and hasattr(self, "slider_watermark_text_opacity"):
+            self.lbl_watermark_text_opacity_val.setText(f"{self.slider_watermark_text_opacity.value()}%")
         if self._building:
             return
         self.text_watermark_style_changed.emit()
@@ -951,6 +957,8 @@ class AdvancedRecodePanel(QWidget):
         self._evaluate_and_render()
 
     def _on_watermark_image_field_changed(self, *_args):
+        if hasattr(self, "lbl_watermark_image_opacity_val") and hasattr(self, "slider_watermark_image_opacity"):
+            self.lbl_watermark_image_opacity_val.setText(f"{self.slider_watermark_image_opacity.value()}%")
         if self._building:
             return
         self.image_watermark_style_changed.emit()
@@ -1060,6 +1068,7 @@ class AdvancedRecodePanel(QWidget):
         v.addWidget(lbl_hint)
 
         self.combo_container.currentIndexChanged.connect(self._on_container_changed)
+        v.addStretch(1)
         self.frame_container = frame
         return frame
 
@@ -1076,6 +1085,7 @@ class AdvancedRecodePanel(QWidget):
         self.lbl_size_estimate.setObjectName("sectionTitle")
         v.addWidget(self.lbl_size_estimate)
 
+        v.addStretch(1)
         self.frame_size = frame
         return frame
 
@@ -1085,6 +1095,7 @@ class AdvancedRecodePanel(QWidget):
         self.messages_layout.setContentsMargins(0, 2, 0, 2)
         self.messages_layout.setSpacing(6)
         v.addLayout(self.messages_layout)
+        v.addStretch(1)
         return frame
 
     # ─── Poblado de combos ──────────────────────────────────────
@@ -1511,6 +1522,12 @@ class AdvancedRecodePanel(QWidget):
             return
         is_custom = self.combo_resolution.currentData() == "custom"
         self.widget_custom_resolution.setVisible(is_custom)
+        if hasattr(self, "cards_grid") and hasattr(self, "_content_widget"):
+            self.cards_grid.invalidate()
+            self.cards_grid.activate()
+            if self._content_widget.layout():
+                self._content_widget.layout().invalidate()
+                self._content_widget.layout().activate()
         if is_custom:
             self._update_source_aspect_label()
             self._update_fit_mode_enabled()

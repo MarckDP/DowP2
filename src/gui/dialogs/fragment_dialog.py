@@ -4,7 +4,7 @@ import os
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QListWidget, QListWidgetItem, QWidget,
-    QSizePolicy, QLineEdit, QAbstractItemView, QFrame, QSlider,
+    QSizePolicy, QLineEdit, QAbstractItemView, QFrame,
     QRadioButton, QButtonGroup
 )
 from PySide6.QtCore import Qt, QUrl, QPoint, QSize, QRegularExpression, QEvent, QTimer

@@ -1512,11 +1512,8 @@ class MediaTrimPlayerWidget(QWidget):
         self.slider_zoom_x.setRange(100, 5000)
         self.slider_zoom_x.setValue(100)
         self.slider_zoom_x.setFixedWidth(100)
+        self.slider_zoom_x.setCursor(Qt.PointingHandCursor)
         self.slider_zoom_x.setToolTip("Zoom Horizontal")
-        self.slider_zoom_x.setStyleSheet("""
-            QSlider::groove:horizontal { border: 1px solid #333; height: 4px; background: #222; border-radius: 2px; }
-            QSlider::handle:horizontal { background: #B9E640; width: 12px; margin: -4px 0; border-radius: 6px; }
-        """)
         self.slider_zoom_x.valueChanged.connect(self._on_zoom_x_changed)
         zoom_bar.addWidget(self.slider_zoom_x)
 
@@ -1530,11 +1527,8 @@ class MediaTrimPlayerWidget(QWidget):
         self.slider_zoom_y.setRange(10, 1000)
         self.slider_zoom_y.setValue(100)
         self.slider_zoom_y.setFixedWidth(80)
+        self.slider_zoom_y.setCursor(Qt.PointingHandCursor)
         self.slider_zoom_y.setToolTip("Ganancia Visual (Zoom Y)")
-        self.slider_zoom_y.setStyleSheet("""
-            QSlider::groove:horizontal { border: 1px solid #333; height: 4px; background: #222; border-radius: 2px; }
-            QSlider::handle:horizontal { background: #1DC038; width: 12px; margin: -4px 0; border-radius: 6px; }
-        """)
         self.slider_zoom_y.valueChanged.connect(self._on_zoom_y_changed)
         zoom_bar.addWidget(self.slider_zoom_y)
 

@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
+    QGridLayout,
     QPushButton,
     QTreeWidget,
     QTreeWidgetItem,
@@ -99,20 +100,21 @@ class MediaQueueWidget(QFrame):
             }}
         """)
 
-        # Cabecera de la Cola
-        header_layout = QHBoxLayout()
-        header_layout.setContentsMargins(4, 2, 4, 2)
+        # Cabecera de la Lista de Medios
+        header_grid = QGridLayout()
+        header_grid.setContentsMargins(4, 2, 4, 2)
         
-        self.lbl_title = QLabel(self.tr("Cola de Archivos Multimedia"))
-        self.lbl_title.setStyleSheet("font-weight: bold; font-size: 13px;")
+        self.lbl_title = QLabel(self.tr("Lista de Medios"), self)
+        self.lbl_title.setObjectName("sectionTitle")
+        self.lbl_title.setAlignment(Qt.AlignCenter)
         
-        self.lbl_count = QLabel(self.tr("0 archivos"))
+        self.lbl_count = QLabel(self.tr("0 archivos"), self)
         self.lbl_count.setStyleSheet(f"color: {get_theme_token('texto_secundario', '#888888')}; font-size: 11px;")
+        self.lbl_count.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         
-        header_layout.addWidget(self.lbl_title)
-        header_layout.addStretch()
-        header_layout.addWidget(self.lbl_count)
-        layout.addLayout(header_layout)
+        header_grid.addWidget(self.lbl_title, 0, 0, 1, 3, Qt.AlignCenter)
+        header_grid.addWidget(self.lbl_count, 0, 2, Qt.AlignRight | Qt.AlignVCenter)
+        layout.addLayout(header_grid)
 
         # Barra de Botones de Importación
         btn_layout = QHBoxLayout()

@@ -91,7 +91,7 @@ class VideoToolsTab(QWidget):
         self.right_container = QWidget()
         right_layout = QVBoxLayout(self.right_container)
         right_layout.setContentsMargins(0, 0, 0, 0)
-        right_layout.setSpacing(10)
+        right_layout.setSpacing(6)
 
         # 1. Panel Superior de Opciones con Pestañas
         self.options_widget = EncodingOptionsWidget(self)
@@ -128,6 +128,7 @@ class VideoToolsTab(QWidget):
 
         lbl_out_title = QLabel(self.tr("Opciones de Salida y Procesamiento"), self.output_card)
         lbl_out_title.setObjectName("sectionTitle")
+        lbl_out_title.setAlignment(Qt.AlignCenter)
         out_layout.addWidget(lbl_out_title)
 
         grid_out = QGridLayout()

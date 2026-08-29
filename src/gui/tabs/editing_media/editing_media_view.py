@@ -570,33 +570,9 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         self.icon_size_slider.setRange(48, 200)
         self.icon_size_slider.setValue(self._saved_icon_size)
         self.icon_size_slider.setFixedWidth(75)
+        self.icon_size_slider.setCursor(Qt.PointingHandCursor)
         self.icon_size_slider.setToolTip(self.tr("Tamaño de cuadrícula"))
         self.icon_size_slider.valueChanged.connect(self._on_icon_size_changed)
-
-        accent_sec = get_theme_token('acento_secundario', '#1DC038')
-        accent_pri = get_theme_token('acento_primario', '#B9E640')
-        border_color = get_theme_token('borde_normal', '#444444')
-        self.icon_size_slider.setStyleSheet(f"""
-            QSlider::groove:horizontal {{
-                border-radius: 2px;
-                height: 4px;
-                background: {border_color};
-            }}
-            QSlider::sub-page:horizontal {{
-                background: {accent_sec};
-                border-radius: 2px;
-            }}
-            QSlider::handle:horizontal {{
-                background: #ffffff;
-                width: 10px;
-                margin-top: -3px;
-                margin-bottom: -3px;
-                border-radius: 5px;
-            }}
-            QSlider::handle:horizontal:hover {{
-                background: {accent_pri};
-            }}
-        """)
         popup_layout.addWidget(self.icon_size_slider)
 
 

@@ -923,12 +923,7 @@ class AdvancedRecodePanel(QWidget):
 
     def _show_watermark_container(self, container: QWidget, visible: bool):
         container.setVisible(visible)
-        if hasattr(self, "cards_grid") and hasattr(self, "_content_widget"):
-            self.cards_grid.invalidate()
-            self.cards_grid.activate()
-            if self._content_widget.layout():
-                self._content_widget.layout().invalidate()
-                self._content_widget.layout().activate()
+        self._relayout_cards()
 
     def _on_watermark_text_toggled(self, checked: bool):
         if self._building:
@@ -1522,12 +1517,7 @@ class AdvancedRecodePanel(QWidget):
             return
         is_custom = self.combo_resolution.currentData() == "custom"
         self.widget_custom_resolution.setVisible(is_custom)
-        if hasattr(self, "cards_grid") and hasattr(self, "_content_widget"):
-            self.cards_grid.invalidate()
-            self.cards_grid.activate()
-            if self._content_widget.layout():
-                self._content_widget.layout().invalidate()
-                self._content_widget.layout().activate()
+        self._relayout_cards()
         if is_custom:
             self._update_source_aspect_label()
             self._update_fit_mode_enabled()
@@ -1965,6 +1955,7 @@ class AdvancedRecodePanel(QWidget):
         while self.messages_layout.count():
             child = self.messages_layout.takeAt(0)
             if child.widget():
+                child.widget().hide()
                 child.widget().deleteLater()
 
     def _add_message(self, severity: str, text: str, compact: bool = False):

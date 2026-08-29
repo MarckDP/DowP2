@@ -17,7 +17,6 @@ flush_scaling_logs()
 
 from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QFontDatabase, QIcon
-from gui.main_window import MainWindow
 from core.utils.i18n import load_language
 from core.utils.config_manager import get_config
 
@@ -81,12 +80,11 @@ class HandCursorInstaller(QObject):
         return False
 
 def main():
-    # 0. Setup App and Language
+    # 0. Setup App y base
     app = QApplication(sys.argv)
     app.setStyle("Fusion")  # Estilo base multiplataforma que previene bugs de QComboBox en Windows
 
-    # Arrancar la captura de la consola en vivo desde el boot (no al abrir Ajustes), para que
-    # ya haya historial reciente disponible en cuanto el usuario active la pestaña Consola.
+    # Arrancar la captura de la consola en vivo desde el boot
     from core.logger.console_log_handler import get_console_log_handler
     get_console_log_handler()
 
@@ -96,7 +94,7 @@ def main():
     # Calculate absolute base directory
     base_dir = os.path.dirname(os.path.abspath(__file__))
     
-    # Load Fonts (Centralizado vía FontManager: internas + de usuario en AppData)
+    # Load Fonts (Lazy: solo fuente activa requerida)
     from core.utils.font_manager import init_fonts
     init_fonts()
     
@@ -115,27 +113,12 @@ def main():
     config = get_config()
     load_language(app, config.get("language", "en"))
 
-    # ── Recuperación de backups huérfanos (.dbak) de una sesión anterior cerrada
-    #    a la fuerza a mitad de una sobrescritura. Siempre restaura el original,
-    #    nunca descarta en silencio. No requiere GUI ni dependencias verificadas,
-    #    por eso corre lo antes posible. ──
-    from core.utils.file_conflict_manager import recover_orphaned_backups
-    recovered = recover_orphaned_backups()
-    if recovered:
-        logger.info(f"Se restauraron {len(recovered)} archivo(s) tras un cierre inesperado: {recovered}")
-
     # ── Splash Screen con verificación de dependencias integrada ──
+    # Se instancia e inicia lo antes posible para feedback visual inmediato
     from gui.splash_screen import SplashScreen
     
     splash = SplashScreen()
     window_holder = [None]  # Usar lista para evitar GC
-    
-    # Iniciar Master Manager de Editores (Adobe, DaVinci, Vegas)
-    from core.services.editor_integration_manager import EditorIntegrationManager
-    from core.utils.queue_manager import get_queue_manager
-    editor_manager = EditorIntegrationManager()
-    editor_manager.start_all_services()
-    editor_manager.connect_to_queue(get_queue_manager())
     
     def on_splash_ready(main_window):
         """Recibe la MainWindow ya construida desde el splash."""
@@ -152,6 +135,21 @@ def main():
     splash.ready.connect(on_splash_ready)
     splash.failed.connect(on_splash_failed)
     splash.start()
+
+    # ── Tareas de fondo mientras el Splash Screen ya es visible al usuario ──
+
+    # Recuperación de backups huérfanos (.dbak) de una sesión anterior
+    from core.utils.file_conflict_manager import recover_orphaned_backups
+    recovered = recover_orphaned_backups()
+    if recovered:
+        logger.info(f"Se restauraron {len(recovered)} archivo(s) tras un cierre inesperado: {recovered}")
+
+    # Iniciar Master Manager de Editores (Adobe, DaVinci, Vegas)
+    from core.services.editor_integration_manager import EditorIntegrationManager
+    from core.utils.queue_manager import get_queue_manager
+    editor_manager = EditorIntegrationManager()
+    editor_manager.start_all_services()
+    editor_manager.connect_to_queue(get_queue_manager())
 
     def on_app_exit():
         logger.info("Cerrando servicios en segundo plano...")

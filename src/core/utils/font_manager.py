@@ -22,95 +22,176 @@ _FONT_CACHE_DIR = None
 
 # Cache de familias detectadas y registradas
 _REGISTERED_FAMILIES = []
-_INITIALIZED = False
+_REGISTERED_FILE_PATHS = set()
+_INITIALIZED_FULL = False
 # Familia -> ruta absoluta del .ttf/.otf que la registró. QFontDatabase solo expone
 # nombres de familia (registro en memoria de la app, no instalado a nivel de SO), pero
 # ffmpeg (drawtext=fontfile=...) necesita la ruta real del archivo — ver watermark_builder.py.
 _FAMILY_TO_PATH = {}
 
 DEFAULT_FALLBACK_FONT = "Google Sans Flex"
+PRIORITY_FAMILIES = [
+    "Google Sans Flex", "Google Sans", "Raleway", "Roboto",
+    "Inter", "Outfit", "Plus Jakarta Sans", "JetBrains Mono"
+]
 
 
-def init_fonts() -> list:
-    """
-    Escanea y registra todas las fuentes (.ttf, .otf) en:
-      1. src/assets/fonts/ (fuentes empaquetadas)
-      2. %APPDATA%/DowP2/fonts/ (fuentes de usuario)
-    Retorna la lista de familias de fuentes disponibles.
-    """
-    global _REGISTERED_FAMILIES, _INITIALIZED
-    
-    discovered_families = set()
+def _register_font_file(font_path: str, is_user: bool = False) -> str:
+    """Registra un archivo de fuente individual (.ttf/.otf) en QFontDatabase si aún no ha sido registrado."""
+    if not font_path or not os.path.isfile(font_path) or font_path in _REGISTERED_FILE_PATHS:
+        return ""
+
+    try:
+        font_id = QFontDatabase.addApplicationFont(font_path)
+        if font_id != -1:
+            fams = QFontDatabase.applicationFontFamilies(font_id)
+            if fams:
+                primary_family = fams[0]
+                _FAMILY_TO_PATH.setdefault(primary_family, font_path)
+                if primary_family not in _REGISTERED_FAMILIES:
+                    _REGISTERED_FAMILIES.append(primary_family)
+                _REGISTERED_FILE_PATHS.add(font_path)
+                prefix = "Usuario" if is_user else "Interna"
+                logger.debug(f"FontManager: [{prefix}] Fuente registrada: {primary_family} ({os.path.basename(font_path)})")
+                return primary_family
+            else:
+                logger.warning(f"FontManager: No se detectaron familias para {font_path}")
+        else:
+            logger.warning(f"FontManager: No se pudo registrar {font_path} (archivo corrupto o formato no soportado)")
+    except Exception as e:
+        logger.error(f"FontManager: Error al registrar fuente {font_path}: {e}")
+    return ""
+
+
+def _scan_all_fonts():
+    """Escanea y registra todas las fuentes (.ttf, .otf) empaquetadas y de usuario."""
+    global _INITIALIZED_FULL
+
+    if _INITIALIZED_FULL:
+        return
 
     # 1. Fuentes empaquetadas
     builtin_fonts_dir = os.path.join(get_src_dir(), "assets", "fonts")
-    _scan_and_register_dir(builtin_fonts_dir, discovered_families, is_user=False)
+    if os.path.isdir(builtin_fonts_dir):
+        for file_name in os.listdir(builtin_fonts_dir):
+            if file_name.lower().endswith((".ttf", ".otf")):
+                _register_font_file(os.path.join(builtin_fonts_dir, file_name), is_user=False)
 
     # 2. Fuentes de usuario en AppData
     user_fonts_dir = get_user_fonts_dir()
-    _scan_and_register_dir(user_fonts_dir, discovered_families, is_user=True)
+    if os.path.isdir(user_fonts_dir):
+        for file_name in os.listdir(user_fonts_dir):
+            if file_name.lower().endswith((".ttf", ".otf")):
+                _register_font_file(os.path.join(user_fonts_dir, file_name), is_user=True)
 
-    # Obtener todas las familias disponibles en el sistema y ordenarlas
-    all_db_families = QFontDatabase.families()
-    
-    # Mantener una lista ordenada priorizando las descubiertas en nuestros directorios
+    # Reordenar _REGISTERED_FAMILIES según prioridades predeterminadas
     ordered = []
-    # Añadir familias descubiertas que estén en el QFontDatabase
-    for f in sorted(discovered_families):
-        if f in all_db_families and f not in ordered:
-            ordered.append(f)
-
-    # Asegurar que las principales estén si existen
-    for prio in ["Google Sans Flex", "Google Sans", "Raleway", "Roboto"]:
-        if prio in all_db_families and prio not in ordered:
+    for prio in PRIORITY_FAMILIES:
+        if prio in _REGISTERED_FAMILIES and prio not in ordered:
             ordered.append(prio)
+    for other in sorted(_REGISTERED_FAMILIES):
+        if other not in ordered:
+            ordered.append(other)
 
-    _REGISTERED_FAMILIES = ordered
-    _INITIALIZED = True
-    logger.info(f"FontManager: Fuentes inicializadas. Familias disponibles: {_REGISTERED_FAMILIES}")
-    return _REGISTERED_FAMILIES
+    _REGISTERED_FAMILIES.clear()
+    _REGISTERED_FAMILIES.extend(ordered)
+    _INITIALIZED_FULL = True
+    logger.info(f"FontManager: Fuentes completas inicializadas. Familias disponibles: {_REGISTERED_FAMILIES}")
 
 
-def _scan_and_register_dir(directory: str, families_set: set, is_user: bool = False):
-    """Escanea un directorio y registra fuentes en QFontDatabase."""
-    if not os.path.isdir(directory):
-        return
+def _ensure_active_font(theme_name: str = None) -> str:
+    """
+    Identifica y registra únicamente la fuente activa necesaria para el arranque.
+    Evita el escaneo de todo el sistema y de fuentes innecesarias durante el boot.
+    """
+    config = get_config()
+    configured_font = config.get("font_family", "theme_default")
 
-    for file_name in os.listdir(directory):
-        if file_name.lower().endswith((".ttf", ".otf")):
-            font_path = os.path.join(directory, file_name)
-            try:
-                font_id = QFontDatabase.addApplicationFont(font_path)
-                if font_id != -1:
-                    fams = QFontDatabase.applicationFontFamilies(font_id)
-                    if fams:
-                        # Usar el nombre principal de la familia (el primero)
-                        primary_family = fams[0]
-                        families_set.add(primary_family)
-                        _FAMILY_TO_PATH.setdefault(primary_family, font_path)
-                        prefix = "Usuario" if is_user else "Interna"
-                        logger.debug(f"FontManager: [{prefix}] Fuente registrada: {primary_family} ({file_name})")
-                else:
-                    logger.warning(f"FontManager: No se pudo registrar {font_path} (archivo corrupto o formato no soportado)")
-            except Exception as e:
-                logger.error(f"FontManager: Error al registrar fuente {font_path}: {e}")
+    target_family = ""
+    if configured_font and configured_font not in ("theme_default", "auto"):
+        target_family = configured_font
+    else:
+        if not theme_name:
+            theme_name = config.get("theme", "dark")
+        theme_font = get_theme_defined_font(theme_name)
+        if theme_font:
+            target_family = theme_font
+
+    if not target_family:
+        target_family = DEFAULT_FALLBACK_FONT
+
+    # Si ya está registrada, retornar directamente
+    if target_family in _FAMILY_TO_PATH:
+        return target_family
+
+    # Buscar coincidencia rápida por nombre de archivo en assets/fonts
+    builtin_fonts_dir = os.path.join(get_src_dir(), "assets", "fonts")
+    clean_target = target_family.replace(" ", "").lower()
+
+    if os.path.isdir(builtin_fonts_dir):
+        for f in os.listdir(builtin_fonts_dir):
+            if f.lower().endswith((".ttf", ".otf")):
+                clean_f = f.replace(" ", "").replace("-", "").lower()
+                if clean_target in clean_f:
+                    reg = _register_font_file(os.path.join(builtin_fonts_dir, f), is_user=False)
+                    if reg:
+                        return reg
+
+    # Si no se encontró por nombre de archivo, buscar en fuentes de usuario
+    user_fonts_dir = get_user_fonts_dir()
+    if os.path.isdir(user_fonts_dir):
+        for f in os.listdir(user_fonts_dir):
+            if f.lower().endswith((".ttf", ".otf")):
+                clean_f = f.replace(" ", "").replace("-", "").lower()
+                if clean_target in clean_f:
+                    reg = _register_font_file(os.path.join(user_fonts_dir, f), is_user=True)
+                    if reg:
+                        return reg
+
+    # Si aún no se encontró, registrar la fuente de respaldo (Google Sans Flex o Raleway)
+    for fallback_file in ["GoogleSansFlex-VariableFont.ttf", "Raleway.ttf"]:
+        fb_path = os.path.join(builtin_fonts_dir, fallback_file)
+        if os.path.isfile(fb_path):
+            reg = _register_font_file(fb_path, is_user=False)
+            if reg:
+                return reg
+
+    return target_family or "Segoe UI"
+
+
+def init_fonts(lazy: bool = True) -> list:
+    """
+    Inicializa el sistema de fuentes.
+    Por defecto (lazy=True) registra únicamente la fuente activa requerida para el inicio instantáneo.
+    Si lazy=False, realiza un escaneo completo de todas las fuentes disponibles.
+    """
+    if lazy:
+        active = _ensure_active_font()
+        logger.debug(f"FontManager: Inicialización rápida (Lazy). Fuente activa lista: {active}")
+        return list(_REGISTERED_FAMILIES)
+    else:
+        _scan_all_fonts()
+        return list(_REGISTERED_FAMILIES)
 
 
 def get_available_fonts() -> list:
-    """Retorna la lista de familias de fuentes disponibles registradas."""
-    global _INITIALIZED
-    if not _INITIALIZED:
-        init_fonts()
+    """Retorna la lista de todas las familias de fuentes disponibles (escaneo completo bajo demanda)."""
+    global _INITIALIZED_FULL
+    if not _INITIALIZED_FULL:
+        _scan_all_fonts()
     return list(_REGISTERED_FAMILIES)
 
 
 def get_font_file_path(family: str) -> str:
-    """Ruta absoluta al archivo .ttf/.otf que registró esta familia, o "" si no se
-    encontró (ej. la familia no fue escaneada por DowP). Necesaria para 'fontfile=' en
-    el filtro drawtext de ffmpeg — ver el docstring de _FAMILY_TO_PATH más arriba."""
-    global _INITIALIZED
-    if not _INITIALIZED:
-        init_fonts()
+    """Ruta absoluta al archivo .ttf/.otf que registró esta familia."""
+    if family in _FAMILY_TO_PATH:
+        return _FAMILY_TO_PATH[family]
+
+    # Si no está en el mapa, puede que no se haya realizado el escaneo completo todavía
+    if not _INITIALIZED_FULL:
+        _scan_all_fonts()
+        return _FAMILY_TO_PATH.get(family, "")
+
     return _FAMILY_TO_PATH.get(family, "")
 
 
@@ -119,7 +200,6 @@ def get_theme_defined_font(theme_name: str) -> str:
     if not theme_name:
         return ""
 
-    # Buscar primero en temas de usuario
     user_theme_file = os.path.join(get_user_themes_dir(), f"{theme_name}.json")
     builtin_theme_file = os.path.join(get_src_dir(), "gui", "themes", f"{theme_name}.json")
 
@@ -138,39 +218,9 @@ def get_theme_defined_font(theme_name: str) -> str:
 
 def get_active_font_family(theme_name: str = None) -> str:
     """
-    Resuelve la familia de tipografía activa actual:
-      1. Si config['font_family'] tiene una fuente específica (no 'auto'/'theme_default'), se usa.
-      2. Si está en 'theme_default' o no configurado, se busca la fuente definida en el tema.
-      3. Si el tema no especifica fuente, se usa 'Google Sans Flex' o 'Raleway' o 'Segoe UI'.
+    Resuelve la familia de tipografía activa actual (vía caché o registro rápido).
     """
-    global _INITIALIZED
-    if not _INITIALIZED:
-        init_fonts()
-
-    config = get_config()
-    configured_font = config.get("font_family", "theme_default")
-
-    if configured_font and configured_font not in ("theme_default", "auto"):
-        # El usuario seleccionó una fuente explícita
-        if configured_font in QFontDatabase.families() or configured_font in _REGISTERED_FAMILIES:
-            return configured_font
-
-    # Obtener nombre del tema si no fue provisto
-    if not theme_name:
-        theme_name = config.get("theme", "dark")
-
-    theme_font = get_theme_defined_font(theme_name)
-    if theme_font:
-        if theme_font in QFontDatabase.families() or theme_font in _REGISTERED_FAMILIES:
-            return theme_font
-
-    # Fallback predeterminado en orden de preferencia
-    all_families = QFontDatabase.families()
-    for fallback in [DEFAULT_FALLBACK_FONT, "Google Sans", "Raleway", "Segoe UI"]:
-        if fallback in all_families or fallback in _REGISTERED_FAMILIES:
-            return fallback
-
-    return "Segoe UI"
+    return _ensure_active_font(theme_name)
 
 
 def _get_font_cache_dir() -> str:

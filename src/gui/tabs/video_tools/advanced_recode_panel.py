@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QButtonGroup,
     QScrollArea,
     QSpinBox,
+    QDoubleSpinBox,
     QCheckBox,
     QSizePolicy,
     QPushButton,
@@ -33,6 +34,7 @@ from core.utils.recode_guard import evaluate_recode, get_video_codecs, get_audio
 from core.utils.hardware_detector import detect_hardware
 from core.utils.font_manager import get_available_fonts, get_active_font_family, get_static_font_path, STANDARD_WEIGHTS
 from core.utils.watermark_builder import build_drawtext_filter, build_image_overlay_filter, check_watermark_file
+from core.utils.audio_filter_builder import build_audio_normalization_filter
 from core.tabs.video_tools.codec_profiles import (
     get_profiles, build_custom_bitrate_args, extract_bitrate_kbps,
     recommend_audio_codec, supports_two_pass, encoder_is_two_pass_capable, build_pass_args, ENCODER_VARIANTS,
@@ -268,6 +270,7 @@ class AdvancedRecodePanel(QWidget):
         """)
         frame.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         v = QVBoxLayout(frame)
+        v.setSizeConstraint(QVBoxLayout.SetMinimumSize)
         v.setContentsMargins(12, 10, 12, 12)
         v.setSpacing(8)
         if title:
@@ -579,6 +582,155 @@ class AdvancedRecodePanel(QWidget):
             self.widget_audio_samplerate = samplerate_container
             self.lbl_audio_samplerate = lbl_samplerate
             self.combo_audio_samplerate = samplerate_combo
+
+            # ── Normalización de Audio ─────────────────────────
+            self.chk_audio_normalize = QCheckBox(self.tr("Normalizar audio"), frame)
+            self.chk_audio_normalize.setCursor(Qt.PointingHandCursor)
+            v.addWidget(self.chk_audio_normalize)
+
+            norm_container = QWidget(frame)
+            norm_layout = QVBoxLayout(norm_container)
+            norm_layout.setContentsMargins(18, 2, 0, 0)
+            norm_layout.setSpacing(6)
+
+            # Selector de método
+            lbl_norm_method = QLabel(self.tr("Método:"), norm_container)
+            lbl_norm_method.setObjectName("menuLabel")
+            norm_layout.addWidget(lbl_norm_method)
+
+            self.combo_audio_norm_method = AutoPopupComboBox(norm_container)
+            self._setup_fixed_combo(self.combo_audio_norm_method)
+            self.combo_audio_norm_method.addItem(self.tr("Sonoridad Percibida (EBU R128 / LUFS)"), "loudnorm")
+            self.combo_audio_norm_method.addItem(self.tr("Dinámica Inteligente (Voz y Diálogo)"), "dynaudnorm")
+            self.combo_audio_norm_method.addItem(self.tr("Normalización por Pico (dBFS)"), "peak")
+            norm_layout.addWidget(self.combo_audio_norm_method)
+
+            # Sub-panel 1: Sonoridad Percibida (loudnorm)
+            self.widget_norm_loudnorm = QWidget(norm_container)
+            loudnorm_layout = QVBoxLayout(self.widget_norm_loudnorm)
+            loudnorm_layout.setContentsMargins(0, 2, 0, 0)
+            loudnorm_layout.setSpacing(4)
+
+            # I (Sonoridad Integrada)
+            lbl_loudnorm_i = QLabel(self.tr("Sonoridad integrada (I):"), self.widget_norm_loudnorm)
+            lbl_loudnorm_i.setObjectName("menuLabel")
+            loudnorm_layout.addWidget(lbl_loudnorm_i)
+            self.spin_loudnorm_i = QDoubleSpinBox(self.widget_norm_loudnorm)
+            self.spin_loudnorm_i.setRange(-70.0, -5.0)
+            self.spin_loudnorm_i.setSingleStep(0.5)
+            self.spin_loudnorm_i.setValue(-14.0)
+            self.spin_loudnorm_i.setDecimals(1)
+            self.spin_loudnorm_i.setSuffix(" LUFS")
+            self.spin_loudnorm_i.setToolTip(self.tr("Sonoridad integrada promedio (típico: -14 LUFS para web/streaming, -23 LUFS para broadcast)."))
+            loudnorm_layout.addWidget(self.spin_loudnorm_i)
+
+            # TP (Pico real máximo)
+            lbl_loudnorm_tp = QLabel(self.tr("Pico real máximo (TP):"), self.widget_norm_loudnorm)
+            lbl_loudnorm_tp.setObjectName("menuLabel")
+            loudnorm_layout.addWidget(lbl_loudnorm_tp)
+            self.spin_loudnorm_tp = QDoubleSpinBox(self.widget_norm_loudnorm)
+            self.spin_loudnorm_tp.setRange(-9.0, 0.0)
+            self.spin_loudnorm_tp.setSingleStep(0.5)
+            self.spin_loudnorm_tp.setValue(-1.0)
+            self.spin_loudnorm_tp.setDecimals(1)
+            self.spin_loudnorm_tp.setSuffix(" dBTP")
+            self.spin_loudnorm_tp.setToolTip(self.tr("Límite máximo de True Peak para evitar distorsión digital o analógica (típico: -1.0 dBTP)."))
+            loudnorm_layout.addWidget(self.spin_loudnorm_tp)
+
+            # LRA (Rango de sonoridad)
+            lbl_loudnorm_lra = QLabel(self.tr("Rango de sonoridad (LRA):"), self.widget_norm_loudnorm)
+            lbl_loudnorm_lra.setObjectName("menuLabel")
+            loudnorm_layout.addWidget(lbl_loudnorm_lra)
+            self.spin_loudnorm_lra = QDoubleSpinBox(self.widget_norm_loudnorm)
+            self.spin_loudnorm_lra.setRange(1.0, 50.0)
+            self.spin_loudnorm_lra.setSingleStep(1.0)
+            self.spin_loudnorm_lra.setValue(11.0)
+            self.spin_loudnorm_lra.setDecimals(1)
+            self.spin_loudnorm_lra.setSuffix(" LU")
+            self.spin_loudnorm_lra.setToolTip(self.tr("Rango de sonoridad permitido (típico: 11 LU para streaming/música, 7 LU para TV)."))
+            loudnorm_layout.addWidget(self.spin_loudnorm_lra)
+
+            norm_layout.addWidget(self.widget_norm_loudnorm)
+
+            # Sub-panel 2: Dinámica Inteligente (dynaudnorm)
+            self.widget_norm_dynaudnorm = QWidget(norm_container)
+            dynaudnorm_layout = QVBoxLayout(self.widget_norm_dynaudnorm)
+            dynaudnorm_layout.setContentsMargins(0, 2, 0, 0)
+            dynaudnorm_layout.setSpacing(4)
+
+            # Ganancia máxima
+            lbl_dyn_gain = QLabel(self.tr("Ganancia máxima:"), self.widget_norm_dynaudnorm)
+            lbl_dyn_gain.setObjectName("menuLabel")
+            dynaudnorm_layout.addWidget(lbl_dyn_gain)
+            self.spin_dyn_gain = QDoubleSpinBox(self.widget_norm_dynaudnorm)
+            self.spin_dyn_gain.setRange(1.0, 30.0)
+            self.spin_dyn_gain.setSingleStep(1.0)
+            self.spin_dyn_gain.setValue(10.0)
+            self.spin_dyn_gain.setDecimals(1)
+            self.spin_dyn_gain.setSuffix(" dB")
+            self.spin_dyn_gain.setToolTip(self.tr("Amplificación máxima permitida para partes silenciosas (evita elevar demasiado el ruido de fondo)."))
+            dynaudnorm_layout.addWidget(self.spin_dyn_gain)
+
+            # Nivel de pico objetivo
+            lbl_dyn_peak = QLabel(self.tr("Pico objetivo:"), self.widget_norm_dynaudnorm)
+            lbl_dyn_peak.setObjectName("menuLabel")
+            dynaudnorm_layout.addWidget(lbl_dyn_peak)
+            self.spin_dyn_peak = QSpinBox(self.widget_norm_dynaudnorm)
+            self.spin_dyn_peak.setRange(50, 100)
+            self.spin_dyn_peak.setSingleStep(1)
+            self.spin_dyn_peak.setValue(95)
+            self.spin_dyn_peak.setSuffix(" %")
+            self.spin_dyn_peak.setToolTip(self.tr("Nivel de volumen pico objetivo (95% ≈ -0.4 dBFS)."))
+            dynaudnorm_layout.addWidget(self.spin_dyn_peak)
+
+            # Ventana de análisis
+            lbl_dyn_len = QLabel(self.tr("Ventana de análisis:"), self.widget_norm_dynaudnorm)
+            lbl_dyn_len.setObjectName("menuLabel")
+            dynaudnorm_layout.addWidget(lbl_dyn_len)
+            self.spin_dyn_len = QSpinBox(self.widget_norm_dynaudnorm)
+            self.spin_dyn_len.setRange(50, 3000)
+            self.spin_dyn_len.setSingleStep(50)
+            self.spin_dyn_len.setValue(500)
+            self.spin_dyn_len.setSuffix(" ms")
+            self.spin_dyn_len.setToolTip(self.tr("Tiempo de análisis para suavizar las transiciones de volumen (típico: 500 ms)."))
+            dynaudnorm_layout.addWidget(self.spin_dyn_len)
+
+            norm_layout.addWidget(self.widget_norm_dynaudnorm)
+            self.widget_norm_dynaudnorm.setVisible(False)
+
+            # Sub-panel 3: Normalización por Pico (peak)
+            self.widget_norm_peak = QWidget(norm_container)
+            peak_layout = QVBoxLayout(self.widget_norm_peak)
+            peak_layout.setContentsMargins(0, 2, 0, 0)
+            peak_layout.setSpacing(4)
+
+            lbl_peak_val = QLabel(self.tr("Nivel de pico objetivo:"), self.widget_norm_peak)
+            lbl_peak_val.setObjectName("menuLabel")
+            peak_layout.addWidget(lbl_peak_val)
+            self.spin_peak_val = QDoubleSpinBox(self.widget_norm_peak)
+            self.spin_peak_val.setRange(-30.0, 0.0)
+            self.spin_peak_val.setSingleStep(0.5)
+            self.spin_peak_val.setValue(-1.0)
+            self.spin_peak_val.setDecimals(1)
+            self.spin_peak_val.setSuffix(" dB")
+            self.spin_peak_val.setToolTip(self.tr("Límite máximo de pico de audio (ej: 0.0 dB máximo digital, -1.0 dB con margen seguro)."))
+            peak_layout.addWidget(self.spin_peak_val)
+
+            norm_layout.addWidget(self.widget_norm_peak)
+            self.widget_norm_peak.setVisible(False)
+
+            v.addWidget(norm_container)
+            self.widget_audio_normalize = norm_container
+            norm_container.setVisible(False)
+
+            self.chk_audio_normalize.toggled.connect(self._on_audio_normalize_toggled)
+            self.combo_audio_norm_method.currentIndexChanged.connect(self._on_audio_norm_method_changed)
+            for spin in (
+                self.spin_loudnorm_i, self.spin_loudnorm_tp, self.spin_loudnorm_lra,
+                self.spin_dyn_gain, self.spin_dyn_peak, self.spin_dyn_len,
+                self.spin_peak_val
+            ):
+                spin.valueChanged.connect(self._update_size_estimate)
 
         v.addStretch(1)
         return frame
@@ -1050,6 +1202,49 @@ class AdvancedRecodePanel(QWidget):
                 return {"severity": "blocked", "message": warning}
         return None
 
+    def _on_audio_normalize_toggled(self, checked: bool):
+        if self._building:
+            return
+        self.widget_audio_normalize.setVisible(checked)
+        self._relayout_cards()
+        self._evaluate_and_render()
+        self._update_size_estimate()
+
+    def _on_audio_norm_method_changed(self, *_args):
+        if self._building:
+            return
+        method = self.combo_audio_norm_method.currentData() or "loudnorm"
+        self.widget_norm_loudnorm.setVisible(method == "loudnorm")
+        self.widget_norm_dynaudnorm.setVisible(method == "dynaudnorm")
+        self.widget_norm_peak.setVisible(method == "peak")
+        self._relayout_cards()
+        self._evaluate_and_render()
+        self._update_size_estimate()
+
+    def _build_audio_normalization_filter(self) -> str | None:
+        if not hasattr(self, "chk_audio_normalize") or not self.chk_audio_normalize.isChecked():
+            return None
+        method = self.combo_audio_norm_method.currentData() or "loudnorm"
+        if method == "loudnorm":
+            params = {
+                "integrated_lufs": self.spin_loudnorm_i.value(),
+                "true_peak_dbtp": self.spin_loudnorm_tp.value(),
+                "lra_lu": self.spin_loudnorm_lra.value(),
+            }
+        elif method == "dynaudnorm":
+            params = {
+                "max_gain_db": self.spin_dyn_gain.value(),
+                "peak_factor": self.spin_dyn_peak.value() / 100.0,
+                "frame_len_ms": self.spin_dyn_len.value(),
+            }
+        elif method == "peak":
+            params = {
+                "peak_db": self.spin_peak_val.value(),
+            }
+        else:
+            params = {}
+        return build_audio_normalization_filter(method, params)
+
     def _build_container_section(self, parent=None) -> QFrame:
         frame, v = self._card_frame(self.tr("Contenedor de salida"), parent=parent)
 
@@ -1218,6 +1413,13 @@ class AdvancedRecodePanel(QWidget):
             self.combo_audio_channels.setEnabled(audio_recode)
         if hasattr(self, "combo_audio_samplerate"):
             self.combo_audio_samplerate.setEnabled(audio_recode)
+        if hasattr(self, "chk_audio_normalize"):
+            self.chk_audio_normalize.setEnabled(audio_recode)
+            self.chk_audio_normalize.setToolTip(
+                "" if audio_recode else self.tr("No disponible con Audio en modo 'Copiar original'.")
+            )
+            if hasattr(self, "widget_audio_normalize"):
+                self.widget_audio_normalize.setEnabled(audio_recode)
         if getattr(self, "frame_transform", None):
             # Un filtro de video (-vf) o -r no puede aplicarse con -c:v copy.
             self.frame_transform.setEnabled(video_recode)
@@ -1448,6 +1650,10 @@ class AdvancedRecodePanel(QWidget):
                 sr = self.combo_audio_samplerate.currentData()
                 if sr:
                     args.extend(["-ar", sr])
+            if hasattr(self, "chk_audio_normalize") and self.chk_audio_normalize.isChecked() and self.chk_audio_normalize.isEnabled():
+                af_filter = self._build_audio_normalization_filter()
+                if af_filter:
+                    args.extend(["-af", af_filter])
                 
         return args
 
@@ -2134,6 +2340,9 @@ class AdvancedRecodePanel(QWidget):
             ),
             "watermark_image_path": watermark_image_path,
             "watermark_overlay_filter": watermark_overlay_filter,
+            "audio_normalize": bool(hasattr(self, "chk_audio_normalize") and self.chk_audio_normalize.isChecked() and self.rb_audio_recode.isChecked() and stream_mode != "video_only" and not is_gif),
+            "audio_normalize_method": self.combo_audio_norm_method.currentData() if hasattr(self, "combo_audio_norm_method") else "loudnorm",
+            "audio_filter": self._build_audio_normalization_filter() if (hasattr(self, "chk_audio_normalize") and self.chk_audio_normalize.isChecked() and self.rb_audio_recode.isChecked() and stream_mode != "video_only" and not is_gif) else None,
         }
         if passes == 2:
             settings["video_args_pass1"] = build_pass_args(video_args, 1)

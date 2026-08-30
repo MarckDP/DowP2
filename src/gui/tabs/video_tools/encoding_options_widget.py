@@ -9,6 +9,7 @@ from PySide6.QtCore import Signal
 
 from gui.styles import get_theme_token
 from gui.tabs.video_tools.presets_panel import PresetsPanel
+from gui.tabs.video_tools.compress_panel import CompressPanel
 from gui.tabs.video_tools.advanced_recode_panel import AdvancedRecodePanel
 
 class EncodingOptionsWidget(QFrame):
@@ -61,8 +62,9 @@ class EncodingOptionsWidget(QFrame):
         self.tab_presets = PresetsPanel(self)
         self.tabs.addTab(self.tab_presets, self.tr("Preajustes"))
 
-        self.tab_compress = QWidget()
+        self.tab_compress = CompressPanel(self)
         self.tabs.addTab(self.tab_compress, self.tr("Comprimir"))
+        self.tab_compress.validity_changed.connect(self._on_compress_validity_changed)
 
         self.tab_convert = QWidget()
         self.tabs.addTab(self.tab_convert, self.tr("Convertir"))
@@ -87,6 +89,8 @@ class EncodingOptionsWidget(QFrame):
             return self.tab_advanced.get_status()
         if current is self.tab_presets:
             return self.tab_presets.get_status()
+        if current is self.tab_compress:
+            return self.tab_compress.get_status()
         return True, self.tr("Iniciar Recodificación")
 
     def _emit_current_status(self):
@@ -104,10 +108,21 @@ class EncodingOptionsWidget(QFrame):
         if self.tabs.currentWidget() is self.tab_presets:
             self._emit_current_status()
 
-    def get_encoding_settings(self) -> dict:
+    def _on_compress_validity_changed(self, _is_valid: bool):
+        if self.tabs.currentWidget() is self.tab_compress:
+            self._emit_current_status()
+
+    def get_encoding_settings(self, file_meta: dict | None = None, filepath: str | None = None) -> dict:
+        """`file_meta`/`filepath`, si se pasan, describen un archivo del lote DISTINTO al
+        que está en preview - Comprimir los necesita para recalcular por archivo (Rápido:
+        el nivel es una fracción del bitrate de CADA archivo; Manual: "Tamaño objetivo" y
+        "Mismo que el original" dependen de la duración/extensión real de cada uno - ver
+        video_tools_view.py)."""
         current = self.tabs.currentWidget()
         if current is self.tab_advanced:
             return self.tab_advanced.get_settings()
         if current is self.tab_presets:
             return self.tab_presets.get_settings()
+        if current is self.tab_compress:
+            return self.tab_compress.get_settings(meta_override=file_meta, filepath_override=filepath)
         return {}

@@ -155,6 +155,16 @@ class QueueWorker(QThread):
             for worker in list(self._active_workers.values()):
                 worker.cancel()
 
+    def cancel_job(self, job_id: str):
+        """Cancela SOLO el worker de este job_id, a diferencia de cancel_current_job()
+        (que cancela todo lo activo - correcto para stop()/clear_queue(), pero cancelaría
+        de más si hay una descarga corriendo en paralelo a la recodificación que el
+        usuario quiso cancelar)."""
+        with QMutexLocker(self._workers_mutex):
+            worker = self._active_workers.get(job_id)
+        if worker:
+            worker.cancel()
+
     def _download_best_thumb(self, entry, output_dir, title, force_png=False):
         """
         Descarga la mejor miniatura disponible (Forzando MaxRes) y la guarda sin usar PIL.
@@ -701,8 +711,14 @@ class QueueWorker(QThread):
             # Guardamos la referencia para poder cancelarlo
             if worker_ref:
                 worker_ref.downloader = proc # Usamos downloader para guardar el Popen, sobrecargando su uso temporalmente
-                # Override cancel
+                # Override cancel: además de terminar el proceso, hay que marcar
+                # cancellation_event - si no, más abajo (tras proc.wait()) el chequeo
+                # "if cancellation_event.is_set()" nunca ve la cancelación, y un proceso
+                # matado a mano por el usuario terminaba reportado como FAILED (código de
+                # retorno no-cero por la señal) en vez de CANCELLED, dejando además el
+                # archivo de salida parcial sin borrar.
                 def _cancel_proc():
+                    cancellation_event.set()
                     proc.terminate()
                 worker_ref.cancel = _cancel_proc
 
@@ -881,7 +897,7 @@ class QueueManager(QObject):
                 return
 
             if job.status == JobStatus.RUNNING:
-                self._worker.cancel_current_job()
+                self._worker.cancel_job(job_id)
             elif job.status == JobStatus.PENDING:
                 job.status = JobStatus.CANCELLED
                 self.job_status_changed.emit(job_id, JobStatus.CANCELLED)

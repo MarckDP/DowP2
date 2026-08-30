@@ -166,6 +166,56 @@ def resolve_encoder(codec_id: str) -> str | None:
     return entry.get("encoder") if entry else None
 
 
+def software_encoder(codec_id: str | None) -> str | None:
+    """Encoder de SOFTWARE (CPU, sin aceleracion por hardware) verificado para este
+    codec_id, para cuando el usuario fuerza CPU a mano (ver gui/widgets/engine_badge.py)
+    - a diferencia de resolve_encoder(), que prioriza hardware cuando esta disponible."""
+    if not codec_id:
+        return None
+    matrix = _load_matrix()
+    entry = matrix.get("codecs", {}).get(codec_id)
+    return entry.get("encoder") if entry else None
+
+
+def has_hardware_encoder(codec_id: str | None) -> bool:
+    """True si HAY un encoder acelerado por hardware confirmado (probe-encode real, ver
+    hardware_detector.py) para este codec_id en ESTE equipo."""
+    if not codec_id or codec_id not in _HARDWARE_TRACKED_CODECS:
+        return False
+    hw_info = detect_hardware()
+    status = hw_info.get("codec_status", {}).get(codec_id)
+    return bool(status and status.get("status") == "full")
+
+
+# Etiquetas de UI por contenedor, para combos que listan TODOS los contenedores
+# compatibles con un codec (ver get_compatible_containers) - no solo un subconjunto
+# curado. Unica fuente para esto (antes vivia solo dentro de advanced_recode_panel.py).
+CONTAINER_LABELS = {
+    "qtff": "MOV",
+    "mov": "MOV",
+    "mp4": "MP4",
+    "mkv": "MKV",
+    "avi": "AVI",
+    "asf": "WMV",
+    "ps": "MPEG-PS",
+    "ts": "MPEG-TS",
+    "webm": "WEBM",
+    "mxf": "MXF",
+    "3gp": "3GP",
+    "3g2": "3G2",
+    "mp3": "MP3",
+    "m4a": "M4A",
+    "ogg": "OGG",
+    "wav": "WAV",
+    "flac": "FLAC",
+    "flv": "FLV",
+    "apng": "APNG",
+    "webp": "WEBP",
+    "gif": "GIF",
+    "opus": "OPUS",
+}
+
+
 def get_compatible_containers(codec_ids: list[str]) -> list[str]:
     """Interseccion de contenedores soportados por todos los codec_id dados (ya verificados)."""
     matrix = _load_matrix()

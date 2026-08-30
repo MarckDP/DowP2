@@ -1314,6 +1314,7 @@ class MediaTrimPlayerWidget(QWidget):
 
     range_changed = Signal(float, float)  # in_sec, out_sec
     playing_changed = Signal(bool)
+    audio_track_selection_changed = Signal()  # ver get_audio_track_selection()
     crop_rect_changed = Signal()
     text_watermark_changed = Signal()
     image_watermark_changed = Signal()
@@ -1333,6 +1334,7 @@ class MediaTrimPlayerWidget(QWidget):
         self._first_frame_rendered = False
         self._card_style = card_style
         self._active_audio_track = 0
+        self._pending_audio_track_selection = None
         self._pending_waveform_track = 0
 
         # Calidad de previsualización (proxies para scrubbing fluido de medios pesados/RAW).
@@ -1596,6 +1598,7 @@ class MediaTrimPlayerWidget(QWidget):
                     "Si se desmarca, solo se procesará la pista seleccionada.")
         )
         self.chk_all_tracks.setVisible(False)
+        self.chk_all_tracks.toggled.connect(lambda _checked: self.audio_track_selection_changed.emit())
         zoom_bar.addWidget(self.chk_all_tracks)
 
         timeline_waveform_col.addLayout(zoom_bar)
@@ -1815,8 +1818,13 @@ class MediaTrimPlayerWidget(QWidget):
     # API pública
     # ------------------------------------------------------------------
     def load_media(self, media_path: str, media_type: str = "video", duration_sec: float = 0.0, fps: float = 30.0,
-                    initial_in_sec: float = None, initial_out_sec: float = None):
-        """Carga un nuevo archivo multimedia (detiene el anterior y reinicia waveform/rango)."""
+                    initial_in_sec: float = None, initial_out_sec: float = None,
+                    initial_audio_track_selection: str | int | None = None):
+        """Carga un nuevo archivo multimedia (detiene el anterior y reinicia waveform/rango).
+
+        `initial_audio_track_selection` (None/"all"/int) se aplica recién en
+        _rebuild_audio_track_menu(), cuando el reproductor termina de detectar las pistas
+        reales de ESTE archivo (es asíncrono) - acá solo se deja pendiente."""
         self.cleanup(stop_only=True)
 
         self.media_path = media_path or ""
@@ -1829,6 +1837,7 @@ class MediaTrimPlayerWidget(QWidget):
         self._preview_loop_range = None
         self._first_frame_rendered = False
         self._active_audio_track = 0
+        self._pending_audio_track_selection = initial_audio_track_selection
         self.btn_audio_track.setVisible(False)
         self.chk_all_tracks.setVisible(False)
         self.audio_track_menu.clear()
@@ -2293,11 +2302,24 @@ class MediaTrimPlayerWidget(QWidget):
                 self.btn_audio_track.setVisible(False)
             if hasattr(self, "chk_all_tracks"):
                 self.chk_all_tracks.setVisible(False)
+            self._pending_audio_track_selection = None
             return
 
-        active = self.media_player.activeAudioTrack()
-        if active < 0:
-            active = 0
+        # Selección restaurada por load_media() (ver caché por archivo en
+        # video_tools_view.py) - se aplica una sola vez, acá, que es cuando recién se
+        # conocen las pistas REALES de este archivo (tracksChanged es asíncrono).
+        pending = self._pending_audio_track_selection
+        self._pending_audio_track_selection = None
+
+        if isinstance(pending, int) and 0 <= pending < count:
+            active = pending
+            self.media_player.setActiveAudioTrack(active)
+            want_all_tracks = False
+        else:
+            active = self.media_player.activeAudioTrack()
+            if active < 0:
+                active = 0
+            want_all_tracks = True if pending is None else (pending == "all")
 
         self.audio_track_menu.clear()
         for i, meta in enumerate(tracks):
@@ -2311,6 +2333,12 @@ class MediaTrimPlayerWidget(QWidget):
         self.btn_audio_track.setText(f"{self.tr('Pista')} {active + 1} ▾")
         self.btn_audio_track.adjustSize()
         self.btn_audio_track.setVisible(True)
+        # blockSignals: esto es una restauración interna, no una elección del usuario -
+        # no debe disparar audio_track_selection_changed (evita un guardado redundante en
+        # el caché, y evita reentradas si el handler externo reacciona a la señal).
+        self.chk_all_tracks.blockSignals(True)
+        self.chk_all_tracks.setChecked(want_all_tracks)
+        self.chk_all_tracks.blockSignals(False)
         self.chk_all_tracks.setVisible(True)
         if track_changed:
             # QMediaPlayer tarda en detectar las pistas del medio (tracksChanged es
@@ -2346,6 +2374,7 @@ class MediaTrimPlayerWidget(QWidget):
             action.setChecked(i == index)
         # La waveform y el medidor reflejan la pista seleccionada: volver a extraerla.
         self.load_waveform()
+        self.audio_track_selection_changed.emit()
 
     def get_audio_track_selection(self) -> str | int | None:
         """Retorna la selección de pistas de audio para el trabajo de recodificación:

@@ -30,7 +30,7 @@ from gui.widgets.preset_bar import PresetBar
 from gui.widgets.collapsible_section import CollapsibleSection
 from gui.widgets.combo_box import CheckmarkComboDelegate, AutoPopupComboBox
 from core.logger.logger_manager import logger
-from core.utils.recode_guard import evaluate_recode, get_video_codecs, get_audio_codecs, get_compatible_containers, resolve_encoder, get_channel_support, get_dimension_alignment
+from core.utils.recode_guard import evaluate_recode, get_video_codecs, get_audio_codecs, get_compatible_containers, resolve_encoder, get_channel_support, get_dimension_alignment, CONTAINER_LABELS
 from core.utils.hardware_detector import detect_hardware
 from core.utils.font_manager import get_available_fonts, get_active_font_family, get_static_font_path, STANDARD_WEIGHTS
 from core.utils.watermark_builder import build_drawtext_filter, build_image_overlay_filter, check_watermark_file
@@ -74,31 +74,6 @@ _ENGINE_LABELS = {
     "h264_qsv": "Intel QuickSync", "hevc_qsv": "Intel QuickSync", "av1_qsv": "Intel QuickSync",
     "h264_amf": "AMD AMF", "hevc_amf": "AMD AMF", "av1_amf": "AMD AMF",
     "h264_vaapi": "VA-API", "hevc_vaapi": "VA-API", "av1_vaapi": "VA-API", "vp9_vaapi": "VA-API",
-}
-
-_CONTAINER_LABELS = {
-    "qtff": "MOV",
-    "mov": "MOV",
-    "mp4": "MP4",
-    "mkv": "MKV",
-    "avi": "AVI",
-    "asf": "WMV",
-    "ps": "MPEG-PS",
-    "ts": "MPEG-TS",
-    "webm": "WEBM",
-    "mxf": "MXF",
-    "3gp": "3GP",
-    "3g2": "3G2",
-    "mp3": "MP3",
-    "m4a": "M4A",
-    "ogg": "OGG",
-    "wav": "WAV",
-    "flac": "FLAC",
-    "flv": "FLV",
-    "apng": "APNG",
-    "webp": "WEBP",
-    "gif": "GIF",
-    "opus": "OPUS",
 }
 
 # Presets de resolución: escalan el LADO LARGO del video preservando el aspecto real del fuente
@@ -2122,7 +2097,7 @@ class AdvancedRecodePanel(QWidget):
             current = self.combo_container.currentData()
             self.combo_container.clear()
             for cont_id in containers:
-                label = _CONTAINER_LABELS.get(cont_id, cont_id.upper())
+                label = CONTAINER_LABELS.get(cont_id, cont_id.upper())
                 self.combo_container.addItem(label, cont_id)
 
             stream_mode = self._current_stream_mode()

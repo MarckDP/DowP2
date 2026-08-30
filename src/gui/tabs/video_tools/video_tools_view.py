@@ -28,6 +28,7 @@ from core.logger.logger_manager import logger
 from core.utils.config_manager import get_config, save_config
 from core.tabs.editing_media.ffprobe_metadata_manager import FFprobeMetadataManager
 from core.utils.queue_manager import get_queue_manager, JobStatus
+from core.utils.file_conflict_manager import resolve_conflict, commit_backup, rollback_backup, find_available_rename
 
 AUDIO_ONLY_EXTENSIONS = {".mp3", ".wav", ".aac", ".flac", ".ogg", ".m4a", ".opus", ".wma"}
 CONTAINER_TO_EXTENSION = {
@@ -81,6 +82,22 @@ class VideoToolsTab(QWidget):
         self.in_point_ms = 0
         self.out_point_ms = 0
         self._recode_jobs = set()  # Mantener track de los trabajos RECODE iniciados desde esta vista
+        # Recorte temporal (trim) por archivo: {filepath: (in_sec, out_sec)}. A diferencia
+        # del recorte espacial (crop, exclusivo del archivo en preview salvo "Aplicar a
+        # todos"), el trim ahora sobrevive a cambiar de archivo en el preview - se guarda
+        # acá en cada range_changed y se restaura al volver a seleccionar ese archivo (ver
+        # _on_trim_range_changed / _on_file_selected), y se usa por-archivo al armar el
+        # lote (ver _on_start_recoding_clicked), no solo para el que esté en preview.
+        self._trim_cache: dict[str, tuple[float, float]] = {}
+        # Selección de pista de audio (medios multipista) por archivo: {filepath: "all"|int}.
+        # Misma arquitectura que _trim_cache y por el mismo motivo - antes se leía en vivo
+        # del preview_widget incluso para archivos que no eran el actual, lo que podía
+        # aplicarle a un archivo la pista elegida en OTRO (ver conversación).
+        self._audio_track_cache: dict[str, str | int] = {}
+        # job_id -> backup_path pendiente (o None) para la política "Sobrescribir" - ver
+        # file_conflict_manager.py: se confirma (se borra el .dbak) si el job termina bien,
+        # se revierte (se restaura el original) si falla o se cancela.
+        self._recode_backups: dict[str, str | None] = {}
 
         self.init_ui()
         self._load_saved_output_dir()
@@ -109,6 +126,7 @@ class VideoToolsTab(QWidget):
 
         self.preview_widget = MediaTrimPlayerWidget(self, card_style=True)
         self.preview_widget.range_changed.connect(self._on_trim_range_changed)
+        self.preview_widget.audio_track_selection_changed.connect(self._on_audio_track_selection_changed)
         # El tope de ancho se recalcula en vivo según el ancho de ventana (ver
         # _preview_max_width) en vez de ser un número fijo: así el preview queda chico y
         # centrado en la resolución default, pero aprovecha el espacio extra en pantallas
@@ -120,6 +138,7 @@ class VideoToolsTab(QWidget):
 
         self.queue_widget = MediaQueueWidget(self)
         self.queue_widget.file_selected.connect(self._on_file_selected)
+        self.queue_widget.queue_updated.connect(self._on_queue_changed)
 
         # 1. Panel de Opciones con Pestañas
         self.options_widget = EncodingOptionsWidget(self)
@@ -171,10 +190,43 @@ class VideoToolsTab(QWidget):
         grid_out.setSpacing(8)
         grid_out.setColumnStretch(1, 1)
 
-        # Checkbox "Guardar en misma ruta"
-        self.chk_same_path = QCheckBox(self.tr("Guardar en la misma ruta del medio original"), self.output_card)
+        # Fila 0: Checkbox "Guardar junto al original" + política de conflicto de nombres
+        # (acortado el texto del checkbox a propósito para que entre el combo al lado,
+        # ver conversación: antes decía "Guardar en la misma ruta del medio original").
+        row_same_path = QHBoxLayout()
+        row_same_path.setContentsMargins(0, 0, 0, 0)
+        row_same_path.setSpacing(6)
+
+        self.chk_same_path = QCheckBox(self.tr("Guardar junto al original"), self.output_card)
         self.chk_same_path.setObjectName("menuLabel")
-        grid_out.addWidget(self.chk_same_path, 0, 0, 1, 3)
+        row_same_path.addWidget(self.chk_same_path)
+        row_same_path.addStretch(1)
+
+        lbl_conflict_policy = QLabel(self.tr("Si existe:"), self.output_card)
+        lbl_conflict_policy.setObjectName("menuLabel")
+        row_same_path.addWidget(lbl_conflict_policy)
+
+        # Mismas 3 políticas y mismo criterio que ya usa la pestaña de Descarga
+        # (gui/tabs/single_process/output_options.py) - reusan directo
+        # core/utils/file_conflict_manager.py (backup reversible al sobrescribir), no
+        # una lógica nueva.
+        self.combo_conflict_policy = AutoPopupComboBox(self.output_card)
+        self.combo_conflict_policy.setCursor(Qt.PointingHandCursor)
+        self.combo_conflict_policy.addItem(self.tr("Sobrescribir"), "sobrescribir")
+        self.combo_conflict_policy.addItem(self.tr("Conservar"), "conservar")
+        self.combo_conflict_policy.addItem(self.tr("Omitir"), "omitir")
+        self.combo_conflict_policy.setCurrentIndex(1)  # "Conservar" por defecto
+        self.combo_conflict_policy.setFixedHeight(28)
+        self.combo_conflict_policy.setToolTip(self.tr(
+            "Qué hacer si ya existe un archivo con el mismo nombre de salida:\n"
+            "• Sobrescribir: reemplaza el archivo antiguo (con respaldo reversible).\n"
+            "• Conservar: guarda el nuevo archivo como 'nombre (1).ext'.\n"
+            "• Omitir: no recodifica ese archivo."
+        ))
+        self.combo_conflict_policy.currentIndexChanged.connect(self._on_conflict_policy_changed)
+        row_same_path.addWidget(self.combo_conflict_policy)
+
+        grid_out.addLayout(row_same_path, 0, 0, 1, 3)
 
         # Fila 1: Ruta + Selector de Etiquetas + Botones de Examinar/Abrir
         self.lbl_dest = QLabel(self.tr("Ruta:"), self.output_card)
@@ -438,8 +490,15 @@ class VideoToolsTab(QWidget):
         if duration_sec <= 0:
             duration_sec = 1.0
 
-        self.preview_widget.load_media(filepath, media_type, duration_sec, fps_val)
+        cached_trim = self._trim_cache.get(filepath)
+        cached_in, cached_out = cached_trim if cached_trim else (None, None)
+        self.preview_widget.load_media(
+            filepath, media_type, duration_sec, fps_val,
+            initial_in_sec=cached_in, initial_out_sec=cached_out,
+            initial_audio_track_selection=self._audio_track_cache.get(filepath),
+        )
         self.options_widget.tab_advanced.set_source_media(meta, filepath)
+        self.options_widget.tab_compress.set_source_media(meta, filepath)
         # preview_widget.load_media ya ocultó el rectángulo (el encuadre elegido no tiene
         # sentido para otro archivo); esto lo vuelve a mostrar de una para el archivo nuevo
         # si el recorte interactivo sigue activo (personalizado + Recortar es config. del
@@ -447,10 +506,31 @@ class VideoToolsTab(QWidget):
         self.options_widget.tab_advanced.hide_apply_to_all_checkbox()
         self._on_crop_edit_toggled(self.options_widget.tab_advanced.is_crop_active())
 
+    def _on_queue_changed(self, _count: int = 0):
+        """Reacciona a altas/bajas en la cola: empuja la metadata de TODA la cola a
+        Comprimir/Rápido para el estimado de peso agregado del lote (a diferencia del
+        estimado por-archivo, que ya cubre set_source_media con el archivo en preview), y
+        poda los cachés por-archivo (recorte y selección de pista de audio) de archivos que
+        ya no están en la cola - si no, un archivo distinto que reutilice la misma ruta más
+        tarde heredaría ajustes que no le corresponden."""
+        current_files = set(self.queue_widget.get_all_filepaths())
+        for cache in (self._trim_cache, self._audio_track_cache):
+            for filepath in set(cache.keys()) - current_files:
+                del cache[filepath]
+
+        entries = []
+        for filepath in current_files:
+            ext = os.path.splitext(filepath)[1].lower()
+            media_type = "audio" if ext in AUDIO_ONLY_EXTENSIONS else "video"
+            meta = FFprobeMetadataManager.get_instance().get_metadata_instant(filepath, media_type)
+            entries.append(meta)
+        self.options_widget.tab_compress.set_queue_entries(entries)
+
     def _on_metadata_ready(self, path: str, meta: dict):
         if path == self.current_preview_file:
             self.preview_widget.set_fps(self._parse_fps(meta.get("fps", "30")))
             self.options_widget.tab_advanced.set_source_media(meta, path)
+            self.options_widget.tab_compress.set_source_media(meta, path)
             # La metadata rápida inicial puede no traer resolución todavía; si el recorte
             # ya está activo, se re-arma ahora con la resolución real recién confirmada.
             self._on_crop_edit_toggled(self.options_widget.tab_advanced.is_crop_active())
@@ -458,7 +538,16 @@ class VideoToolsTab(QWidget):
     def _on_trim_range_changed(self, in_sec: float, out_sec: float):
         self.in_point_ms = int(in_sec * 1000)
         self.out_point_ms = int(out_sec * 1000)
+        if self.current_preview_file:
+            self._trim_cache[self.current_preview_file] = (in_sec, out_sec)
         logger.debug(f"VideoToolsTab: Trim points actualizados: In={self.in_point_ms}ms, Out={self.out_point_ms}ms")
+
+    def _on_audio_track_selection_changed(self):
+        if not self.current_preview_file:
+            return
+        selection = self.preview_widget.get_audio_track_selection()
+        if selection is not None:
+            self._audio_track_cache[self.current_preview_file] = selection
 
     def _on_crop_edit_toggled(self, enabled: bool):
         fw, fh = self.options_widget.tab_advanced.get_crop_target_fraction() if enabled else (None, None)
@@ -611,6 +700,11 @@ class VideoToolsTab(QWidget):
         config["video_tools_same_path"] = checked
         save_config(config)
 
+    def _on_conflict_policy_changed(self, _index: int):
+        config = get_config()
+        config["video_tools_conflict_policy"] = self.combo_conflict_policy.currentData()
+        save_config(config)
+
     def _load_saved_output_dir(self):
         config = get_config()
         saved = config.get("video_tools_output_dir", "")
@@ -620,10 +714,15 @@ class VideoToolsTab(QWidget):
             default_dir = os.path.join(os.path.expanduser("~"), "Videos")
             if os.path.exists(default_dir):
                 self.txt_output_dir.setText(default_dir)
-                
+
         same_path = config.get("video_tools_same_path", False)
         self.chk_same_path.setChecked(same_path)
         self._on_same_path_toggled(same_path)
+
+        saved_policy = config.get("video_tools_conflict_policy", "conservar")
+        idx = self.combo_conflict_policy.findData(saved_policy)
+        if idx >= 0:
+            self.combo_conflict_policy.setCurrentIndex(idx)
 
     def _on_start_status_changed(self, is_valid: bool, text: str):
         if getattr(self, "_recode_jobs", None):
@@ -690,43 +789,97 @@ class VideoToolsTab(QWidget):
         
         qm = get_queue_manager()
         raw_container = settings.get("container", "mp4")
-        container_ext = CONTAINER_TO_EXTENSION.get(raw_container, raw_container)
-        
+        is_compress_tab = self.options_widget.tabs.currentWidget() is self.options_widget.tab_compress
+        # Nombres de salida ya asignados a otro archivo de ESTE MISMO lote (ej. video.mp4
+        # + video.mov -> mismo out_file): resolve_conflict() solo ve el disco, y el
+        # archivo del otro job todavía no existe ahí (ffmpeg lo va a escribir más tarde) -
+        # sin este chequeo aparte, dos jobs del mismo lote se pisarían entre sí.
+        claimed_out_paths = set()
+
         for filepath in files:
-            base_name = os.path.splitext(os.path.basename(filepath))[0]
-            out_name = f"{prefix}{base_name}{suffix}.{container_ext}"
-            
-            if same_path:
-                actual_out_dir = os.path.dirname(filepath)
-            else:
-                actual_out_dir = out_dir
-                
-            out_file = os.path.join(actual_out_dir, out_name)
-            
             ext = os.path.splitext(filepath)[1].lower()
             media_type = "audio" if ext in AUDIO_ONLY_EXTENSIONS else "video"
             meta = FFprobeMetadataManager.get_instance().get_metadata_instant(filepath, media_type)
             duration_sec = self._parse_duration_to_seconds(meta.get("duración", "0"))
-            
+
             file_settings = dict(settings)
-            
-            # Selección de pistas para medios multipista (definida antes del preset en la fuente):
+
+            # Comprimir necesita recalcular por archivo, no reusar el `settings` armado una
+            # sola vez para el archivo en preview: Rápido calcula el nivel como fracción del
+            # bitrate de CADA archivo (no del que está en preview), y Manual + "Tamaño
+            # objetivo (MB)" / "Mismo que el original" dependen de la duración/extensión
+            # real de cada uno. Recalcular acá es barato (arma un dict chico, sin I/O) y no
+            # cambia nada para el resto de los modos manuales (CRF/bitrate manual dan el
+            # mismo resultado en todos los archivos).
+            if is_compress_tab:
+                file_settings = self.options_widget.get_encoding_settings(file_meta=meta, filepath=filepath)
+
+            file_container = file_settings.get("container", raw_container)
+            container_ext = CONTAINER_TO_EXTENSION.get(file_container, file_container)
+            base_name = os.path.splitext(os.path.basename(filepath))[0]
+            out_name = f"{prefix}{base_name}{suffix}.{container_ext}"
+
+            if same_path:
+                actual_out_dir = os.path.dirname(filepath)
+            else:
+                actual_out_dir = out_dir
+
+            out_file = os.path.join(actual_out_dir, out_name)
+
+            # Conflicto de nombre de salida (ver combo "Si existe:"): dos fuentes con el
+            # mismo nombre base pero distinto contenedor de origen pueden terminar
+            # pidiendo el mismo out_file - se resuelve acá, por archivo, ANTES de crear el
+            # job, reusando core/utils/file_conflict_manager.py (mismo mecanismo que ya
+            # usa la pestaña de Descarga, backup reversible incluido para "Sobrescribir").
+            conflict_policy = self.combo_conflict_policy.currentData() or "conservar"
+            out_file, backup_path = resolve_conflict(out_file, conflict_policy)
+
+            # Colisión dentro del mismo lote (ver claimed_out_paths más arriba) - un
+            # archivo ya "ganó" este nombre en una vuelta anterior del loop, aunque
+            # todavía no exista en disco.
+            while out_file is not None and out_file in claimed_out_paths:
+                if conflict_policy == "omitir":
+                    out_file = None
+                else:
+                    # "Sobrescribir" no aplica entre dos jobs del mismo lote (no hay nada
+                    # que respaldar todavía, el otro archivo ni se escribió) - se degrada
+                    # a auto-renombrar, igual que "Conservar".
+                    out_file = find_available_rename(out_file)
+
+            if out_file is None:
+                logger.info(f"VideoToolsTab: Omitido por conflicto de nombre: {filepath}")
+                self.queue_widget.update_file_status(filepath, self.tr("Omitido"))
+                continue
+            claimed_out_paths.add(out_file)
+
+            # Recorte temporal (trim): por archivo, desde el caché (ver _trim_cache) - no
+            # depende de cuál esté en el preview justo ahora, cada archivo del lote lleva
+            # el suyo (o ninguno, si nunca se tocó).
+            cached_trim = self._trim_cache.get(filepath)
+            if cached_trim:
+                trim_in_sec, trim_out_sec = cached_trim
+                if trim_in_sec > 0.05 or (duration_sec > 0 and trim_out_sec < (duration_sec - 0.05)):
+                    file_settings["trim_in_sec"] = trim_in_sec
+                    file_settings["trim_out_sec"] = trim_out_sec
+
+            # Selección de pista de audio (medios multipista): por archivo, desde el caché
+            # (ver _audio_track_cache) - antes, para archivos que no eran el que estaba en
+            # preview, se leía la selección EN VIVO del preview y se le aplicaba a ese otro
+            # archivo igual, aunque fuera de otro idioma o ni existiera esa pista ahí.
+            streams = meta.get("audio_streams", [])
+            if len(streams) > 1:
+                cached_track_sel = self._audio_track_cache.get(filepath)
+                file_settings["audio_track_selection"] = cached_track_sel if cached_track_sel is not None else "all"
+
+            # El recorte interactivo es exclusivo de Avanzado (Comprimir no tiene UI de
+            # recorte, ver compress_panel.py) - si el usuario dejó un recorte dibujado
+            # desde una visita anterior a Avanzado pero el lote actual lo está armando
+            # Comprimir, no corresponde reinyectar los video_args de Avanzado acá (son
+            # de otro códec/perfil, no los que Comprimir acaba de calcular).
             if filepath == self.current_preview_file:
-                track_sel = self.preview_widget.get_audio_track_selection()
-                if track_sel is not None:
-                    file_settings["audio_track_selection"] = track_sel
-                in_sec, out_sec = self.preview_widget.get_in_out()
-                if in_sec > 0.05 or (duration_sec > 0 and out_sec < (duration_sec - 0.05)):
-                    file_settings["trim_in_sec"] = in_sec
-                    file_settings["trim_out_sec"] = out_sec
-                if crop_frac is not None and not apply_crop_to_all:
+                if crop_frac is not None and not apply_crop_to_all and not is_compress_tab:
                     crop_settings = self.options_widget.tab_advanced.get_settings(crop_fraction_override=crop_frac)
                     file_settings["video_args"] = crop_settings["video_args"]
-            else:
-                streams = meta.get("audio_streams", [])
-                if len(streams) > 1:
-                    preview_sel = self.preview_widget.get_audio_track_selection()
-                    file_settings["audio_track_selection"] = preview_sel if preview_sel is not None else "all"
 
             config = {
                 "input_path": filepath,
@@ -737,7 +890,8 @@ class VideoToolsTab(QWidget):
             }
             job_id = qm.add_job(config, "RECODE")
             self._recode_jobs.add(job_id)
-            
+            self._recode_backups[job_id] = backup_path
+
             # Actualizamos visualmente la cola
             self.queue_widget.update_file_status(filepath, self.tr("En cola"))
             
@@ -775,12 +929,15 @@ class VideoToolsTab(QWidget):
         if status == JobStatus.RUNNING:
             self.queue_widget.update_file_status(file_path, self.tr("Procesando..."))
         elif status == JobStatus.COMPLETED:
+            commit_backup(self._recode_backups.pop(job_id, None))
             self.queue_widget.update_file_status(file_path, self.tr("Completado"))
             self._check_all_finished()
         elif status == JobStatus.FAILED:
+            rollback_backup(self._recode_backups.pop(job_id, None))
             self.queue_widget.update_file_status(file_path, self.tr("Error"))
             self._check_all_finished()
         elif status == JobStatus.CANCELLED:
+            rollback_backup(self._recode_backups.pop(job_id, None))
             self.queue_widget.update_file_status(file_path, self.tr("Cancelado"))
             self._check_all_finished()
             

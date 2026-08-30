@@ -6,14 +6,23 @@ from core.logger.logger_manager import logger
 class ModeSelector(QFrame):
     mode_changed = Signal(str)
 
-    def __init__(self, parent=None):
+    # Etiquetas por defecto: preserva 1:1 el selector de 3 botones que ya usa la pestaña
+    # Avanzado (Video+Audio/Solo Audio/Solo Video) para quien no pase `labels` explicito.
+    _DEFAULT_LABELS = ("Video + Audio", "Solo Audio", "Solo Video")
+
+    def __init__(self, parent=None, labels: list[str] | None = None):
         super().__init__(parent)
+        # Las etiquetas por defecto se traducen acá (mismo comportamiento de siempre); las
+        # etiquetas pasadas por el llamador ya vienen traducidas por ese widget (su propio
+        # self.tr()) - envolverlas de nuevo acá las buscaría en el contexto de traduccion
+        # equivocado (ModeSelector, no el widget que las definio).
+        self._labels = list(labels) if labels else [self.tr(l) for l in self._DEFAULT_LABELS]
         self.init_ui()
 
     def init_ui(self):
         self.setObjectName("modeSelectorContainer")
         self.setFixedHeight(38)
-        
+
         # Indicator frame that slides
         self.bg_indicator = QFrame(self)
         self.bg_indicator.setObjectName("modeIndicator")
@@ -23,22 +32,26 @@ class ModeSelector(QFrame):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(0)
-        
-        self.btn_video_audio = QPushButton(self.tr("Video + Audio"), self)
-        self.btn_audio = QPushButton(self.tr("Solo Audio"), self)
-        self.btn_video = QPushButton(self.tr("Solo Video"), self)
 
-        self.buttons = [self.btn_video_audio, self.btn_audio, self.btn_video]
-        for btn in self.buttons:
+        self.buttons = []
+        for label in self._labels:
+            btn = QPushButton(label, self)
             btn.setObjectName("modeButton")
             btn.setCheckable(True)
             btn.setFixedHeight(30)
             btn.clicked.connect(self.on_button_clicked)
             layout.addWidget(btn)
+            self.buttons.append(btn)
 
-        self.btn_video_audio.setChecked(True)
-        self.btn_video_audio.setProperty("active", "true")
-        
+        # Alias retrocompatibles: codigo existente (AdvancedRecodePanel) referencia estos
+        # 3 nombres directo en vez de indexar self.buttons.
+        if len(self.buttons) >= 3:
+            self.btn_video_audio, self.btn_audio, self.btn_video = self.buttons[:3]
+
+        if self.buttons:
+            self.buttons[0].setChecked(True)
+            self.buttons[0].setProperty("active", "true")
+
         self.animation = None
 
     def on_button_clicked(self):
@@ -80,7 +93,7 @@ class ModeSelector(QFrame):
         for btn in self.buttons:
             if btn.isChecked():
                 return btn.text()
-        return "Video + Audio"
+        return self.buttons[0].text() if self.buttons else ""
 
     def set_mode(self, mode_text: str):
         for btn in self.buttons:

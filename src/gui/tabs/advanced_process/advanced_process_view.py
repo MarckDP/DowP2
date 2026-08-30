@@ -597,6 +597,7 @@ class AdvancedProcessTab(QWidget):
         self.video_details.reset_ui()
         self.subtitle_controller.clear_subtitles()
         self.url_bar.url_input.clear()
+        self.output_options.set_download_state("idle")
         self.output_options.btn_start_download.setEnabled(False)
         self.output_options.set_progress(0, self.tr("En espera"), "wait")
 

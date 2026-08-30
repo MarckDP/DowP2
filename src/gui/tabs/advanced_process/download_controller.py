@@ -56,7 +56,7 @@ class DownloadController(QObject):
         self.queue_mgr.start_queue()
         
         self.tab.output_options.btn_start_download.setEnabled(True)
-        self.tab.output_options.set_download_state("running", self.tab.tr("Pausar Cola"))
+        self.tab.output_options.set_download_state("pause_queue", self.tab.tr("Pausar cola"))
         self.is_downloading = True
         self.tab.url_bar.solo_btn.setEnabled(False)
         self.update_queue_main_progress()
@@ -75,7 +75,7 @@ class DownloadController(QObject):
 
         self.is_downloading = True
         self.tab.url_bar.solo_btn.setEnabled(False)
-        self.tab.output_options.set_download_state("running", self.tab.tr("Pausar Descarga"))
+        self.tab.output_options.set_download_state("cancelling", self.tab.tr("Cancelar"))
         self.tab.output_options.set_progress(0, self.tab.tr("Iniciando descarga..."), "running")
         if self.tab.taskbar_manager:
             self.tab.taskbar_manager.set_state("indeterminate")
@@ -120,7 +120,7 @@ class DownloadController(QObject):
 
         def on_solo_finished(success, message):
             self.is_downloading = False
-            self.tab.output_options.set_download_state("paused", self.tab.tr("Descargar"))
+            self.tab.output_options.set_download_state("idle")
             self.tab.url_bar.solo_btn.setEnabled(True)
             if self.tab.taskbar_manager:
                 self.tab.taskbar_manager.stop()
@@ -155,7 +155,8 @@ class DownloadController(QObject):
             logger.info("AdvancedProcessTab: Cancelando descarga directa SOLO...")
             self.cancellation_event.set()
             self.is_downloading = False
-            self.tab.output_options.set_download_state("paused", self.tab.tr("Descargar"))
+            self.tab.output_options.set_download_state("idle")
+            self.tab.output_options.set_progress(0, self.tab.tr("Descarga cancelada"), "wait")
             self.tab.url_bar.solo_btn.setEnabled(True)
 
     def pause_download(self):
@@ -175,7 +176,7 @@ class DownloadController(QObject):
                 self.tab.output_options.btn_start_download.setEnabled(False)
             else:
                 self.is_downloading = False
-                self.tab.output_options.set_download_state("paused", self.tab.tr("Reanudar Descarga"))
+                self.tab.output_options.set_download_state("paused", self.tab.tr("Reanudar cola"))
                 self.tab.output_options.btn_start_download.setEnabled(True)
 
     def update_queue_main_progress(self):
@@ -279,9 +280,9 @@ class DownloadController(QObject):
         jobs = self.queue_mgr.get_all_jobs()
         has_pending = any(j.status == "PENDING" for j in jobs)
         if has_pending:
-            self.tab.output_options.set_download_state("paused")
+            self.tab.output_options.set_download_state("paused", self.tab.tr("Reanudar cola"))
         else:
-            self.tab.output_options.set_download_state("paused", self.tab.tr("Reanudar Descarga"))
+            self.tab.output_options.set_download_state("idle")
         self.tab.output_options.btn_start_download.setEnabled(True)
         self.tab.subtitle_controller.on_subtitle_selection_changed()
         self.tab.subtitle_options.btn_download_subtitles.setEnabled(True)
@@ -306,7 +307,7 @@ class DownloadController(QObject):
                 self.is_downloading = False
                 has_pending = any(j.status == "PENDING" for j in jobs)
                 if has_pending:
-                    self.tab.output_options.set_download_state("paused", self.tab.tr("Reanudar Descarga"))
+                    self.tab.output_options.set_download_state("paused", self.tab.tr("Reanudar cola"))
                     self.tab.output_options.btn_start_download.setEnabled(True)
                 else:
                     self.tab.output_options.set_download_state("idle")
@@ -347,7 +348,7 @@ class DownloadController(QObject):
             jobs = self.queue_mgr.get_all_jobs()
             if not any(j.status == "RUNNING" for j in jobs):
                 self.is_downloading = False
-                self.tab.output_options.set_download_state("paused", self.tab.tr("Reanudar Descarga"))
+                self.tab.output_options.set_download_state("paused", self.tab.tr("Reanudar cola"))
                 self.tab.output_options.btn_start_download.setEnabled(True)
                 self.tab.subtitle_options.btn_download_subtitles.setEnabled(True)
                 self.tab.url_bar.solo_btn.setEnabled(True)

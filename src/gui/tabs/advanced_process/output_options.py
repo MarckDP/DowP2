@@ -81,6 +81,9 @@ class OutputOptionsWidget(QFrame):
             "• Omitir: no descarga ese archivo."
         ))
 
+        conflicts_fixed_height = 32
+        self.conflict_policy_combo.setFixedHeight(conflicts_fixed_height)
+
         conflict_policy_layout.addWidget(self.lbl_conflict_policy)
         conflict_policy_layout.addWidget(self.conflict_policy_combo)
 
@@ -93,6 +96,7 @@ class OutputOptionsWidget(QFrame):
         self.output_path_input = QLineEdit()
         self.output_path_input.setPlaceholderText(self.tr("Ruta de salida"))
         self.output_path_input.setText(default_path)
+        self.output_path_input.setFixedHeight(32)
         
         self.btn_select_output_path = QPushButton()
         self.btn_select_output_path.setFixedSize(self.TOOL_BUTTON_SIZE, self.TOOL_BUTTON_SIZE)
@@ -128,6 +132,7 @@ class OutputOptionsWidget(QFrame):
         """)
 
         controls_layout.addWidget(self.speed_limit_label)
+        self.speed_limit_input.setFixedHeight(32)
         controls_layout.addWidget(self.speed_limit_input)
 
         # --- DOWNLOAD BUTTON ---
@@ -157,9 +162,11 @@ class OutputOptionsWidget(QFrame):
         state_names = {
             "idle": self.tr("Iniciar descarga"),
             "running": self.tr("Descargando..."),
+            "pause_queue": self.tr("Pausar cola"),
             "paused": self.tr("Reanudar descarga"),
             "done": self.tr("Descarga completada"),
             "error": self.tr("Reintentar descarga"),
+            "cancelling": self.tr("Cancelar"),
         }
 
         self.btn_start_download.setProperty("state", state)

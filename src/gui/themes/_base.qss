@@ -450,13 +450,20 @@ QPushButton#downloadButton {
         stop:0 {{boton_descarga_inicio}}, stop:1 {{boton_descarga_fin}});
     color: {{boton_descarga_texto}};
     border: none;
-    padding: 10px 18px;
+    padding: 6px 14px;
+    min-height: 18px;
     font-weight: bold;
 }
 
 QPushButton#downloadButton[state="running"] {
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
         stop:0 {{boton_descarga_running_inicio}}, stop:1 {{boton_descarga_running_fin}});
+}
+
+QPushButton#downloadButton[state="pause_queue"] {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 {{boton_descarga_pausar_inicio}}, stop:1 {{boton_descarga_pausar_fin}});
+    color: {{boton_descarga_pausar_texto}};
 }
 
 QPushButton#downloadButton[state="done"] {

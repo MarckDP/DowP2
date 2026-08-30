@@ -182,10 +182,10 @@ class ResponsiveThumbnail(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumSize(320, 180)
+        self.setFixedHeight(146)
+        self.setMinimumWidth(220)
         
-        policy = QSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
-        policy.setHeightForWidth(True)
+        policy = QSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setSizePolicy(policy)
         
         self._pixmap = None
@@ -260,10 +260,7 @@ class ResponsiveThumbnail(QWidget):
             )
 
     def hasHeightForWidth(self):
-        return True
-
-    def heightForWidth(self, width):
-        return int(width * 9 / 16)
+        return False
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -271,7 +268,7 @@ class ResponsiveThumbnail(QWidget):
         self._update_layout()
 
     def sizeHint(self):
-        return QSize(320, 180)
+        return QSize(260, 146)
 
 class RichComboBox(AutoPopupComboBox):
     def __init__(self, parent=None):

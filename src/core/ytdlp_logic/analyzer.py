@@ -108,9 +108,13 @@ def get_base_ydl_opts(extra_opts=None):
 
     # --- JS RUNTIMES Y COMPONENTES REMOTOS ---
     # Necesarios siempre para resolver challenges de YouTube.
+    from core.setup.deno_setup import get_deno_path, get_platform_info
+    _, binary_name = get_platform_info()
     env = get_dependency_env()
     deno_dir = next((p for p in env.get('PATH', '').split(os.pathsep) if 'deno' in p.lower()), '')
-    deno_path = os.path.join(deno_dir, 'deno.exe') if deno_dir else 'deno'
+    deno_path = os.path.join(deno_dir, binary_name) if (deno_dir and os.path.exists(os.path.join(deno_dir, binary_name))) else get_deno_path()
+    if not os.path.exists(deno_path):
+        deno_path = binary_name
     
     ydl_opts['js_runtimes'] = {'deno': {'path': deno_path}}
     ydl_opts['remote_components'] = ['ejs:github']

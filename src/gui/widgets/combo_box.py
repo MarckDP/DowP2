@@ -172,6 +172,8 @@ class AutoPopupComboBox(QComboBox):
         super().__init__(parent)
         self.setSizeAdjustPolicy(QComboBox.AdjustToContents)
         self.setItemDelegate(CheckmarkComboDelegate(self))
+        if self.view():
+            self.view().setAttribute(Qt.WA_StyledBackground, True)
 
     def _widest_item_text_width(self) -> int:
         fm = self.fontMetrics()

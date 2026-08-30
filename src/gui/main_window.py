@@ -460,7 +460,7 @@ class SettingsModalOverlay(QWidget):
         # Tarjeta modal central (compacta y elegante)
         self.card = QFrame()
         self.card.setObjectName("settingsModalCard")
-        self.card.setMinimumSize(890, 580)
+        self.card.setMinimumSize(740, 480)
         self.card.setMaximumSize(980, 660)
 
         card_layout = QVBoxLayout(self.card)
@@ -559,8 +559,8 @@ class MainWindow(QMainWindow):
 
         version = QApplication.instance().applicationVersion()
         self.setWindowTitle(self.tr(f"DowP {version}"))
-        self.setMinimumSize(1200, 860)
-        self.resize(1200, 860)
+        self.setMinimumSize(800, 600)
+        self.resize(1100, 750)
         self.setStyleSheet(load_stylesheet(initial_theme))
 
         # ── Layout principal ──────────────────────────────────────────────────

@@ -55,7 +55,7 @@ class OutputOptionsWidget(QFrame):
 
         controls_layout = QHBoxLayout()
         controls_layout.setContentsMargins(0, 0, 0, 0)
-        controls_layout.setSpacing(10)
+        controls_layout.setSpacing(6)
 
         # --- CONFLICT POLICY SECTION (a la izquierda de la ruta) ---
         # Visible siempre en Modo Rápido; en Proceso Avanzado solo en modo LOTES
@@ -63,8 +63,8 @@ class OutputOptionsWidget(QFrame):
         # set_conflict_policy_visible()).
         self.conflict_policy_container = QWidget()
         conflict_policy_layout = QHBoxLayout(self.conflict_policy_container)
-        conflict_policy_layout.setContentsMargins(0, 0, 8, 0)
-        conflict_policy_layout.setSpacing(6)
+        conflict_policy_layout.setContentsMargins(0, 0, 4, 0)
+        conflict_policy_layout.setSpacing(4)
 
         self.lbl_conflict_policy = QLabel(self.tr("Si existe:"))
         self.lbl_conflict_policy.setObjectName("menuLabel")
@@ -90,9 +90,6 @@ class OutputOptionsWidget(QFrame):
         from core.tabs.advanced_process.output_logic import get_default_download_path
         default_path = get_default_download_path()
 
-        self.lbl_path = QLabel(self.tr("Ruta:"))
-        self.lbl_path.setObjectName("menuLabel")
-
         self.output_path_input = QLineEdit()
         self.output_path_input.setPlaceholderText(self.tr("Ruta de salida"))
         self.output_path_input.setText(default_path)
@@ -108,16 +105,12 @@ class OutputOptionsWidget(QFrame):
         self.btn_select_output_path.clicked.connect(self.select_output_path)
         self.btn_open_output_path.clicked.connect(self.open_output_path)
 
-        controls_layout.addWidget(self.lbl_path)
         controls_layout.addWidget(self.output_path_input, 1) # Stretch 1
         controls_layout.addWidget(self.btn_select_output_path)
         controls_layout.addWidget(self.btn_open_output_path)
 
-        # Spacing before speed limit
-        controls_layout.addSpacing(10)
-
         # --- SPEED LIMIT SECTION ---
-        self.speed_limit_label = QLabel(self.tr("Límite de velocidad:"))
+        self.speed_limit_label = QLabel(self.tr("Velocidad:"))
         self.speed_limit_label.setObjectName("menuLabel")
         self.speed_limit_input = QDoubleSpinBox()
         self.speed_limit_input.setRange(0.0, 999.0)
@@ -125,7 +118,7 @@ class OutputOptionsWidget(QFrame):
         self.speed_limit_input.setSingleStep(0.5)
         self.speed_limit_input.setSuffix(self.tr(" MB/s"))
         self.speed_limit_input.setSpecialValueText(self.tr("Sin límite"))
-        self.speed_limit_input.setFixedWidth(140)
+        self.speed_limit_input.setFixedWidth(115)
         self.speed_limit_input.setButtonSymbols(PLUS_MINUS_BUTTONS)
         self.speed_limit_input.setStyleSheet("""
             QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {
@@ -137,13 +130,10 @@ class OutputOptionsWidget(QFrame):
         controls_layout.addWidget(self.speed_limit_label)
         controls_layout.addWidget(self.speed_limit_input)
 
-        # Spacing before download button
-        controls_layout.addSpacing(10)
-
         # --- DOWNLOAD BUTTON ---
         self.btn_start_download = AnimatedButton(self.tr("Iniciar descarga"))
         self.btn_start_download.setObjectName("downloadButton")
-        self.btn_start_download.setFixedWidth(160)
+        self.btn_start_download.setFixedWidth(135)
         self.btn_start_download.setFixedHeight(32)
         self.btn_start_download.setEnabled(False)
 

@@ -32,7 +32,8 @@ class VideoDetailsWidget(QFrame):
     def __init__(self):
         super().__init__()
         self.setObjectName("videoContainer")
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setFixedHeight(225)
         self.init_ui()
 
     def init_ui(self):
@@ -40,7 +41,7 @@ class VideoDetailsWidget(QFrame):
         self.selected_fragments = [] # Lista de tuplas (start_ms, end_ms, suffix)
         self.fragment_mode = None
         main_layout = QHBoxLayout(self)
-        main_layout.setContentsMargins(10, 10, 10, 10)
+        main_layout.setContentsMargins(10, 6, 10, 6)
         main_layout.setSpacing(8)
 
         # Contenedor para la columna izquierda (Miniatura + Controles)
@@ -49,7 +50,7 @@ class VideoDetailsWidget(QFrame):
         self.left_column_widget.setMaximumWidth(600)
         col1_layout = QVBoxLayout(self.left_column_widget)
         col1_layout.setContentsMargins(0, 0, 0, 0)
-        col1_layout.setSpacing(5)
+        col1_layout.setSpacing(3)
         
         # Thumbnail Responsivo
         self.thumb_container = ResponsiveThumbnail()

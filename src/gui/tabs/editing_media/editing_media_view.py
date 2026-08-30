@@ -280,10 +280,10 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         # Conectar señal para persistir cambios de tamaño del splitter
         self.splitter.splitterMoved.connect(self._on_splitter_moved)
 
-        # Asegurar anchos mínimos
-        self.col1_container.setMinimumWidth(200)
-        self.col2_container.setMinimumWidth(300)
-        self.col3_container.setMinimumWidth(300)
+        # Asegurar anchos mínimos adaptables a ventanas pequeñas (800x600)
+        self.col1_container.setMinimumWidth(160)
+        self.col2_container.setMinimumWidth(220)
+        self.col3_container.setMinimumWidth(220)
 
         # Aplicar hojas de estilo para contenedores y listas
         self._apply_custom_styles()

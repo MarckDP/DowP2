@@ -852,11 +852,11 @@ class DownloaderMaster:
             return
 
         import subprocess
-        from core.setup.ffmpeg_setup import get_ffmpeg_dir
-        ffmpeg_exe = os.path.join(get_ffmpeg_dir(), "ffmpeg.exe")
+        from core.setup.ffmpeg_setup import get_ffmpeg_path
+        ffmpeg_exe = get_ffmpeg_path()
         
         if not os.path.exists(ffmpeg_exe):
-            logger.error(f"DownloaderMaster: ffmpeg.exe no encontrado en {ffmpeg_exe}")
+            logger.error(f"DownloaderMaster: Binario de ffmpeg no encontrado en {ffmpeg_exe}")
             return
         
         base, ext = os.path.splitext(input_file)

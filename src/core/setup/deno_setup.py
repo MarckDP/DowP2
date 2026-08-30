@@ -47,13 +47,18 @@ def get_deno_dir():
         os.makedirs(deno_dir)
     return deno_dir
 
+def get_deno_path() -> str:
+    """Devuelve la ruta absoluta al binario ejecutable de Deno según la plataforma actual."""
+    _, binary_name = get_platform_info()
+    return os.path.join(get_deno_dir(), binary_name)
+
 _deno_checked = False
 
 def check_deno():
     """Verifies if the Deno binary exists in the deno folder."""
     global _deno_checked
     _, binary_name = get_platform_info()
-    deno_exe = os.path.join(get_deno_dir(), binary_name)
+    deno_exe = get_deno_path()
     exists = os.path.exists(deno_exe)
     if not _deno_checked:
         logger.debug(f"Checking {binary_name} existence: {exists}")

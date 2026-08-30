@@ -1,5 +1,5 @@
-# src/gui/tabs/single_process/subtitle_options.py
-from PySide6.QtCore import Qt
+# src/gui/tabs/advanced_process/subtitle_options.py
+from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve, QParallelAnimationGroup
 from PySide6.QtWidgets import (
     QComboBox,
     QFrame,
@@ -7,37 +7,65 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QSizePolicy,
-    QStyledItemDelegate,
     QVBoxLayout,
     QWidget,
 )
 
 from gui.widgets.toggle_switch import ToggleSwitch
 from gui.widgets.combo_box import AutoPopupComboBox
+from gui.styles import get_theme_token
 
 
 class SubtitleOptionsWidget(QFrame):
     COMPACT_WIDTH = 350
-    PANEL_HEIGHT = 210
+    COLLAPSED_HEIGHT = 38
+    EXPANDED_HEIGHT = 230
+    toggled_collapse = Signal(bool)
 
-    def __init__(self):
+    def __init__(self, start_expanded: bool = False):
         super().__init__()
         self.setObjectName("additionalOptionsContainer")
+        self.setAttribute(Qt.WA_StyledBackground, True)
         self.setFixedWidth(self.COMPACT_WIDTH)
-        self.setFixedWidth(self.COMPACT_WIDTH)
-        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
+        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        
+        self._is_expanded = start_expanded
+        self._anim_group = None
+
         self.init_ui()
+        self.set_expanded(self._is_expanded, animate=False)
 
     def init_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 10, 14, 10)
-        layout.setSpacing(5)
+        self.main_layout = QVBoxLayout(self)
+        self.main_layout.setContentsMargins(12, 8, 12, 8)
+        self.main_layout.setSpacing(4)
+
+        # ── 1. Cabecera Clicable (Delgada y Centrada) ───────────────────────
+        self.header_widget = QWidget()
+        self.header_widget.setObjectName("subtitleHeaderWidget")
+        self.header_widget.setCursor(Qt.PointingHandCursor)
+        self.header_widget.setFixedHeight(22)
+        header_layout = QHBoxLayout(self.header_widget)
+        header_layout.setContentsMargins(4, 0, 4, 0)
+        header_layout.setSpacing(0)
 
         self.title_label = QLabel(self.tr("Subtítulos"))
         self.title_label.setObjectName("sectionTitle")
         self.title_label.setAlignment(Qt.AlignCenter)
-        layout.addWidget(self.title_label)
+        self.title_label.setStyleSheet("font-weight: bold; font-size: 13px;")
 
+        header_layout.addWidget(self.title_label)
+
+        self.header_widget.mousePressEvent = self._on_header_clicked
+        self.main_layout.addWidget(self.header_widget)
+
+        # ── 2. Contenedor de Opciones Desplegable ───────────────────────────
+        self.body_container = QWidget()
+        body_layout = QVBoxLayout(self.body_container)
+        body_layout.setContentsMargins(0, 4, 0, 0)
+        body_layout.setSpacing(6)
+
+        # Idioma
         self.language_container = QWidget()
         language_layout = QHBoxLayout(self.language_container)
         language_layout.setContentsMargins(0, 0, 0, 0)
@@ -53,6 +81,7 @@ class SubtitleOptionsWidget(QFrame):
         language_layout.addWidget(self.lbl_subtitle_language)
         language_layout.addWidget(self.combo_subtitle_language, 1)
 
+        # Formato
         self.format_container = QWidget()
         format_layout = QHBoxLayout(self.format_container)
         format_layout.setContentsMargins(0, 0, 0, 0)
@@ -71,10 +100,12 @@ class SubtitleOptionsWidget(QFrame):
 
         self.combo_subtitle_format.currentTextChanged.connect(self.update_standardize_visibility)
 
+        # Botón Descargar Subtítulos
         self.btn_download_subtitles = QPushButton(self.tr("Descargar Subtítulos"))
         self.btn_download_subtitles.setObjectName("secondaryButton")
         self.btn_download_subtitles.setEnabled(False)
 
+        # Switches
         self.chk_download_with_media = self._build_switch_row(self.tr("Descargar con el medio"))
         self.chk_standardize_srt = self._build_switch_row(self.tr("Convertir y estandarizar a SRT"))
         self.chk_cut_to_fragment = self._build_switch_row(self.tr("Recortar subtítulo al fragmento"))
@@ -84,20 +115,71 @@ class SubtitleOptionsWidget(QFrame):
         self.chk_standardize_srt["container"].setEnabled(False)
         self.chk_cut_to_fragment["container"].setEnabled(False)
         
-        # Añadir tooltip informativo
+        # Tooltips
         tooltip_text = self.tr("Al recortar, el subtítulo se convertirá automáticamente a SRT para garantizar la compatibilidad y precisión del corte.")
         self.chk_cut_to_fragment["container"].setToolTip(tooltip_text)
         self.chk_cut_to_fragment["switch"].setToolTip(tooltip_text)
         self.chk_cut_to_fragment["label"].setToolTip(tooltip_text)
         
-        layout.addWidget(self.language_container)
-        layout.addWidget(self.format_container)
-        layout.addWidget(self.btn_download_subtitles)
-        layout.addWidget(self.chk_download_with_media["container"])
-        layout.addWidget(self.chk_standardize_srt["container"])
-        layout.addWidget(self.chk_cut_to_fragment["container"])
+        body_layout.addWidget(self.language_container)
+        body_layout.addWidget(self.format_container)
+        body_layout.addWidget(self.btn_download_subtitles)
+        body_layout.addWidget(self.chk_download_with_media["container"])
+        body_layout.addWidget(self.chk_standardize_srt["container"])
+        body_layout.addWidget(self.chk_cut_to_fragment["container"])
+
+        self.main_layout.addWidget(self.body_container)
+
+    def _on_header_clicked(self, event):
+        self.toggle_collapse()
+
+    def toggle_collapse(self):
+        self.set_expanded(not self._is_expanded, animate=True)
+
+    def set_expanded(self, expanded: bool, animate: bool = True):
+        self._is_expanded = expanded
         
-        layout.addStretch(1)
+        start_h = self.height() if self.height() > 0 else (self.EXPANDED_HEIGHT if not expanded else self.COLLAPSED_HEIGHT)
+        target_h = self.EXPANDED_HEIGHT if expanded else self.COLLAPSED_HEIGHT
+
+        if not animate:
+            if self._anim_group and self._anim_group.state() == QPropertyAnimation.Running:
+                self._anim_group.stop()
+            self.body_container.setVisible(expanded)
+            self.setFixedHeight(target_h)
+            self.toggled_collapse.emit(expanded)
+            return
+
+        if self._anim_group and self._anim_group.state() == QPropertyAnimation.Running:
+            self._anim_group.stop()
+
+        if expanded:
+            self.body_container.show()
+
+        anim_max = QPropertyAnimation(self, b"maximumHeight")
+        anim_max.setDuration(220)
+        anim_max.setStartValue(start_h)
+        anim_max.setEndValue(target_h)
+        anim_max.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+        anim_min = QPropertyAnimation(self, b"minimumHeight")
+        anim_min.setDuration(220)
+        anim_min.setStartValue(start_h)
+        anim_min.setEndValue(target_h)
+        anim_min.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+        self._anim_group = QParallelAnimationGroup(self)
+        self._anim_group.addAnimation(anim_max)
+        self._anim_group.addAnimation(anim_min)
+
+        def on_finished():
+            if not self._is_expanded:
+                self.body_container.hide()
+            self.setFixedHeight(target_h)
+            self.toggled_collapse.emit(self._is_expanded)
+
+        self._anim_group.finished.connect(on_finished)
+        self._anim_group.start()
 
     def _build_switch_row(self, text):
         container = QWidget()
@@ -117,8 +199,7 @@ class SubtitleOptionsWidget(QFrame):
 
     def update_standardize_visibility(self):
         """Habilita 'Convertir y estandarizar a SRT' solo cuando hay un subtítulo seleccionado
-        cuyo formato de origen no sea ya SRT (no tiene sentido convertirlo a sí mismo, ni
-        activar la opción cuando no hay ningún subtítulo seleccionado)."""
+        cuyo formato de origen no sea ya SRT."""
         fmt_data = self.combo_subtitle_format.currentData()
         ext = (fmt_data.get("ext") or "").lower() if fmt_data else ""
         should_enable = bool(fmt_data) and ext != "" and ext != "srt"

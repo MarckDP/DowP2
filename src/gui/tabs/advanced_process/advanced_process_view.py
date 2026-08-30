@@ -1,5 +1,5 @@
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QCheckBox, QComboBox, QSizePolicy
-from PySide6.QtCore import QPropertyAnimation, QParallelAnimationGroup, QEasingCurve
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QCheckBox, QComboBox, QSizePolicy, QScrollArea
+from PySide6.QtCore import QPropertyAnimation, QParallelAnimationGroup, QEasingCurve, Qt
 from core.logger.logger_manager import logger
 from core.utils.format_manager import FormatManager
 import os
@@ -67,9 +67,28 @@ class AdvancedProcessTab(QWidget):
         middle_content_layout.setContentsMargins(0, 0, 0, 0)
         middle_content_layout.setSpacing(8)
         
+        # 1. Panel de detalles de video con altura fija (solo se expande horizontalmente)
         middle_content_layout.addWidget(self.video_details)
-        middle_content_layout.addWidget(self.subtitle_options)
-        middle_content_layout.addStretch(1)
+        
+        # 2. Área con scroll para lo que está debajo (subtítulos y futuros cuadros)
+        self.lower_scroll_area = QScrollArea()
+        self.lower_scroll_area.setObjectName("advancedProcessLowerScrollArea")
+        self.lower_scroll_area.setWidgetResizable(True)
+        self.lower_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.lower_scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.lower_scroll_area.setFrameShape(QFrame.NoFrame)
+
+        self.lower_scroll_content = QWidget()
+        self.lower_scroll_content.setObjectName("advancedProcessLowerScrollContent")
+        self.lower_scroll_layout = QVBoxLayout(self.lower_scroll_content)
+        self.lower_scroll_layout.setContentsMargins(0, 0, 4, 0)
+        self.lower_scroll_layout.setSpacing(8)
+
+        self.lower_scroll_layout.addWidget(self.subtitle_options)
+        self.lower_scroll_layout.addStretch(1)
+
+        self.lower_scroll_area.setWidget(self.lower_scroll_content)
+        middle_content_layout.addWidget(self.lower_scroll_area, 1)
 
         # Assemble middle container
         middle_layout.addWidget(self.batch_queue_container)

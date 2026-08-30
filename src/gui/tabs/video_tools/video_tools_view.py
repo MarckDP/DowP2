@@ -499,6 +499,7 @@ class VideoToolsTab(QWidget):
         )
         self.options_widget.tab_advanced.set_source_media(meta, filepath)
         self.options_widget.tab_compress.set_source_media(meta, filepath)
+        self.options_widget.tab_convert.set_source_media(meta, filepath)
         # preview_widget.load_media ya ocultó el rectángulo (el encuadre elegido no tiene
         # sentido para otro archivo); esto lo vuelve a mostrar de una para el archivo nuevo
         # si el recorte interactivo sigue activo (personalizado + Recortar es config. del
@@ -508,29 +509,34 @@ class VideoToolsTab(QWidget):
 
     def _on_queue_changed(self, _count: int = 0):
         """Reacciona a altas/bajas en la cola: empuja la metadata de TODA la cola a
-        Comprimir/Rápido para el estimado de peso agregado del lote (a diferencia del
-        estimado por-archivo, que ya cubre set_source_media con el archivo en preview), y
-        poda los cachés por-archivo (recorte y selección de pista de audio) de archivos que
-        ya no están en la cola - si no, un archivo distinto que reutilice la misma ruta más
-        tarde heredaría ajustes que no le corresponden."""
+        Comprimir/Rápido (estimado de peso agregado) y a Convertir/Rápido (resumen de
+        cuántos archivos remuxean vs necesitan recodificar) - a diferencia del estimado
+        por-archivo, que ya cubre set_source_media con el archivo en preview. También
+        poda los cachés por-archivo (recorte y selección de pista de audio) de archivos
+        que ya no están en la cola - si no, un archivo distinto que reutilice la misma
+        ruta más tarde heredaría ajustes que no le corresponden."""
         current_files = set(self.queue_widget.get_all_filepaths())
         for cache in (self._trim_cache, self._audio_track_cache):
             for filepath in set(cache.keys()) - current_files:
                 del cache[filepath]
 
         entries = []
+        entries_with_paths = []
         for filepath in current_files:
             ext = os.path.splitext(filepath)[1].lower()
             media_type = "audio" if ext in AUDIO_ONLY_EXTENSIONS else "video"
             meta = FFprobeMetadataManager.get_instance().get_metadata_instant(filepath, media_type)
             entries.append(meta)
+            entries_with_paths.append((filepath, meta))
         self.options_widget.tab_compress.set_queue_entries(entries)
+        self.options_widget.tab_convert.set_queue_entries(entries_with_paths)
 
     def _on_metadata_ready(self, path: str, meta: dict):
         if path == self.current_preview_file:
             self.preview_widget.set_fps(self._parse_fps(meta.get("fps", "30")))
             self.options_widget.tab_advanced.set_source_media(meta, path)
             self.options_widget.tab_compress.set_source_media(meta, path)
+            self.options_widget.tab_convert.set_source_media(meta, path)
             # La metadata rápida inicial puede no traer resolución todavía; si el recorte
             # ya está activo, se re-arma ahora con la resolución real recién confirmada.
             self._on_crop_edit_toggled(self.options_widget.tab_advanced.is_crop_active())
@@ -790,6 +796,10 @@ class VideoToolsTab(QWidget):
         qm = get_queue_manager()
         raw_container = settings.get("container", "mp4")
         is_compress_tab = self.options_widget.tabs.currentWidget() is self.options_widget.tab_compress
+        is_convert_tab = self.options_widget.tabs.currentWidget() is self.options_widget.tab_convert
+        # Comprimir y Convertir recalculan por archivo (ver más abajo); ninguna de las dos
+        # tiene UI de recorte espacial (crop), a diferencia de Avanzado/Preajustes.
+        needs_per_file_recompute = is_compress_tab or is_convert_tab
         # Nombres de salida ya asignados a otro archivo de ESTE MISMO lote (ej. video.mp4
         # + video.mov -> mismo out_file): resolve_conflict() solo ve el disco, y el
         # archivo del otro job todavía no existe ahí (ffmpeg lo va a escribir más tarde) -
@@ -804,14 +814,15 @@ class VideoToolsTab(QWidget):
 
             file_settings = dict(settings)
 
-            # Comprimir necesita recalcular por archivo, no reusar el `settings` armado una
-            # sola vez para el archivo en preview: Rápido calcula el nivel como fracción del
-            # bitrate de CADA archivo (no del que está en preview), y Manual + "Tamaño
-            # objetivo (MB)" / "Mismo que el original" dependen de la duración/extensión
-            # real de cada uno. Recalcular acá es barato (arma un dict chico, sin I/O) y no
-            # cambia nada para el resto de los modos manuales (CRF/bitrate manual dan el
-            # mismo resultado en todos los archivos).
-            if is_compress_tab:
+            # Comprimir y Convertir necesitan recalcular por archivo, no reusar el
+            # `settings` armado una sola vez para el archivo en preview: Comprimir/Rápido
+            # calcula el nivel como fracción del bitrate de CADA archivo, Comprimir/Manual
+            # + "Tamaño objetivo (MB)"/"Mismo que el original" dependen de la duración/
+            # extensión real de cada uno, y Convertir decide copiar-vs-recodificar según
+            # el códec de origen de CADA archivo (no el que está en preview). Recalcular
+            # acá es barato (arma un dict chico, sin I/O) y no cambia nada para los modos
+            # que sí dan el mismo resultado en todos los archivos.
+            if needs_per_file_recompute:
                 file_settings = self.options_widget.get_encoding_settings(file_meta=meta, filepath=filepath)
 
             file_container = file_settings.get("container", raw_container)
@@ -877,7 +888,7 @@ class VideoToolsTab(QWidget):
             # Comprimir, no corresponde reinyectar los video_args de Avanzado acá (son
             # de otro códec/perfil, no los que Comprimir acaba de calcular).
             if filepath == self.current_preview_file:
-                if crop_frac is not None and not apply_crop_to_all and not is_compress_tab:
+                if crop_frac is not None and not apply_crop_to_all and not needs_per_file_recompute:
                     crop_settings = self.options_widget.tab_advanced.get_settings(crop_fraction_override=crop_frac)
                     file_settings["video_args"] = crop_settings["video_args"]
 

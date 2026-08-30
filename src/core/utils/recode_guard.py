@@ -232,6 +232,51 @@ def get_compatible_containers(codec_ids: list[str]) -> list[str]:
     return sorted(result)
 
 
+def get_compatible_codecs(container_id: str, kind: str) -> list[str]:
+    """Inverso de get_compatible_containers: códecs (de video o audio, ver `kind`) que el
+    matrix confirma EMPÍRICAMENTE que entran en ESTE contenedor. Fuente de verdad real
+    para "¿qué códec le sirve a este contenedor?" en vez de una tabla curada a mano por
+    contenedor - evita asumir cosas que el matrix ya sabe (o que resultan estar mal:
+    ej. "ogg" parece audio-only por el nombre, pero el matrix confirma que sí acepta
+    video Theora/VP8)."""
+    matrix = _load_matrix()
+    container_id = normalize_container(container_id)
+    result = []
+    for codec_id, entry in matrix.get("codecs", {}).items():
+        if entry.get("kind") != kind or not entry.get("verified"):
+            continue
+        info = entry.get("containers", {}).get(container_id)
+        if info and info.get("supported"):
+            result.append(codec_id)
+    return sorted(result)
+
+
+def container_supports_video(container_id: str) -> bool:
+    """True si el matrix confirma que ALGÚN códec de video entra en este contenedor - la
+    forma real de saber si un contenedor es "de audio puro" (MP3/WAV/FLAC/...), en vez de
+    asumirlo por convención/nombre de contenedor."""
+    return bool(get_compatible_codecs(container_id, "video"))
+
+
+def is_stream_copy_compatible(codec_id: str | None, container_id: str) -> bool:
+    """True SOLO si el matrix confirma EMPÍRICAMENTE que este códec entra en este
+    contenedor sin necesidad de remux (-c copy, sin pérdida de calidad).
+
+    A diferencia de get_compatible_containers() -que a propósito es permisivo con
+    códecs no verificados, para no ocultarle opciones al usuario en Avanzado- acá
+    conviene ser estricto: esto es la base para decidir si Convertir puede prometerle al
+    usuario "esto se copia tal cual, sin pérdida" - un falso positivo ahí es mucho peor
+    que un falso negativo (recodificar de más cuando en realidad hubiera andado igual)."""
+    if not codec_id:
+        return False
+    matrix = _load_matrix()
+    entry = matrix.get("codecs", {}).get(codec_id)
+    if not entry or not entry.get("verified"):
+        return False
+    info = entry.get("containers", {}).get(normalize_container(container_id))
+    return bool(info and info.get("supported"))
+
+
 def get_dimension_alignment(codec_id: str | None) -> dict:
     """
     Requisito de paridad de ancho/alto para un códec de video, según

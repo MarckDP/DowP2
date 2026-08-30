@@ -10,6 +10,7 @@ from PySide6.QtCore import Signal
 from gui.styles import get_theme_token
 from gui.tabs.video_tools.presets_panel import PresetsPanel
 from gui.tabs.video_tools.compress_panel import CompressPanel
+from gui.tabs.video_tools.convert_panel import ConvertPanel
 from gui.tabs.video_tools.advanced_recode_panel import AdvancedRecodePanel
 
 class EncodingOptionsWidget(QFrame):
@@ -66,8 +67,9 @@ class EncodingOptionsWidget(QFrame):
         self.tabs.addTab(self.tab_compress, self.tr("Comprimir"))
         self.tab_compress.validity_changed.connect(self._on_compress_validity_changed)
 
-        self.tab_convert = QWidget()
+        self.tab_convert = ConvertPanel(self)
         self.tabs.addTab(self.tab_convert, self.tr("Convertir"))
+        self.tab_convert.validity_changed.connect(self._on_convert_validity_changed)
 
         self.tab_proxies = QWidget()
         self.tabs.addTab(self.tab_proxies, self.tr("Proxies"))
@@ -91,6 +93,8 @@ class EncodingOptionsWidget(QFrame):
             return self.tab_presets.get_status()
         if current is self.tab_compress:
             return self.tab_compress.get_status()
+        if current is self.tab_convert:
+            return self.tab_convert.get_status()
         return True, self.tr("Iniciar Recodificación")
 
     def _emit_current_status(self):
@@ -112,6 +116,10 @@ class EncodingOptionsWidget(QFrame):
         if self.tabs.currentWidget() is self.tab_compress:
             self._emit_current_status()
 
+    def _on_convert_validity_changed(self, _is_valid: bool):
+        if self.tabs.currentWidget() is self.tab_convert:
+            self._emit_current_status()
+
     def get_encoding_settings(self, file_meta: dict | None = None, filepath: str | None = None) -> dict:
         """`file_meta`/`filepath`, si se pasan, describen un archivo del lote DISTINTO al
         que está en preview - Comprimir los necesita para recalcular por archivo (Rápido:
@@ -125,4 +133,6 @@ class EncodingOptionsWidget(QFrame):
             return self.tab_presets.get_settings()
         if current is self.tab_compress:
             return self.tab_compress.get_settings(meta_override=file_meta, filepath_override=filepath)
+        if current is self.tab_convert:
+            return self.tab_convert.get_settings(meta_override=file_meta, filepath_override=filepath)
         return {}

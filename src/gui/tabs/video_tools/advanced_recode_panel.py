@@ -3,7 +3,6 @@ from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
-    QGridLayout,
     QFrame,
     QLabel,
     QComboBox,
@@ -28,6 +27,7 @@ import platform
 from gui.styles import get_theme_token
 from gui.widgets.mode_selector import ModeSelector
 from gui.widgets.preset_bar import PresetBar
+from gui.widgets.collapsible_section import CollapsibleSection
 from gui.widgets.combo_box import CheckmarkComboDelegate, AutoPopupComboBox
 from core.logger.logger_manager import logger
 from core.utils.recode_guard import evaluate_recode, get_video_codecs, get_audio_codecs, get_compatible_containers, resolve_encoder, get_channel_support, get_dimension_alignment
@@ -225,12 +225,10 @@ class AdvancedRecodePanel(QWidget):
         # 1. Tarjeta de Estado de Compatibilidad
         layout.addWidget(self._build_messages_section(content))
 
-        # 2. Cuadrícula dinámica de Tarjetas (2 columnas adaptables)
-        self.cards_grid = QGridLayout()
-        self.cards_grid.setSpacing(10)
-        self.cards_grid.setColumnStretch(0, 1)
-        self.cards_grid.setColumnStretch(1, 1)
-
+        # 2. Lista vertical de secciones. Video/Audio/Transformación/Marca de agua son
+        # acordeones colapsables (Video y Audio abiertos por defecto, las otras dos
+        # cerradas); Contenedor de salida y Peso estimado son tarjetas cortas que se
+        # dejan siempre visibles, sin acordeón.
         self._build_stream_section(self.tr("Video"), "video", is_video=True, parent=content)
         self._build_stream_section(self.tr("Audio"), "audio", is_video=False, parent=content)
         self._build_transform_section(content)
@@ -238,7 +236,29 @@ class AdvancedRecodePanel(QWidget):
         self._build_container_section(content)
         self._build_size_estimate_section(content)
 
-        layout.addLayout(self.cards_grid)
+        self.section_video = CollapsibleSection(
+            self.tr("Video"), self.frame_video, start_expanded=True, header_extra=self.lbl_video_engine,
+        )
+        self.section_audio = CollapsibleSection(
+            self.tr("Audio"), self.frame_audio, start_expanded=True, header_extra=self.lbl_audio_engine,
+        )
+        self.section_transform = CollapsibleSection(
+            self.tr("Transformación de video"), self.frame_transform, start_expanded=False,
+        )
+        self.section_watermark = CollapsibleSection(
+            self.tr("Marca de agua"), self.frame_watermark, start_expanded=False,
+        )
+
+        self.cards_column = QVBoxLayout()
+        self.cards_column.setSpacing(10)
+        self.cards_column.addWidget(self.section_video)
+        self.cards_column.addWidget(self.section_audio)
+        self.cards_column.addWidget(self.section_transform)
+        self.cards_column.addWidget(self.section_watermark)
+        self.cards_column.addWidget(self.frame_container)
+        self.cards_column.addWidget(self.frame_size)
+
+        layout.addLayout(self.cards_column)
 
         # Preajustes: va debajo de todo el panel (no es una tarjeta más de la
         # cuadrícula) - ver conversación sobre el sistema de presets.
@@ -256,18 +276,23 @@ class AdvancedRecodePanel(QWidget):
         scroll.setWidget(content)
         outer.addWidget(scroll)
 
-    def _card_frame(self, title: str | None = None, parent=None) -> tuple[QFrame, QVBoxLayout]:
-        """Crea una tarjeta con fondo transparente y borde sutil mediante ID selector para no afectar popups."""
+    def _card_frame(self, title: str | None = None, parent=None, bordered: bool = True) -> tuple[QFrame, QVBoxLayout]:
+        """Crea una tarjeta con fondo transparente y borde sutil mediante ID selector para no afectar popups.
+
+        `bordered=False` se usa para las secciones que van dentro de un CollapsibleSection
+        (Video/Audio/Transformación/Marca de agua): ese widget ya aporta su propio borde y
+        título en el header, así que la tarjeta interna no debe duplicarlos."""
         frame = QFrame(parent or self)
         frame.setObjectName("advancedCard")
-        border_color = get_theme_token('borde_sutil', '#2d2d2d')
-        frame.setStyleSheet(f"""
-            QFrame#advancedCard {{
-                background-color: transparent;
-                border: 1px solid {border_color};
-                border-radius: 6px;
-            }}
-        """)
+        if bordered:
+            border_color = get_theme_token('borde_sutil', '#2d2d2d')
+            frame.setStyleSheet(f"""
+                QFrame#advancedCard {{
+                    background-color: transparent;
+                    border: 1px solid {border_color};
+                    border-radius: 6px;
+                }}
+            """)
         frame.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         v = QVBoxLayout(frame)
         v.setSizeConstraint(QVBoxLayout.SetMinimumSize)
@@ -296,24 +321,16 @@ class AdvancedRecodePanel(QWidget):
         combo.setCursor(Qt.PointingHandCursor)
 
     def _build_stream_section(self, title: str, prefix: str, is_video: bool, parent=None) -> QFrame:
-        frame, v = self._card_frame(parent=parent)
+        # bordered=False y sin título propio: esta tarjeta vive dentro de un
+        # CollapsibleSection que ya aporta el borde y el título en su header.
+        frame, v = self._card_frame(parent=parent, bordered=False)
 
-        # Cabecera de la columna (Título centrado + Badge CPU/GPU a la derecha si es video)
-        header_row = QHBoxLayout()
-        header_row.setContentsMargins(0, 0, 0, 2)
-        header_row.setSpacing(8)
-
-        lbl_title = QLabel(title, frame)
-        lbl_title.setObjectName("sectionTitle")
-        lbl_title.setAlignment(Qt.AlignCenter)
-        header_row.addWidget(lbl_title, 1)
-
-        engine_badge = QPushButton("", frame)
+        # Badge CPU/GPU: se pasa como header_extra al CollapsibleSection (ver _init_ui),
+        # ya no vive en una fila propia dentro de la tarjeta.
+        engine_badge = QPushButton("")
         engine_badge.setObjectName(f"{prefix}EngineBadge")
         engine_badge.setCursor(Qt.PointingHandCursor)
         engine_badge.setVisible(False)
-        header_row.addWidget(engine_badge, 0, Qt.AlignRight)
-        v.addLayout(header_row)
 
         # Selector de Modo (Recodificar / Copiar original)
         mode_row = QHBoxLayout()
@@ -736,7 +753,8 @@ class AdvancedRecodePanel(QWidget):
         return frame
 
     def _build_transform_section(self, parent=None) -> QFrame:
-        frame, v = self._card_frame(self.tr("Transformación de video"), parent=parent)
+        # bordered=False y sin título propio: vive dentro de un CollapsibleSection.
+        frame, v = self._card_frame(parent=parent, bordered=False)
 
         # ── CFR ──────────────────────────────────────────────
         cfr_row = QHBoxLayout()
@@ -879,7 +897,8 @@ class AdvancedRecodePanel(QWidget):
         la vista previa (ver media_trim_player_widget.py::_DraggableWatermarkItem); este
         panel solo controla estilo (texto/fuente/tamaño/color/opacidad para texto,
         archivo/escala/opacidad para imagen)."""
-        frame, v = self._card_frame(self.tr("Marca de agua"), parent=parent)
+        # bordered=False y sin título propio: vive dentro de un CollapsibleSection.
+        frame, v = self._card_frame(parent=parent, bordered=False)
 
         lbl_hint = QLabel(self.tr("La posición se elige arrastrando sobre la vista previa."), frame)
         lbl_hint.setObjectName("mutedLabel")
@@ -1439,53 +1458,37 @@ class AdvancedRecodePanel(QWidget):
         self._update_size_estimate()
 
     def _relayout_cards(self):
-        """Reorganiza dinámicamente las tarjetas en la cuadrícula de 2 columnas según el modo activo."""
-        if not hasattr(self, "cards_grid") or not hasattr(self, "frame_container") or not hasattr(self, "frame_size"):
+        """Muestra/oculta las secciones (acordeones de Video/Audio/Transformación/Marca de
+        agua) según el modo activo. El orden vertical es siempre el mismo (ver cards_column
+        en _init_ui); acá solo cambia qué secciones quedan visibles, no su posición."""
+        if not hasattr(self, "cards_column") or not hasattr(self, "frame_container") or not hasattr(self, "frame_size"):
             return
 
         stream_mode = self._current_stream_mode()
-        has_transform = getattr(self, "frame_transform", None) is not None
-        has_watermark = getattr(self, "frame_watermark", None) is not None
+        has_transform = getattr(self, "section_transform", None) is not None
+        has_watermark = getattr(self, "section_watermark", None) is not None
 
         if stream_mode == "audio_only":
-            self.frame_video.hide()
-            self.frame_audio.show()
+            self.section_video.setVisible(False)
+            self.section_audio.setVisible(True)
             if has_transform:
-                self.frame_transform.hide()
+                self.section_transform.setVisible(False)
             if has_watermark:
-                self.frame_watermark.hide()
-            visible_cards = [self.frame_audio, self.frame_container, self.frame_size]
+                self.section_watermark.setVisible(False)
         elif stream_mode == "video_only":
-            self.frame_audio.hide()
-            self.frame_video.show()
-            visible_cards = [self.frame_video]
+            self.section_audio.setVisible(False)
+            self.section_video.setVisible(True)
             if has_transform:
-                self.frame_transform.show()
-                visible_cards.append(self.frame_transform)
+                self.section_transform.setVisible(True)
             if has_watermark:
-                self.frame_watermark.show()
-                visible_cards.append(self.frame_watermark)
-            visible_cards += [self.frame_container, self.frame_size]
-        else: # video+audio
-            self.frame_video.show()
-            self.frame_audio.show()
-            visible_cards = [self.frame_video, self.frame_audio]
+                self.section_watermark.setVisible(True)
+        else:  # video+audio
+            self.section_video.setVisible(True)
+            self.section_audio.setVisible(True)
             if has_transform:
-                self.frame_transform.show()
-                visible_cards.append(self.frame_transform)
+                self.section_transform.setVisible(True)
             if has_watermark:
-                self.frame_watermark.show()
-                visible_cards.append(self.frame_watermark)
-            visible_cards += [self.frame_container, self.frame_size]
-
-        while self.cards_grid.count():
-            self.cards_grid.takeAt(0)
-
-        for idx, card in enumerate(visible_cards):
-            row = idx // 2
-            col = idx % 2
-            self.cards_grid.addWidget(card, row, col)
-            card.show()
+                self.section_watermark.setVisible(True)
 
     # Preferencia de encoder por defecto en Windows para códecs con más de una
     # implementación válida (ver ENCODER_VARIANTS en codec_profiles.py): no es un dato

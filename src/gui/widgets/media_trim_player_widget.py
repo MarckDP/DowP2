@@ -1355,6 +1355,9 @@ class MediaTrimPlayerWidget(QWidget):
     # ------------------------------------------------------------------
     def _init_ui(self):
         left_layout = QVBoxLayout(self)
+        # Guardado como atributo para permitir extraer secciones del layout más tarde
+        # (ver extract_timeline_container) sin afectar el uso normal de este widget.
+        self._root_layout = left_layout
         if self._card_style:
             # Tarjeta con el mismo fondo/borde/radio que el resto de paneles de la app
             # (p.ej. la cola de medios o el panel de opciones en Herramientas Multimedia).
@@ -1451,6 +1454,9 @@ class MediaTrimPlayerWidget(QWidget):
 
         self.lbl_empty_subtitle = QLabel(self.tr("Carga o selecciona un medio para previsualizarlo y ajustar sus puntos In / Out"))
         self.lbl_empty_subtitle.setAlignment(Qt.AlignCenter)
+        # Sin wrap, Qt exige el ancho de la oración completa como mínimo (~400px) solo para
+        # este texto de ayuda — con wrap, se acomoda en más líneas en layouts angostos.
+        self.lbl_empty_subtitle.setWordWrap(True)
         self.lbl_empty_subtitle.setStyleSheet(f"font-size: 11px; color: {get_theme_token('texto_deshabilitado', '#555555')}; background: transparent;")
         empty_layout.addWidget(self.lbl_empty_subtitle)
 
@@ -1458,6 +1464,22 @@ class MediaTrimPlayerWidget(QWidget):
         empty_outer.addStretch(1)
 
         prev_layout.addWidget(self.empty_preview_widget, 1)
+
+        # Reloj global: franja delgada al pie de la vista previa (antes vivía en ctrl_bar,
+        # abajo del todo, separado del video — se movió acá adentro porque ya hay espacio
+        # y queda junto a lo que representa).
+        self.lbl_time_info = QLabel("00:00:00.000 / 00:00:00.000")
+        self.lbl_time_info.setAlignment(Qt.AlignCenter)
+        self.lbl_time_info.setFixedHeight(20)
+        self.lbl_time_info.setStyleSheet("""
+            QLabel {
+                background-color: #000000;
+                color: #cdd6f4;
+                font-size: 11px;
+                font-weight: bold;
+            }
+        """)
+        prev_layout.addWidget(self.lbl_time_info)
 
         # Botón flotante para selección de resolución de previsualización (esquina superior derecha del visor)
         self.btn_quality = QToolButton(self.preview_container)
@@ -1490,6 +1512,7 @@ class MediaTrimPlayerWidget(QWidget):
         wave_container = QHBoxLayout()
         wave_container.setContentsMargins(0, 0, 0, 0)
         wave_container.setSpacing(8)
+        self._wave_layout = wave_container
 
         # Columna izquierda: Controles Zoom arriba + Timeline Ruler al medio + Waveform abajo
         timeline_waveform_col = QVBoxLayout()
@@ -1511,7 +1534,7 @@ class MediaTrimPlayerWidget(QWidget):
         self.slider_zoom_x = QSlider(Qt.Horizontal)
         self.slider_zoom_x.setRange(100, 5000)
         self.slider_zoom_x.setValue(100)
-        self.slider_zoom_x.setFixedWidth(100)
+        self.slider_zoom_x.setFixedWidth(70)
         self.slider_zoom_x.setCursor(Qt.PointingHandCursor)
         self.slider_zoom_x.setToolTip("Zoom Horizontal")
         self.slider_zoom_x.valueChanged.connect(self._on_zoom_x_changed)
@@ -1526,7 +1549,7 @@ class MediaTrimPlayerWidget(QWidget):
         self.slider_zoom_y = QSlider(Qt.Horizontal)
         self.slider_zoom_y.setRange(10, 1000)
         self.slider_zoom_y.setValue(100)
-        self.slider_zoom_y.setFixedWidth(80)
+        self.slider_zoom_y.setFixedWidth(60)
         self.slider_zoom_y.setCursor(Qt.PointingHandCursor)
         self.slider_zoom_y.setToolTip("Ganancia Visual (Zoom Y)")
         self.slider_zoom_y.valueChanged.connect(self._on_zoom_y_changed)
@@ -1636,13 +1659,19 @@ class MediaTrimPlayerWidget(QWidget):
         apply_player_play_button_style(self.btn_play, is_playing=False, icon_size=18)
         self.ctrl_bar.addWidget(self.btn_play)
 
-        self.ctrl_bar.addSpacing(8)
+        # Margen fijo (no elástico): el volumen queda siempre pegado al botón de play a
+        # esta distancia constante, sin importar el ancho disponible.
+        self.ctrl_bar.addSpacing(10)
 
         # Volume control
         self.volume_control = VolumeControlWidget(initial_volume=100, slider_width=60)
         self.volume_control.volume_changed.connect(self._on_volume_changed)
         self.ctrl_bar.addWidget(self.volume_control)
 
+        # Margen mínimo garantizado antes del stretch: el stretch se colapsa a 0px cuando
+        # no sobra espacio, y sin este margen fijo el mango del slider (que Qt suele
+        # dibujar un poco más allá de su rect lógico) terminaba tapado por el botón "In".
+        self.ctrl_bar.addSpacing(8)
         self.ctrl_bar.addStretch()
 
         # Botones In [I] y Out [O] and inputs
@@ -1672,6 +1701,10 @@ class MediaTrimPlayerWidget(QWidget):
 
         sep = QLabel("—")
         sep.setAlignment(Qt.AlignCenter)
+        # Ancho fijo reservado: sin esto, el label dependía de su sizeHint natural (muy
+        # angosto para un solo guion) y bajo presión terminaba compartiendo espacio con
+        # el campo de tiempo de al lado en vez de tener su propio hueco garantizado.
+        sep.setFixedWidth(20)
         sep.setStyleSheet("color: #666; font-size: 15px;")
         self.ctrl_bar.addWidget(sep)
 
@@ -1700,12 +1733,65 @@ class MediaTrimPlayerWidget(QWidget):
 
         self.ctrl_bar.addStretch()
 
-        # Reloj global
-        self.lbl_time_info = QLabel("00:00:00 / 00:00:00")
-        self.lbl_time_info.setStyleSheet("color: #cdd6f4; font-size: 11px; font-weight: bold;")
-        self.ctrl_bar.addWidget(self.lbl_time_info)
-
         left_layout.addLayout(self.ctrl_bar)
+
+    def extract_timeline_container(self) -> QWidget:
+        """Saca la waveform/regla/vúmetro y la barra de controles de este widget y las
+        devuelve envueltas en un QWidget aparte, dejando aquí solo el preview de video.
+
+        Pensado exclusivamente para VideoToolsTab, que necesita mostrar el timeline en una
+        fila separada del preview (layout tipo Premiere). NO llamar desde subclip_dialog.py:
+        ese diálogo depende de que ctrl_bar y la waveform sigan viviendo dentro de este mismo
+        widget (inserta botones propios directamente en self.ctrl_bar por índice).
+        """
+        timeline_container = QFrame()
+        if self._card_style:
+            timeline_container.setObjectName("mediaTrimTimelineContainer")
+            timeline_container.setAttribute(Qt.WA_StyledBackground, True)
+            bg_color = get_theme_token('fondo_secundario', '#1e1e1e')
+            border_color = get_theme_token('borde_normal', '#2d2d2d')
+            timeline_container.setStyleSheet(f"""
+                QFrame#mediaTrimTimelineContainer {{
+                    background-color: {bg_color};
+                    border: 1px solid {border_color};
+                    border-radius: 6px;
+                }}
+            """)
+        timeline_layout = QVBoxLayout(timeline_container)
+        timeline_layout.setContentsMargins(8, 8, 8, 8)
+        timeline_layout.setSpacing(self._root_layout.spacing())
+
+        self._root_layout.removeItem(self._wave_layout)
+        timeline_layout.addLayout(self._wave_layout)
+
+        self._root_layout.removeItem(self.ctrl_bar)
+        timeline_layout.addLayout(self.ctrl_bar)
+
+        # A partir de acá, ctrl_bar/zoom_bar viven en timeline_container (no en self), así
+        # que el recálculo de controles compactos debe seguir SU ancho, no el de self.
+        self._timeline_container = timeline_container
+        timeline_container.installEventFilter(self)
+        self._recalculate_compact_controls(timeline_container.width())
+
+        return timeline_container
+
+    def _recalculate_compact_controls(self, width: int):
+        """Oculta el slider de volumen y los sliders de zoom/dB (dejando solo su ícono)
+        cuando el ancho disponible no alcanza — mismo criterio que ya usa
+        VolumeControlWidget.set_slider_visible()/editing_media_view.py para la fila de
+        controles de audio.
+
+        El umbral de volumen (500) es más alto que el de editing_media_view.py (260) a
+        propósito: ctrl_bar acá tiene más contenido fijo a la derecha (botones In/Out +
+        2 campos de tiempo), y ese contenido empezaba a superponerse con el slider de
+        volumen bastante antes de los 260px — con el popup vertical de respaldo (ver
+        VolumeControlWidget), esconder el slider antes ya no pierde funcionalidad."""
+        if hasattr(self, "volume_control"):
+            self.volume_control.set_slider_visible(width >= 500)
+        if hasattr(self, "slider_zoom_x"):
+            self.slider_zoom_x.setVisible(width >= 320)
+        if hasattr(self, "slider_zoom_y"):
+            self.slider_zoom_y.setVisible(width >= 320)
 
     def _init_media_player(self):
         self.media_player = QMediaPlayer(self)
@@ -1812,7 +1898,7 @@ class MediaTrimPlayerWidget(QWidget):
             self.preview_container.set_checkerboard_visible(False)
         self.waveform_widget.set_audio_path("")
         self.waveform_widget.set_saved_subclip_ratios([])
-        self.lbl_time_info.setText("00:00:00 / 00:00:00")
+        self.lbl_time_info.setText("00:00:00.000 / 00:00:00.000")
         if hasattr(self, "btn_audio_track"):
             self.btn_audio_track.setVisible(False)
         if hasattr(self, "chk_all_tracks"):
@@ -2058,6 +2144,11 @@ class MediaTrimPlayerWidget(QWidget):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._reposition_quality_button()
+        # Si extract_timeline_container() ya se llamó (VideoToolsTab), ctrl_bar/zoom_bar ya
+        # no viven en self — su ancho real se sigue por separado vía eventFilter sobre
+        # _timeline_container (ver más abajo), no acá.
+        if getattr(self, "_timeline_container", None) is None:
+            self._recalculate_compact_controls(self.width())
 
     # ------------------------------------------------------------------
     # Calidad de previsualización (proxies para medios pesados/RAW)
@@ -2273,6 +2364,9 @@ class MediaTrimPlayerWidget(QWidget):
         return hasattr(self, "chk_all_tracks") and self.chk_all_tracks.isVisible()
 
     def eventFilter(self, obj, event):
+        if obj is getattr(self, "_timeline_container", None) and event.type() == QEvent.Type.Resize:
+            self._recalculate_compact_controls(obj.width())
+            return super().eventFilter(obj, event)
         if not hasattr(self, "scroll_area") or self.scroll_area is None:
             return super().eventFilter(obj, event)
         if obj == self.scroll_area.viewport() and event.type() == QEvent.Type.Wheel:
@@ -2521,20 +2615,14 @@ class MediaTrimPlayerWidget(QWidget):
 
     def _update_time_label(self):
         pos_sec = self.media_player.position() / 1000.0
-        cur_fmt = self._format_seconds(pos_sec)
-        dur_fmt = self._format_seconds(self.duration_sec)
+        cur_fmt = self._format_seconds_ms(pos_sec)
+        dur_fmt = self._format_seconds_ms(self.duration_sec)
 
         self.lbl_time_info.setText(f"{cur_fmt} / {dur_fmt}")
         if not self.input_time_start.hasFocus():
             self.input_time_start.setText(self._format_seconds_ms(self.in_sec))
         if not self.input_time_end.hasFocus():
             self.input_time_end.setText(self._format_seconds_ms(self.out_sec))
-
-    def _format_seconds(self, seconds: float) -> str:
-        s = int(seconds) % 60
-        m = (int(seconds) // 60) % 60
-        h = int(seconds) // 3600
-        return f"{h:02d}:{m:02d}:{s:02d}"
 
     def _format_seconds_ms(self, seconds: float) -> str:
         ms = int((seconds % 1) * 1000)

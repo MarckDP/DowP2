@@ -26,7 +26,9 @@ class TimelineRulerWidget(QWidget):
         self.is_video = self.media_type in ("video", "video+audio")
         self.show_hours = duration_sec >= 3600.0
 
-        self.setFixedHeight(18)
+        # 18px originales + ~10px extra: con ciertas fuentes del sistema, el texto de las
+        # marcas principales (dibujado cerca del borde superior) quedaba cortado por arriba.
+        self.setFixedHeight(28)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setStyleSheet("background: transparent;")
 

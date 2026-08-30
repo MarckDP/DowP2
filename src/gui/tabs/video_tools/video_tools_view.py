@@ -5,7 +5,6 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QHBoxLayout,
     QGridLayout,
-    QSplitter,
     QLabel,
     QLineEdit,
     QPushButton,
@@ -14,12 +13,13 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QCheckBox,
 )
-from PySide6.QtCore import Qt, QSize, QUrl
+from PySide6.QtCore import Qt, QSize, QUrl, QTimer
 from PySide6.QtGui import QIcon, QDesktopServices
 
 from gui.widgets.animated_button import AnimatedButton
 from gui.widgets.bouncing_progress_bar import BouncingProgressBar
 from gui.widgets.combo_box import AutoPopupComboBox
+from gui.widgets.collapsible_panel import CollapsiblePanel
 from gui.styles import apply_folder_browse_button_style, apply_folder_open_button_style, create_colored_circle_icon, update_label_combobox_style
 from gui.widgets.media_trim_player_widget import MediaTrimPlayerWidget
 from gui.tabs.video_tools.media_queue_widget import MediaQueueWidget
@@ -42,7 +42,39 @@ class VideoToolsTab(QWidget):
     Organiza la interfaz en 2 paneles principales:
       - Columna Izquierda: Vista Previa Multimedia (arriba) + Cola de Medios Importados (abajo).
       - Columna Derecha: Panel de Opciones con Pestañas (Preajustes/Comprimir/Convertir/Proxies/Avanzado) + Cubo de Salida e Iniciar.
+
+    Layout tipo Premiere: cola de medios (izq) | preview centrado (centro) | opciones (der)
+    en una fila superior, y timeline/waveform + salida en una fila inferior SIEMPRE visible.
+    La cola de medios queda siempre acoplada (ancho fijo, cabe bien incluso en el ancho
+    mínimo soportado). Solo el panel de Opciones colapsa a un overlay flotante en ventanas
+    angostas (ver CollapsiblePanel) que no empuja ni redimensiona el preview ni la fila
+    inferior.
     """
+
+    COLLAPSE_THRESHOLD_WIDTH = 900
+    QUEUE_WIDTH = 340
+    # 300px probaba limpio con la cola vacía, pero con contenido real (mensajes de estado
+    # más largos, nombres de archivo, etc.) el panel podía terminar por debajo del ancho
+    # real que necesita el acordeón de Opciones — apareciendo el scroll horizontal de
+    # seguridad justo antes de colapsar a overlay. 500px es el valor que ya habíamos
+    # verificado sin recortes ni scroll con la pestaña Avanzado expandida.
+    OPTIONS_DOCKED_WIDTH = 500
+    # Ancho del panel de Opciones cuando aparece como overlay (ventana angosta): al menos
+    # tan generoso como el acoplado, para no repetir el mismo problema ahí.
+    OPTIONS_OVERLAY_MAX_WIDTH = 520
+    PREVIEW_MIN_WIDTH = 600
+    PREVIEW_MAX_WIDTH_RATIO = 0.35
+    # 294px (su mínimo técnico) se veía apretado en la práctica (campos truncados) — igual
+    # que con Opciones, un mínimo "cómodo" real en vez de dejar que el stretch lo deje en
+    # el piso técnico por defecto.
+    OUTPUT_CARD_MIN_WIDTH = 380
+    OUTPUT_CARD_MAX_WIDTH_RATIO = 0.35
+    # Techo de seguridad para cola/opciones, no un objetivo: el reparto real lo hace el
+    # stretch (1:3:1) de top_row_layout, que ya consume el 100% del espacio disponible.
+    # Este valor solo evita un ancho absurdo en monitores ultra-anchos (>2560px); a
+    # resoluciones normales/maximizadas nunca debería ser lo que los limita.
+    SIDE_PANEL_MAX_WIDTH_CAP = 900
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.current_preview_file = ""
@@ -61,42 +93,37 @@ class VideoToolsTab(QWidget):
         qm.job_status_changed.connect(self._on_job_status)
 
     def init_ui(self):
-        main_layout = QHBoxLayout(self)
+        main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(10, 10, 10, 10)
         main_layout.setSpacing(8)
 
-        # 1. Splitter Principal Horizontal (2 Columnas: Izquierda vs Derecha)
-        self.main_splitter = QSplitter(Qt.Horizontal)
-        self.main_splitter.setHandleWidth(6)
-
         # -------------------------------------------------------------
-        # COLUMNA IZQUIERDA: Vista Previa (Arriba) + Cola de Medios (Abajo)
+        # FILA SUPERIOR: Cola de Medios (izq) | Preview centrado (centro) | Opciones (der)
+        # Izquierda y derecha colapsan a overlay en ventanas angostas; ver
+        # _update_responsive_mode / CollapsiblePanel.
         # -------------------------------------------------------------
-        self.left_splitter = QSplitter(Qt.Vertical)
-        self.left_splitter.setHandleWidth(6)
+        self.top_row = QWidget()
+        self.top_row_layout = QHBoxLayout(self.top_row)
+        self.top_row_layout.setContentsMargins(0, 0, 0, 0)
+        self.top_row_layout.setSpacing(8)
 
         self.preview_widget = MediaTrimPlayerWidget(self, card_style=True)
         self.preview_widget.range_changed.connect(self._on_trim_range_changed)
+        # El tope de ancho se recalcula en vivo según el ancho de ventana (ver
+        # _preview_max_width) en vez de ser un número fijo: así el preview queda chico y
+        # centrado en la resolución default, pero aprovecha el espacio extra en pantallas
+        # grandes en vez de dejarlo como hueco muerto a los costados.
+
+        # La waveform/regla/vúmetro + barra de controles se extraen del preview para vivir
+        # en la fila inferior, siempre visible a todo el ancho (ver bottom_row más abajo).
+        self.timeline_widget = self.preview_widget.extract_timeline_container()
 
         self.queue_widget = MediaQueueWidget(self)
         self.queue_widget.file_selected.connect(self._on_file_selected)
 
-        self.left_splitter.addWidget(self.preview_widget)
-        self.left_splitter.addWidget(self.queue_widget)
-        self.left_splitter.setSizes([450, 300])
-
-        # -------------------------------------------------------------
-        # COLUMNA DERECHA: Opciones (Pestañas) + Cubo de Salida
-        # -------------------------------------------------------------
-        self.right_container = QWidget()
-        right_layout = QVBoxLayout(self.right_container)
-        right_layout.setContentsMargins(0, 0, 0, 0)
-        right_layout.setSpacing(6)
-
-        # 1. Panel Superior de Opciones con Pestañas
+        # 1. Panel de Opciones con Pestañas
         self.options_widget = EncodingOptionsWidget(self)
         self.options_widget.start_status_changed.connect(self._on_start_status_changed)
-        right_layout.addWidget(self.options_widget, 1)
 
         # Recorte interactivo: siempre activo en Personalizado + Recortar (no hay casilla
         # de encendido). El panel Avanzado activa/desactiva el rectángulo sobre la vista
@@ -119,14 +146,23 @@ class VideoToolsTab(QWidget):
         self.preview_widget.text_watermark_changed.connect(self._on_text_watermark_position_changed)
         self.preview_widget.image_watermark_changed.connect(self._on_image_watermark_position_changed)
 
-        # 2. Cubo Inferior de Opciones de Salida y Ejecución
-        self.output_card = QFrame(self.right_container)
+        # -------------------------------------------------------------
+        # FILA INFERIOR: Timeline/Waveform + Cubo de Salida — SIEMPRE visible, nunca colapsa
+        # -------------------------------------------------------------
+        self.bottom_row = QWidget()
+        bottom_row_layout = QHBoxLayout(self.bottom_row)
+        bottom_row_layout.setContentsMargins(0, 0, 0, 0)
+        bottom_row_layout.setSpacing(8)
+
+        # Cubo de Opciones de Salida y Ejecución
+        self.output_card = QFrame(self.bottom_row)
         self.output_card.setObjectName("outputOptionsContainer")
+        self.output_card.setMinimumWidth(self.OUTPUT_CARD_MIN_WIDTH)
         out_layout = QVBoxLayout(self.output_card)
         out_layout.setContentsMargins(14, 12, 14, 12)
         out_layout.setSpacing(10)
 
-        lbl_out_title = QLabel(self.tr("Opciones de Salida y Procesamiento"), self.output_card)
+        lbl_out_title = QLabel(self.tr("Opciones de Salida"), self.output_card)
         lbl_out_title.setObjectName("sectionTitle")
         lbl_out_title.setAlignment(Qt.AlignCenter)
         out_layout.addWidget(lbl_out_title)
@@ -233,14 +269,159 @@ class VideoToolsTab(QWidget):
         # Estado y texto inicial contextual del botón
         self._on_start_status_changed(*self.options_widget.get_current_status())
 
-        right_layout.addWidget(self.output_card)
+        bottom_row_layout.addWidget(self.output_card, 1)
+        bottom_row_layout.addWidget(self.timeline_widget, 2)
 
-        # Agregar ambas columnas al Splitter Principal Horizontal
-        self.main_splitter.addWidget(self.left_splitter)
-        self.main_splitter.addWidget(self.right_container)
-        self.main_splitter.setSizes([500, 500])
+        # -------------------------------------------------------------
+        # Cola de medios (izq): SIEMPRE visible/acoplada, cabe bien incluso en el ancho
+        # mínimo de la app, así que no necesita colapsar a overlay.
+        # Opciones (der): único panel colapsable, se oculta a overlay en ventanas angostas.
+        # -------------------------------------------------------------
+        # Ancho "preferido" (arranque) fijo vía minimumWidth; el techo real de crecimiento
+        # (más allá de este valor cuando sobra espacio) lo pone _update_responsive_mode.
+        self.queue_widget.setMinimumWidth(self.QUEUE_WIDTH)
+        self.right_panel = CollapsiblePanel(
+            self.options_widget, edge="right",
+            docked_size=self.OPTIONS_DOCKED_WIDTH,
+            overlay_max_width=self.OPTIONS_OVERLAY_MAX_WIDTH,
+        )
 
-        main_layout.addWidget(self.main_splitter)
+        self.preview_center_wrapper = QWidget()
+        center_layout = QHBoxLayout(self.preview_center_wrapper)
+        center_layout.setContentsMargins(0, 0, 0, 0)
+        # El preview debe crecer primero hasta su propio tope (setMaximumWidth) y sólo
+        # repartirse el espacio sobrante entre los dos stretch de los costados para quedar
+        # centrado — si los tres tuvieran el mismo peso, Qt reparte el espacio extra por
+        # igual entre los 3 y el preview queda mucho más chico que su tope, dejando huecos
+        # enormes a los lados en vez de "chico y centrado".
+        center_layout.addStretch(1)
+        center_layout.addWidget(self.preview_widget, 1000)
+        center_layout.addStretch(1)
+
+        # Pesos de stretch: el preview se lleva la mayor parte del espacio sobrante; entre
+        # los paneles laterales, Opciones tiene prioridad sobre la cola de medios (crece
+        # más) porque sus controles se benefician más del ancho extra que una lista simple
+        # de archivos — ninguno se queda 100% fijo, para no dejar hueco muerto a los
+        # costados en ventanas grandes/maximizadas.
+        self.top_row_layout.addWidget(self.queue_widget, 1)
+        self.top_row_layout.addWidget(self.preview_center_wrapper, 3)
+        self.top_row_layout.addWidget(self.right_panel, 2)
+
+        # El host del overlay es la pestaña completa (self), no self.top_row: Qt recorta
+        # los hijos al área de su padre, así que si quedara colgado de top_row jamás podría
+        # pintarse por encima de bottom_row. Al no empujar ni redimensionar nada (es un
+        # overlay flotante), no hay problema en que use toda la altura disponible.
+        self.right_panel.configure_container(self, self.top_row_layout, 2, dock_stretch=2)
+
+        main_layout.addWidget(self.top_row, 1)
+        main_layout.addWidget(self.bottom_row)
+
+        # El tamaño real de la ventana no es confiable hasta que el layout se asiente;
+        # se evalúa una vez apenas se procese el primer ciclo de eventos.
+        QTimer.singleShot(0, self._update_responsive_mode)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_responsive_mode()
+
+    def minimumSizeHint(self):
+        """Se sobrescribe para SIEMPRE reportar el piso "sin panel de opciones acoplado"
+        (el que rige en modo overlay), nunca el piso más ancho que exige el panel de
+        Opciones cuando está acoplado (docked_size es un mínimo duro real — ver
+        CollapsiblePanel — para que nunca aparezca recortado/con scroll horizontal).
+
+        Si no hiciéramos esto, Qt propagaría el piso "acoplado" (más ancho) hacia arriba
+        como mínimo de toda la ventana, y un resize() de un solo salto grande→chico
+        quedaría atascado sin llegar a disparar el colapso a overlay (el mismo bloqueo que
+        ya solucionamos antes, pero reintroducido por el mínimo duro del panel). Al
+        reportar siempre el piso angosto, Qt permite el resize y _update_responsive_mode
+        reacciona al instante (dentro del mismo resizeEvent, antes de repintar) acoplando
+        u ocultando el panel de Opciones según corresponda — el usuario nunca llega a ver
+        el achique transitorio."""
+        base = super().minimumSizeHint()
+        if not hasattr(self, "queue_widget"):
+            return base
+        # bottom_row (timeline + cubo de salida) sí se incluye: a diferencia del panel de
+        # Opciones, nunca se saca/reinserta del layout (no "colapsa"), así que su mínimo es
+        # una contribución estática de siempre — incluirla no reintroduce el bloqueo de
+        # saltos grandes (ese bloqueo era específico de un mínimo que aparece/desaparece
+        # al acoplar/desacoplar el panel de Opciones).
+        width = max(self._undocked_floor_width(), self.bottom_row.minimumSizeHint().width())
+        return QSize(width, base.height())
+
+    def _undocked_floor_width(self) -> int:
+        """Ancho mínimo real con el panel de Opciones en overlay (fuera del layout): solo
+        cuentan la cola de medios (ancho fijo) y el mínimo propio del preview."""
+        margins = self.top_row_layout.contentsMargins()
+        spacing = self.top_row_layout.spacing()
+        preview_min = self.preview_widget.minimumSizeHint().width()
+        return self.QUEUE_WIDTH + preview_min + spacing + margins.left() + margins.right()
+
+    def _docked_floor_width(self) -> int:
+        """Ancho mínimo real que exige la fila superior con el panel de opciones acoplado
+        Y el preview en su tamaño CÓMODO (PREVIEW_MIN_WIDTH), no su mínimo técnico absoluto
+        — decisión confirmada con el usuario: a 1100px (resolución default de la app) no
+        entran cola+opciones+preview cómodos a la vez (340+500+600=1440), así que a esa
+        resolución el panel de Opciones vuelve a ser overlay en vez de acoplarse apretado
+        contra un preview aplastado. Se calcula en vivo (no un valor fijo): si el contenido
+        de cualquiera de las partes cambia a futuro, el umbral se ajusta solo."""
+        margins = self.top_row_layout.contentsMargins()
+        spacing = self.top_row_layout.spacing()
+        return (
+            self.QUEUE_WIDTH
+            + self.right_panel.docked_size
+            + self.PREVIEW_MIN_WIDTH
+            + spacing * 2
+            + margins.left() + margins.right()
+            + 20  # margen de seguridad
+        )
+
+    def _preview_max_width(self) -> int:
+        """Tope de ancho del preview: un porcentaje del ancho de la ventana (no un número
+        fijo) para que no "siga y siga creciendo" en pantallas grandes/maximizadas a costa
+        de dejar la cola de medios y las opciones (de ancho fijo) desproporcionadamente
+        chicas — en la resolución default queda pequeño y centrado."""
+        return max(self.PREVIEW_MIN_WIDTH, int(self.width() * self.PREVIEW_MAX_WIDTH_RATIO))
+
+    def _output_card_max_width(self) -> int:
+        """Tope de ancho del cubo de Opciones de Salida y Procesamiento: antes tenía
+        stretch=0 en bottom_row_layout, así que se quedaba SIEMPRE en su ancho natural sin
+        importar cuánto creciera la ventana. Ahora tiene stretch>0 (crece de verdad), y este
+        método solo pone el TECHO (35% del ancho de ventana) — el piso lo sigue poniendo su
+        propio minimumSizeHint natural, nunca forzado, para no repetir el mismo bloqueo de
+        `setFixedWidth` que ya tuvimos con el panel de opciones."""
+        return int(self.width() * self.OUTPUT_CARD_MAX_WIDTH_RATIO)
+
+    def _queue_max_width(self) -> int:
+        """Techo de la cola de medios: antes ancho 100% fijo (nunca crecía). Ahora el
+        reparto real lo hace el stretch de top_row_layout (que ya usa el 100% del espacio
+        disponible); esto solo pone un techo de seguridad para ventanas ultra-anchas."""
+        return max(self.QUEUE_WIDTH, self.SIDE_PANEL_MAX_WIDTH_CAP)
+
+    def _options_max_width(self) -> int:
+        """Mismo criterio que _queue_max_width, para el panel de Opciones acoplado."""
+        return max(self.OPTIONS_DOCKED_WIDTH, self.SIDE_PANEL_MAX_WIDTH_CAP)
+
+    def _update_responsive_mode(self):
+        if not hasattr(self, "right_panel"):
+            return
+        threshold = max(self.COLLAPSE_THRESHOLD_WIDTH, self._docked_floor_width())
+        want_docked = self.width() >= threshold
+        if want_docked != self.right_panel.is_docked():
+            self.right_panel.set_mode(docked=want_docked)
+        self.right_panel.set_dock_max_width(self._options_max_width())
+        self.right_panel.sync_overlay_geometry()
+        self.queue_widget.setMaximumWidth(self._queue_max_width())
+        # Se recalcula después de resolver el modo acoplado/overlay para que el tope de
+        # ancho del preview refleje el espacio realmente disponible en este mismo resize.
+        preview_cap = self._preview_max_width()
+        self.preview_widget.setMaximumWidth(preview_cap)
+        # Sin esto, preview_center_wrapper (que tiene más peso de stretch que la cola/
+        # opciones para que el preview crezca primero) reclama más ancho del que el
+        # preview realmente usa una vez alcanza su propio tope, y ese sobrante queda como
+        # hueco muerto alrededor del preview en vez de repartirse hacia los costados.
+        self.preview_center_wrapper.setMaximumWidth(preview_cap)
+        self.output_card.setMaximumWidth(self._output_card_max_width())
 
     def _on_file_selected(self, filepath: str):
         self.current_preview_file = filepath

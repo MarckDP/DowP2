@@ -179,6 +179,15 @@ class DownloadController(QObject):
                 self.tab.output_options.set_download_state("paused", self.tab.tr("Reanudar cola"))
                 self.tab.output_options.btn_start_download.setEnabled(True)
 
+    def _own_jobs(self):
+        """Jobs del QueueManager que le corresponden a ESTA pestaña (Proceso Avanzado).
+        El QueueManager es compartido con Herramientas Multimedia (jobs "RECODE") - sin
+        este filtro, encolar una recodificación desde la otra pestaña contaminaba el
+        progreso agregado de acá ("X de Y completados" contando recodificaciones ajenas)
+        y los logs de esta clase (ver conversación: aparecían mensajes "Fallo en
+        descarga" para jobs que en realidad eran recodificaciones)."""
+        return [j for j in self.queue_mgr.get_all_jobs() if j.job_type in ("DOWNLOAD", "PLAYLIST")]
+
     def update_queue_main_progress(self):
         """
         Actualiza la barra de progreso principal evaluando toda la cola de forma
@@ -191,7 +200,7 @@ class DownloadController(QObject):
         corriendo y no tiene fragmentos (ahí sí hay un solo número que
         representa fielmente lo que está pasando).
         """
-        jobs = self.queue_mgr.get_all_jobs()
+        jobs = self._own_jobs()
         if not jobs:
             if self.tab.taskbar_manager:
                 self.tab.taskbar_manager.stop()
@@ -277,7 +286,7 @@ class DownloadController(QObject):
     def _on_queue_finished_all(self):
         self.queue_mgr.pause_queue()
         self.is_downloading = False
-        jobs = self.queue_mgr.get_all_jobs()
+        jobs = self._own_jobs()
         has_pending = any(j.status == "PENDING" for j in jobs)
         if has_pending:
             self.tab.output_options.set_download_state("paused", self.tab.tr("Reanudar cola"))
@@ -291,7 +300,7 @@ class DownloadController(QObject):
         logger.info("AdvancedProcessTab: Descargas finalizadas.")
 
     def on_queue_panel_action(self, action):
-        jobs = self.queue_mgr.get_all_jobs()
+        jobs = self._own_jobs()
         
         if not jobs:
             self.is_downloading = False
@@ -316,8 +325,14 @@ class DownloadController(QObject):
         self.update_queue_main_progress()
 
     def _on_queue_job_status(self, job_id, status):
+        # Filtro de tipo (ver _own_jobs): sin esto, un job "RECODE" fallido de Herramientas
+        # Multimedia se logueaba aca como "Fallo en descarga" (ver conversación).
+        owned_job = self.queue_mgr.get_job(job_id)
+        if not owned_job or owned_job.job_type not in ("DOWNLOAD", "PLAYLIST"):
+            return
+
         self.update_queue_main_progress()
-        
+
         if status == "COMPLETED":
             job = self.queue_mgr.get_job(job_id)
             if job and job.request_data:
@@ -345,7 +360,7 @@ class DownloadController(QObject):
                 self.queue_mgr.reset_job(job_id)
         
         if self.is_downloading and self.queue_mgr.is_paused():
-            jobs = self.queue_mgr.get_all_jobs()
+            jobs = self._own_jobs()
             if not any(j.status == "RUNNING" for j in jobs):
                 self.is_downloading = False
                 self.tab.output_options.set_download_state("paused", self.tab.tr("Reanudar cola"))

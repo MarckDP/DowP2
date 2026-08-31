@@ -611,7 +611,11 @@ class AdvancedProcessTab(QWidget):
         
         # 1. Al activar SOLO (checked = True)
         if checked:
-            jobs = self.queue_mgr.get_all_jobs()
+            # Solo trabajos de ESTA pestaña (DOWNLOAD/PLAYLIST) - el QueueManager es
+            # compartido con Herramientas Multimedia (jobs "RECODE"), asi que
+            # clear_queue() (vacia TODO sin importar el tipo) borraria/cancelaria
+            # recodificaciones ajenas con solo tocar este toggle (ver conversación).
+            jobs = [j for j in self.queue_mgr.get_all_jobs() if j.job_type in ("DOWNLOAD", "PLAYLIST")]
             if jobs:
                 from gui.dialogs.dialogs import show_warning_confirm
                 confirm = show_warning_confirm(
@@ -626,8 +630,10 @@ class AdvancedProcessTab(QWidget):
                     self.url_bar.solo_btn.blockSignals(False)
                     return
                 else:
-                    # Confirmado: Limpiar cola y UI
-                    self.queue_mgr.clear_queue()
+                    # Confirmado: solo estos jobs (no clear_queue(), que se llevaria por
+                    # delante recodificaciones de la otra pestaña)
+                    for j in jobs:
+                        self.queue_mgr.remove_job(j.job_id)
                     self._clear_ui_completely()
             else:
                 self._clear_ui_completely()

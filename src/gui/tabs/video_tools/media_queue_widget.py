@@ -26,6 +26,11 @@ from core.tabs.editing_media.waveform_cache_manager import WaveformCacheManager
 from core.logger.logger_manager import logger
 
 _STATUS_COLOR_MAP = {
+    # "completado (" (con la salvedad entre parentesis, ver video_tools_view.py::
+    # _on_job_status) tiene que ir ANTES que "completado" a secas: el loop de abajo
+    # devuelve el primer match, y "completado (...)" contiene "completado" como
+    # substring - sin este orden, un completado-con-advertencia se pintaria verde igual.
+    "completado (": "estado_aviso",
     "pendiente": "estado_espera",
     "en cola": "estado_espera",
     "procesando": "estado_aviso",

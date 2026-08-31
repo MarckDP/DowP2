@@ -22,7 +22,6 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Signal, Qt
 from PySide6.QtGui import QColor, QPixmap
 import math
-import platform
 
 from gui.styles import get_theme_token
 from gui.widgets.mode_selector import ModeSelector
@@ -38,6 +37,7 @@ from core.utils.audio_filter_builder import build_audio_normalization_filter
 from core.tabs.video_tools.codec_profiles import (
     get_profiles, build_custom_bitrate_args, extract_bitrate_kbps,
     recommend_audio_codec, supports_two_pass, encoder_is_two_pass_capable, build_pass_args, ENCODER_VARIANTS,
+    ordered_encoder_variants,
 )
 from core.tabs.video_tools.size_estimator import (
     parse_duration_to_seconds, parse_kbps_from_label, estimate_size_mb, source_codec_id,
@@ -1465,20 +1465,6 @@ class AdvancedRecodePanel(QWidget):
             if has_watermark:
                 self.section_watermark.setVisible(True)
 
-    # Preferencia de encoder por defecto en Windows para códecs con más de una
-    # implementación válida (ver ENCODER_VARIANTS en codec_profiles.py): no es un dato
-    # verificado por probe-encode como el resto de hardware_detector.py, es una preferencia
-    # de campo (medida a mano en Windows por el desarrollador) — no se probó en Linux/macOS,
-    # así que ahí se deja el orden original tal cual. Sigue siendo 100% reversible: el
-    # usuario puede elegir el otro encoder de la combo en cualquier momento.
-    _WINDOWS_PREFERRED_ENCODER = {"prores": "prores_aw"}
-
-    def _ordered_variants(self, codec_id, variants: list[tuple[str, str]]) -> list[tuple[str, str]]:
-        preferred = self._WINDOWS_PREFERRED_ENCODER.get(codec_id) if platform.system() == "Windows" else None
-        if not preferred:
-            return variants
-        return sorted(variants, key=lambda item: item[0] != preferred)
-
     def _refresh_variant_combo(self, prefix: str, codec_id):
         combo = getattr(self, f"combo_{prefix}_variant")
         lbl = getattr(self, f"lbl_{prefix}_variant")
@@ -1490,7 +1476,10 @@ class AdvancedRecodePanel(QWidget):
                 combo.setVisible(False)
                 lbl.setVisible(False)
                 return
-            variants = self._ordered_variants(codec_id, variants)
+            # Preferencia de plataforma (ver codec_profiles.WINDOWS_PREFERRED_ENCODER) -
+            # reordena para que el mejor por defecto en ESTE sistema quede primero (índice
+            # 0 = seleccionado al abrir el combo), sin dejar de exponer el resto.
+            variants = ordered_encoder_variants(codec_id, variants)
             for encoder, label in variants:
                 combo.addItem(label, encoder)
             combo.setVisible(True)

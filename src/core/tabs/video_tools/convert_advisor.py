@@ -17,6 +17,7 @@ import os
 
 from core.utils.recode_guard import (
     is_stream_copy_compatible, resolve_encoder, get_compatible_codecs, container_supports_video,
+    normalize_container,
 )
 from core.tabs.video_tools.size_estimator import source_codec_id
 from core.tabs.video_tools.codec_profiles import build_custom_quality_args, build_custom_audio_bitrate_args
@@ -34,6 +35,26 @@ DEFAULT_AUDIO_KBPS = 256
 # Codecs cuyo control de calidad no es un bitrate objetivo (build_custom_audio_bitrate_args
 # no aplica): PCM no tiene bitrate configurable, FLAC usa nivel de compresion.
 _AUDIO_CODECS_WITHOUT_BITRATE = {"pcm_s16le", "pcm_s24le", "pcm_s32le", "flac"}
+
+# Contenedores donde el matrix confirma EMPIRICAMENTE que algun codec de video entra
+# (container_supports_video ya daria True), pero que Convertir igual trata como solo-
+# audio: "m4a" acepta h264/mpeg4 via el muxer ipod, y "ogg" acepta theora/vp8 - resabios
+# de formatos viejos (video de iPod, Ogg Theora) que nadie espera hoy al elegir ".m4a" o
+# ".ogg" para convertir algo. Es una decision de PRODUCTO, no un hecho tecnico - por eso
+# vive aca (Convertir) y no en recode_guard.py: Avanzado (publico power-user) debe seguir
+# mostrando la verdad tecnica completa, incluyendo esta opcion rara pero real. El resto de
+# los contenedores "de audio puro" (mp3/wav/flac/opus) ya dan False en
+# container_supports_video sin necesidad de este override - solo m4a/ogg lo necesitan.
+_FORCE_AUDIO_ONLY_CONTAINERS = {"m4a", "ogg"}
+
+
+def container_accepts_video_for_convert(container_id: str) -> bool:
+    """Version de container_supports_video() con la politica de Convertir superpuesta
+    (ver _FORCE_AUDIO_ONLY_CONTAINERS) - usar esta, no la de recode_guard.py directo, para
+    cualquier decision de UI/plan que sea especifica de la pestaña Convertir."""
+    if normalize_container(container_id) in _FORCE_AUDIO_ONLY_CONTAINERS:
+        return False
+    return container_supports_video(container_id)
 
 
 def _pick_preferred(compatible_ids: list[str], preference: list[str]) -> str | None:
@@ -55,7 +76,7 @@ def plan_conversion(meta: dict, container_id: str) -> dict:
     video se descarta sin importar el codec de origen."""
     video_codec_source = source_codec_id((meta or {}).get("video_codec"))
     audio_codec_source = source_codec_id((meta or {}).get("audio_codec"))
-    container_accepts_video = container_supports_video(container_id)
+    container_accepts_video = container_accepts_video_for_convert(container_id)
 
     video_plan = None
     if video_codec_source is not None and container_accepts_video:

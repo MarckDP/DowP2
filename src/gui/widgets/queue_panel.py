@@ -533,7 +533,14 @@ class QueuePanel(QWidget):
         job = self.queue_mgr.get_job(job_id)
         if not job:
             return
-            
+        # El QueueManager es compartido con Herramientas Multimedia (jobs "RECODE") - este
+        # panel es especifico de Proceso Avanzado (descargas/playlists), asi que sin este
+        # filtro aparecia una tarjeta fantasma por cada recodificacion encolada desde la
+        # otra pestaña (ver conversacion: tambien contaminaba el progreso agregado y los
+        # logs de DownloadController con jobs que no eran suyos).
+        if job.job_type not in ("DOWNLOAD", "PLAYLIST"):
+            return
+
         self.empty_lbl.hide()
             
         card = QueueItemCard(job.title, job.job_id, self, is_playlist=(job.job_type == "PLAYLIST"))

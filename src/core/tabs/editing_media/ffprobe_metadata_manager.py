@@ -15,7 +15,7 @@ CACHE_FILE = os.path.join(get_cache_dir(), "metadata_cache.json")
 # entrada de cache vieja (guardada con un esquema anterior, ej. sin "audio_streams")
 # se sigue devolviendo tal cual por mtime/size aunque le falten campos nuevos, y la UI
 # que los consume nunca los ve hasta que el usuario borra la cache a mano.
-CACHE_SCHEMA_VERSION = 2
+CACHE_SCHEMA_VERSION = 3
 
 class FFprobeTask(QRunnable):
     """Tarea asíncrona para ejecutar ffprobe en un archivo multimedia."""
@@ -261,7 +261,9 @@ class FFprobeMetadataManager(QObject):
 
         for st in streams:
             codec_type = st.get("codec_type")
-            if codec_type == "video" and meta["video_codec"] == "-":
+            disposition = st.get("disposition", {}) or {}
+            is_attached_pic = bool(disposition.get("attached_pic", 0))
+            if codec_type == "video" and not is_attached_pic and meta["video_codec"] == "-":
                 width = st.get("width")
                 height = st.get("height")
                 if width and height:

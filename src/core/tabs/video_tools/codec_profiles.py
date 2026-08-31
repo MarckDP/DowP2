@@ -164,6 +164,20 @@ VIDEO_ENCODER_PROFILES = {
         {"label": "DNxHR HQX (10-bit 4:2:2)", "args": ["-c:v", "dnxhd", "-profile:v", "dnxhr_hqx", "-pix_fmt", "yuv422p10le"]},
         {"label": "DNxHR 444 (10-bit 4:4:4)", "args": ["-c:v", "dnxhd", "-profile:v", "dnxhr_444", "-pix_fmt", "yuv444p10le"]},
     ],
+    "cfhd": [
+        # Nombres y orden = los 13 niveles reales de "-quality" del encoder cfhd de este
+        # ffmpeg (ver `ffmpeg -h encoder=cfhd`), curados a 6 representativos (mismo
+        # criterio que prores_ks/dnxhd: no todos los valores posibles, los puntos de
+        # referencia reales de la escala) - "Film Scan" es el nombre que usa el propio
+        # SDK de CineForm para sus niveles mas altos (grado masterización/escaneo de
+        # película), no una etiqueta inventada.
+        {"label": "Low (Proxy)", "args": ["-c:v", "cfhd", "-quality", "low"]},
+        {"label": "Medium", "args": ["-c:v", "cfhd", "-quality", "medium"]},
+        {"label": "High", "args": ["-c:v", "cfhd", "-quality", "high"]},
+        {"label": "Film Scan 1", "args": ["-c:v", "cfhd", "-quality", "film1"]},
+        {"label": "Film Scan 2", "args": ["-c:v", "cfhd", "-quality", "film2"]},
+        {"label": "Film Scan 3+ (Máxima)", "args": ["-c:v", "cfhd", "-quality", "film3+"]},
+    ],
     "gif": [
         {"label": "Calidad Alta", "args": ["-vf", "split[s0][s1];[s0]palettegen=stats_mode=full:max_colors=256[p];[s1][p]paletteuse=dither=floyd_steinberg", "-c:v", "gif", "-loop", "0"]},
         {"label": "Calidad Media", "args": ["-vf", "split[s0][s1];[s0]palettegen=stats_mode=full:max_colors=256[p];[s1][p]paletteuse=dither=bayer:bayer_scale=2", "-c:v", "gif", "-loop", "0"]},
@@ -227,16 +241,60 @@ AUDIO_ENCODER_PROFILES = {
 # Codecs con mas de una implementacion de encoder valida en ffmpeg, sin que haya una
 # "mejor" objetiva para todos los casos (a diferencia de hardware vs software, donde
 # hardware_detector.py ya elige el mejor real por probe-encode). Se ofrecen ambas y que
-# el usuario elija. prores_ks (Kostya Shishkov) es el default moderno de ffmpeg, mas
-# preciso; prores_aw (Anatoliy Wasserman) es una reimplementacion mas rapida en varios
-# sistemas. La misma logica aplicaria a libsvtav1 vs libaom-av1 en AV1 (hoy
-# hardware_detector.py elige libsvtav1 automaticamente como "software" preferido).
+# el usuario elija. IMPORTANTE (corregido tras verificar contra este ffmpeg real, ver
+# conversacion - el comentario anterior tenia esto al reves): "-c:v prores" (el nombre
+# generico, sin sufijo) es un alias de prores_aw, NO de prores_ks - confirmado
+# comparando bitrate/tamano de archivo byte a byte, identicos entre "prores" y
+# "prores_aw", y distintos de "prores_ks". prores_ks (Kostya Shishkov) SI es mas preciso
+# en la practica (bitrate consistentemente mas alto/menos comprimido a igual perfil,
+# confirmado con benchmark real) pero NO es "el default" de ffmpeg como se creia; y
+# prores_aw SI soporta los perfiles 4444/4444 XQ pese a que su "-h encoder=" no lista un
+# "-profile" con nombres como si lo hace ks (confirmado con el FourCC real grabado en el
+# archivo: ap4h/ap4x en ambos, igual de validos) - no asumir lo contrario por eso. En
+# Windows, prores_aw ademas resulto ~8x mas rapido que prores_ks en el mismo benchmark
+# (ver WINDOWS_PREFERRED_ENCODER) - la misma logica de "mas de una implementacion, sin
+# ganador objetivo unico" aplicaria a libsvtav1 vs libaom-av1 en AV1 (hoy
+# hardware_detector.py elige libsvtav1 automaticamente como "software" preferido, sin
+# ofrecer el combo).
 ENCODER_VARIANTS = {
     "prores": [
         ("prores_ks", "Preciso (prores_ks)"),
         ("prores_aw", "Rápido (prores_aw)"),
     ],
 }
+
+# Preferencia de encoder por defecto en Windows para codecs con mas de una
+# implementacion valida (ver ENCODER_VARIANTS de arriba): no es un dato verificado por
+# probe-encode como el resto de hardware_detector.py, es una preferencia medida a mano
+# (benchmark real en Windows con este ffmpeg: prores_aw ~8x mas rapido que prores_ks a
+# igual perfil/resolucion, ver conversacion) - no se probo en Linux/macOS, asi que ahi se
+# deja el orden original (ks primero) tal cual. Sigue siendo 100% reversible: quien
+# consuma esto (Avanzado, Edicion) sigue dejando elegir el otro encoder donde corresponda.
+WINDOWS_PREFERRED_ENCODER = {"prores": "prores_aw"}
+
+
+def ordered_encoder_variants(codec_id: str, variants: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """`variants` (de ENCODER_VARIANTS) reordenada para que el preferido en ESTE sistema
+    quede primero (ver WINDOWS_PREFERRED_ENCODER) - util para que un combo poblado con
+    esta lista quede con el mejor por defecto ya seleccionado (índice 0) sin tener que
+    buscarlo aparte."""
+    import platform
+    preferred = WINDOWS_PREFERRED_ENCODER.get(codec_id) if platform.system() == "Windows" else None
+    if not preferred:
+        return variants
+    return sorted(variants, key=lambda item: item[0] != preferred)
+
+
+def preferred_encoder(codec_id: str, fallback_encoder: str) -> str:
+    """El encoder que corresponde usar por defecto para este codec en ESTE sistema, ya
+    aplicada la preferencia de plataforma - a diferencia de recode_guard.resolve_encoder
+    (que devuelve el que el matrix usó para VERIFICAR, no necesariamente el mejor para
+    el usuario final cuando hay mas de una implementacion valida, ver ENCODER_VARIANTS).
+    `fallback_encoder` se usa tal cual si este codec no tiene variantes registradas."""
+    variants = ENCODER_VARIANTS.get(codec_id)
+    if not variants:
+        return fallback_encoder
+    return ordered_encoder_variants(codec_id, variants)[0][0]
 
 
 # Audio recomendado por codec de video, para autocompletar y agilizar el flujo. No es
@@ -253,6 +311,7 @@ RECOMMENDED_AUDIO_CODEC = {
     "theora": "vorbis",
     "prores": "pcm_s24le",
     "dnxhd": "pcm_s24le",
+    "cfhd": "pcm_s24le",
     "mpeg2video": "ac3",
 }
 DEFAULT_RECOMMENDED_AUDIO_CODEC = "aac"

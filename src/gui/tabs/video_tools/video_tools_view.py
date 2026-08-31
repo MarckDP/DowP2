@@ -29,6 +29,7 @@ from core.utils.config_manager import get_config, save_config
 from core.tabs.editing_media.ffprobe_metadata_manager import FFprobeMetadataManager
 from core.utils.queue_manager import get_queue_manager, JobStatus
 from core.utils.file_conflict_manager import resolve_conflict, commit_backup, rollback_backup, find_available_rename
+from core.utils.recode_guard import container_supports_multi_audio
 
 AUDIO_ONLY_EXTENSIONS = {".mp3", ".wav", ".aac", ".flac", ".ogg", ".m4a", ".opus", ".wma"}
 CONTAINER_TO_EXTENSION = {
@@ -98,6 +99,13 @@ class VideoToolsTab(QWidget):
         # file_conflict_manager.py: se confirma (se borra el .dbak) si el job termina bien,
         # se revierte (se restaura el original) si falla o se cancela.
         self._recode_backups: dict[str, str | None] = {}
+        # job_id -> nota de advertencia (o ausente si no hubo ninguna) para trabajos que
+        # terminan bien pero con una salvedad - ej. se forzó una sola pista de audio
+        # porque el contenedor/códec de salida no admite multipista (ver
+        # container_supports_multi_audio) y el usuario no eligió una pista a mano. Vive
+        # acá (no en el Job de queue_manager.py) porque es pura anotación de UI para esta
+        # pestaña - no cambia el comando de ffmpeg ni le interesa a Descargas/Playlists.
+        self._recode_job_notes: dict[str, str] = {}
 
         self.init_ui()
         self._load_saved_output_dir()
@@ -500,6 +508,8 @@ class VideoToolsTab(QWidget):
         self.options_widget.tab_advanced.set_source_media(meta, filepath)
         self.options_widget.tab_compress.set_source_media(meta, filepath)
         self.options_widget.tab_convert.set_source_media(meta, filepath)
+        self.options_widget.tab_editing.set_source_media(meta, filepath)
+        self.options_widget.tab_presets.set_source_media(meta, filepath)
         # preview_widget.load_media ya ocultó el rectángulo (el encuadre elegido no tiene
         # sentido para otro archivo); esto lo vuelve a mostrar de una para el archivo nuevo
         # si el recorte interactivo sigue activo (personalizado + Recortar es config. del
@@ -537,6 +547,8 @@ class VideoToolsTab(QWidget):
             self.options_widget.tab_advanced.set_source_media(meta, path)
             self.options_widget.tab_compress.set_source_media(meta, path)
             self.options_widget.tab_convert.set_source_media(meta, path)
+            self.options_widget.tab_editing.set_source_media(meta, path)
+            self.options_widget.tab_presets.set_source_media(meta, path)
             # La metadata rápida inicial puede no traer resolución todavía; si el recorte
             # ya está activo, se re-arma ahora con la resolución real recién confirmada.
             self._on_crop_edit_toggled(self.options_widget.tab_advanced.is_crop_active())
@@ -599,6 +611,23 @@ class VideoToolsTab(QWidget):
         size_pct = self.preview_widget.get_image_watermark_size_pct()
         if size_pct is not None:
             self.options_widget.tab_advanced.set_image_watermark_size(size_pct)
+
+    def _describe_first_audio_track(self, streams: list[dict]) -> str:
+        """Mismo criterio que MediaTrimPlayerWidget._describe_audio_track (índice + idioma
+        + códec) para que la nota de fallback nombre la pista igual que la UI de
+        selección, en vez de un "Pista 1" genérico sin contexto para decidir si hace falta
+        rehacer el archivo a mano en Manual eligiendo otra."""
+        label = self.tr("Pista 1")
+        if not streams:
+            return label
+        first = streams[0]
+        lang = (first.get("language") or "").strip()
+        codec = (first.get("codec") or "").strip()
+        if lang:
+            label += f" — {lang}"
+        if codec:
+            label += f" ({codec})"
+        return label
 
     def _parse_duration_to_seconds(self, dur_str) -> float:
         if not dur_str or dur_str == "-":
@@ -797,9 +826,19 @@ class VideoToolsTab(QWidget):
         raw_container = settings.get("container", "mp4")
         is_compress_tab = self.options_widget.tabs.currentWidget() is self.options_widget.tab_compress
         is_convert_tab = self.options_widget.tabs.currentWidget() is self.options_widget.tab_convert
+        is_editing_tab = self.options_widget.tabs.currentWidget() is self.options_widget.tab_editing
+        is_presets_tab = self.options_widget.tabs.currentWidget() is self.options_widget.tab_presets
         # Comprimir y Convertir recalculan por archivo (ver más abajo); ninguna de las dos
-        # tiene UI de recorte espacial (crop), a diferencia de Avanzado/Preajustes.
-        needs_per_file_recompute = is_compress_tab or is_convert_tab
+        # tiene UI de recorte espacial (crop), a diferencia de Avanzado/Preajustes. Edición
+        # también: aunque códec/calidad/resolución son uniformes para todo el lote (los
+        # elige el usuario en el panel), la decisión de audio (copiar tal cual vs.
+        # recodificar a PCM) depende del códec de audio de CADA archivo de origen, no del
+        # que está en preview - ver EditingPanel.get_settings/_build_audio_settings.
+        # Preajustes también: un preajuste con container="same" (ver
+        # core.utils.default_presets, ej. Normalizar Audio) necesita resolverse contra
+        # la extensión de CADA archivo, no solo el de preview - ver
+        # PresetsPanel.get_settings.
+        needs_per_file_recompute = is_compress_tab or is_convert_tab or is_editing_tab or is_presets_tab
         # Nombres de salida ya asignados a otro archivo de ESTE MISMO lote (ej. video.mp4
         # + video.mov -> mismo out_file): resolve_conflict() solo ve el disco, y el
         # archivo del otro job todavía no existe ahí (ffmpeg lo va a escribir más tarde) -
@@ -878,9 +917,27 @@ class VideoToolsTab(QWidget):
             # preview, se leía la selección EN VIVO del preview y se le aplicaba a ese otro
             # archivo igual, aunque fuera de otro idioma o ni existiera esa pista ahí.
             streams = meta.get("audio_streams", [])
+            job_note = None
             if len(streams) > 1:
                 cached_track_sel = self._audio_track_cache.get(filepath)
-                file_settings["audio_track_selection"] = cached_track_sel if cached_track_sel is not None else "all"
+                selection = cached_track_sel if cached_track_sel is not None else "all"
+                # "all" sin que el usuario haya elegido una pista puntual (cached_track_sel
+                # es un int) puede pedirle a ffmpeg algo que el contenedor/códec de salida
+                # no soporta (ver container_supports_multi_audio - ej. mp3/wav/flac son de
+                # 1 sola pista SIEMPRE, sin importar el códec). En vez de dejar que el
+                # trabajo falle a mitad de cola, se cae a la Pista 1 y se avisa - mismo
+                # criterio que Convertir ya aplica para video en contenedores de audio
+                # (ver advisor.container_accepts_video_for_convert): recortar lo que no
+                # entra y avisar, no bloquear el lote entero.
+                if selection == "all":
+                    video_present = file_settings.get("video_mode") not in (None, "none")
+                    video_codec_for_check = file_settings.get("video_codec") if video_present else None
+                    audio_codec_for_check = file_settings.get("audio_codec")
+                    if not container_supports_multi_audio(file_container, audio_codec_for_check, video_codec_for_check):
+                        selection = 0
+                        first_track_label = self._describe_first_audio_track(streams)
+                        job_note = self.tr("se usó solo {0} — el formato de salida no admite múltiples pistas de audio").format(first_track_label)
+                file_settings["audio_track_selection"] = selection
 
             # El recorte interactivo es exclusivo de Avanzado (Comprimir no tiene UI de
             # recorte, ver compress_panel.py) - si el usuario dejó un recorte dibujado
@@ -902,6 +959,8 @@ class VideoToolsTab(QWidget):
             job_id = qm.add_job(config, "RECODE")
             self._recode_jobs.add(job_id)
             self._recode_backups[job_id] = backup_path
+            if job_note:
+                self._recode_job_notes[job_id] = job_note
 
             # Actualizamos visualmente la cola
             self.queue_widget.update_file_status(filepath, self.tr("En cola"))
@@ -941,14 +1000,18 @@ class VideoToolsTab(QWidget):
             self.queue_widget.update_file_status(file_path, self.tr("Procesando..."))
         elif status == JobStatus.COMPLETED:
             commit_backup(self._recode_backups.pop(job_id, None))
-            self.queue_widget.update_file_status(file_path, self.tr("Completado"))
+            note = self._recode_job_notes.pop(job_id, None)
+            status_text = self.tr("Completado ({0})").format(note) if note else self.tr("Completado")
+            self.queue_widget.update_file_status(file_path, status_text)
             self._check_all_finished()
         elif status == JobStatus.FAILED:
             rollback_backup(self._recode_backups.pop(job_id, None))
+            self._recode_job_notes.pop(job_id, None)
             self.queue_widget.update_file_status(file_path, self.tr("Error"))
             self._check_all_finished()
         elif status == JobStatus.CANCELLED:
             rollback_backup(self._recode_backups.pop(job_id, None))
+            self._recode_job_notes.pop(job_id, None)
             self.queue_widget.update_file_status(file_path, self.tr("Cancelado"))
             self._check_all_finished()
             

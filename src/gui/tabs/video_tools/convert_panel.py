@@ -22,7 +22,7 @@ from gui.widgets.engine_badge import EngineBadge
 from gui.widgets.combo_box import CheckmarkComboDelegate, AutoPopupComboBox
 from core.utils.recode_guard import (
     resolve_encoder, get_video_codecs, get_audio_codecs, get_compatible_containers,
-    has_hardware_encoder, software_encoder, is_stream_copy_compatible, container_supports_video,
+    has_hardware_encoder, software_encoder, is_stream_copy_compatible,
     CONTAINER_LABELS,
 )
 from core.tabs.video_tools.codec_profiles import build_custom_quality_args, build_custom_bitrate_args, build_custom_audio_bitrate_args
@@ -144,12 +144,15 @@ class ConvertPanel(QWidget):
         """Lista COMPLETA de contenedores del matrix (a diferencia de Comprimir, acá no
         se filtra por códec de origen: el usuario elige destino libremente, la app decide
         después si hace falta recodificar - ver convert_advisor.plan_conversion), agrupada
-        en Video / Solo Audio según lo que el matrix confirma que cada contenedor acepta
-        (recode_guard.container_supports_video) - no una lista adivinada a mano, para que
-        sea obvio de entrada qué contenedores implican descartar el video."""
+        en Video / Solo Audio según advisor.container_accepts_video_for_convert - el
+        matrix real (recode_guard.container_supports_video) más la política propia de
+        Convertir que fuerza algunos contenedores "de audio puro por convención" (m4a,
+        ogg) al grupo Solo Audio aunque el matrix confirme que técnicamente aceptan algún
+        códec de video (ver advisor._FORCE_AUDIO_ONLY_CONTAINERS) - para que sea obvio de
+        entrada qué contenedores implican descartar el video."""
         all_ids = get_compatible_containers([])
-        video_ids = [c for c in all_ids if container_supports_video(c)]
-        audio_ids = [c for c in all_ids if not container_supports_video(c)]
+        video_ids = [c for c in all_ids if advisor.container_accepts_video_for_convert(c)]
+        audio_ids = [c for c in all_ids if not advisor.container_accepts_video_for_convert(c)]
         model = combo.model()
 
         def add_group(title: str, container_ids: list[str]):
@@ -469,11 +472,13 @@ class ConvertPanel(QWidget):
     def _on_manual_container_changed(self, *_args):
         if self._building:
             return
-        # Si el matrix confirma que este contenedor no acepta NINGÚN códec de video
-        # (recode_guard.container_supports_video), no tiene sentido mostrar la tarjeta de
-        # Video ni dejar que el usuario elija un códec que va a fallar seguro al muxear.
+        # Si el matrix confirma que este contenedor no acepta NINGÚN códec de video, o si
+        # Convertir lo trata como solo-audio por política aunque el matrix diga que sí
+        # (ver advisor._FORCE_AUDIO_ONLY_CONTAINERS - ej. m4a/ogg), no tiene sentido
+        # mostrar la tarjeta de Video ni dejar que el usuario elija un códec que Convertir
+        # va a descartar de todos modos.
         container_id = self.combo_manual_container.currentData() or "mp4"
-        self.frame_video.setVisible(container_supports_video(container_id))
+        self.frame_video.setVisible(advisor.container_accepts_video_for_convert(container_id))
         self._on_manual_changed()
 
     def _on_manual_changed(self, *_args):

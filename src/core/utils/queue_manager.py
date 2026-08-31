@@ -627,7 +627,7 @@ class QueueWorker(QThread):
 
         # Opciones de Video
         video_mode = settings.get("video_mode", "recode")
-        if stream_mode == "audio_only":
+        if stream_mode == "audio_only" or video_mode == "none":
             cmd.append("-vn")
         elif use_watermark_image and video_mode != "copy":
             # No se puede usar -vf junto con -filter_complex apuntando al mismo stream:
@@ -655,8 +655,9 @@ class QueueWorker(QThread):
                     cmd.extend(["-c:v", "libx264", "-crf", "23"])
 
         # Opciones de Audio
+        audio_mode = settings.get("audio_mode", "recode")
         is_gif = (settings.get("video_codec") == "gif" or settings.get("container") == "gif")
-        if stream_mode == "video_only" or is_gif:
+        if stream_mode == "video_only" or audio_mode == "none" or is_gif:
             cmd.append("-an")
         else:
             if audio_track_selection == "all":

@@ -81,14 +81,35 @@ def build(run_path, out_path):
             if kind_short == "video" and entry.get("dimension_alignment"):
                 codecs[codec_id]["dimension_alignment"] = entry["dimension_alignment"]
 
+    container_streams = {}
+    for cont_id, entry in run.get("container_streams", {}).items():
+        container_streams[cont_id] = {
+            "audio_only_multi": {
+                codec_name: {"supported": r["result"] == "pass", "ffmpeg_error": r.get("error")}
+                for codec_name, r in entry.get("audio_only_multi", {}).items()
+            },
+            "video_audio_multi": {
+                pair_name: {"supported": r["result"] == "pass", "ffmpeg_error": r.get("error")}
+                for pair_name, r in entry.get("video_audio_multi", {}).items()
+            },
+        }
+
     output = {
-        "schema_version": "1.0",
+        "schema_version": "2.0",
         "source": "empirico: mux real contra el ffmpeg empaquetado, ver tools/codec_matrix/",
         "ffmpeg_version": run["meta"]["ffmpeg_version"],
         "ffmpeg_version_full": run["meta"]["ffmpeg_version_full"],
         "generated_at": run["meta"]["generated_at"],
         "containers": list(next(iter(codecs.values()))["containers"].keys()) if codecs else [],
         "codecs": codecs,
+        # Multipista por contenedor (ver tools/codec_matrix/run_matrix.py::probe_container_streams):
+        # eje INDEPENDIENTE de "codecs" de arriba - ahi se responde "¿este codec entra en este
+        # contenedor?" (1 sola pista); aca "¿este contenedor acepta 2 streams simultaneos de
+        # ESTE codec?" (audio_only_multi), o "¿acepta video + 2 audios de ESTE par de codecs?"
+        # (video_audio_multi, clave "video_codec+audio_codec"). Un contenedor/codec ausente en
+        # estos dicts significa "no aplica" (ej. audio_only_multi en GIF: no acepta audio en
+        # absoluto), no "no soportado" - para eso hay que fijarse si la clave existe.
+        "container_streams": container_streams,
     }
 
     with open(out_path, "w", encoding="utf-8") as f:

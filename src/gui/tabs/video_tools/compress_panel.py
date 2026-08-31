@@ -25,6 +25,7 @@ from gui.widgets.engine_badge import EngineBadge
 from core.utils.recode_guard import (
     resolve_encoder, get_video_codecs, get_audio_codecs, get_compatible_containers,
     normalize_container, software_encoder, has_hardware_encoder, CONTAINER_LABELS,
+    container_supports_video,
 )
 from core.tabs.video_tools.codec_profiles import build_custom_quality_args, build_custom_bitrate_args, build_custom_audio_bitrate_args
 from core.tabs.video_tools.size_estimator import parse_duration_to_seconds, estimate_size_mb
@@ -48,15 +49,12 @@ class CompressPanel(QWidget):
     Pestaña "Comprimir": selector Rápido/Manual.
 
     Rápido: 3 niveles (Ligero/Equilibrado/Agresivo) expresados como fracción del bitrate
-    de origen (ver core/tabs/video_tools/compress_advisor.py) — a diferencia de un perfil
-    CRF, esto permite mostrar un tamaño estimado de antemano. Un toggle adicional elige
-    entre H.264 (compatibilidad universal) y HEVC (mejor compresión, si hay un encoder
-    real disponible en este equipo).
+    de origen (ver core/tabs/video_tools/compress_advisor.py) — calcula automáticamente
+    parámetros tanto para video como para archivos de solo audio (WAV, MP3, FLAC, etc.).
 
-    Manual: codec + modo de calidad (CRF / bitrate manual / tamaño objetivo en MB) +
-    codec de audio + contenedor acotado (MP4/MKV/WebM). Expone la misma interfaz pública
-    que AdvancedRecodePanel (get_status/get_settings/set_source_media) para que
-    EncodingOptionsWidget la trate igual.
+    Manual: selector explícito de modo (Video + Audio / Solo Video / Solo Audio) + codec +
+    modo de calidad (CRF / bitrate manual / tamaño objetivo en MB) + codec de audio +
+    contenedor compatible.
     """
 
     validity_changed = Signal(bool)
@@ -164,15 +162,15 @@ class CompressPanel(QWidget):
         compat_row.addWidget(self.badge_quick_engine)
         v.addLayout(compat_row)
 
-        lbl_compat_hint = QLabel(self.tr(
+        self.lbl_compat_hint = QLabel(self.tr(
             "Compatibilidad universal usa H.264 (se reproduce en cualquier dispositivo). "
             "Mejor compresión usa HEVC si este equipo tiene un encoder disponible: mismo nivel de "
             "calidad en menos peso, con algo menos de compatibilidad. Ambas usan aceleración por "
             "GPU cuando este equipo la tiene — el badge de la derecha lo confirma y permite forzar CPU."
         ), page)
-        lbl_compat_hint.setObjectName("mutedLabel")
-        lbl_compat_hint.setWordWrap(True)
-        v.addWidget(lbl_compat_hint)
+        self.lbl_compat_hint.setObjectName("mutedLabel")
+        self.lbl_compat_hint.setWordWrap(True)
+        v.addWidget(self.lbl_compat_hint)
 
         suggestion_frame, suggestion_layout = self._card_frame(parent=page)
         self.lbl_suggestion = QLabel("", suggestion_frame)
@@ -256,8 +254,27 @@ class CompressPanel(QWidget):
     def _refresh_quick_estimates(self):
         if not hasattr(self, "_level_buttons"):
             return
-        self._refresh_quick_engine_badge()
+        
         meta = self._source_meta or {}
+        is_audio = advisor.is_audio_only(meta, self._source_filepath) if self._source_meta else False
+
+        self.badge_quick_engine.setVisible(True)
+        self._refresh_quick_engine_badge()
+
+        if hasattr(self, "lbl_compat_hint"):
+            if is_audio:
+                self.lbl_compat_hint.setText(self.tr(
+                    "Compatibilidad universal usa AAC/MP3 y Mejor compresión usa Opus. "
+                    "Para archivos de video se usará aceleración por GPU (configurable arriba a la derecha); los audios se procesan por CPU."
+                ))
+            else:
+                self.lbl_compat_hint.setText(self.tr(
+                    "Compatibilidad universal usa H.264 (se reproduce en cualquier dispositivo). "
+                    "Mejor compresión usa HEVC si este equipo tiene un encoder disponible: mismo nivel de "
+                    "calidad en menos peso, con algo menos de compatibilidad. Ambas usan aceleración por "
+                    "GPU cuando este equipo la tiene — el badge de la derecha lo confirma y permite forzar CPU."
+                ))
+
         source_mb = advisor.source_size_mb(meta) if self._source_meta else None
 
         for level, btn in self._level_buttons.items():
@@ -267,9 +284,9 @@ class CompressPanel(QWidget):
                 btn.setText(label)
             elif source_mb:
                 pct = max(0.0, (1 - est_mb / source_mb) * 100) if source_mb > 0 else 0.0
-                btn.setText(f"{label}\n~{est_mb:.0f} MB (-{pct:.0f}%)")
+                btn.setText(f"{label}\n~{est_mb:.1f} MB (-{pct:.0f}%)")
             else:
-                btn.setText(f"{label}\n~{est_mb:.0f} MB")
+                btn.setText(f"{label}\n~{est_mb:.1f} MB")
 
         if not self._source_meta:
             self.lbl_suggestion.setText(self.tr("Selecciona un archivo en la cola para ver una sugerencia."))
@@ -312,8 +329,17 @@ class CompressPanel(QWidget):
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(10)
 
+        # Selector de Modo de Pista (Video+Audio / Solo Video / Solo Audio)
+        self.manual_stream_mode = ModeSelector(
+            page,
+            labels=[self.tr("Video + Audio"), self.tr("Solo Video"), self.tr("Solo Audio")]
+        )
+        self.manual_stream_mode.mode_changed.connect(self._on_manual_stream_mode_changed)
+        v.addWidget(self.manual_stream_mode)
+
         # Video
         frame_video, vv = self._card_frame(self.tr("Video"), page)
+        self.frame_manual_video = frame_video
         codec_header_row = QHBoxLayout()
         lbl_codec = QLabel(self.tr("Códec:"), frame_video)
         lbl_codec.setObjectName("menuLabel")
@@ -382,6 +408,7 @@ class CompressPanel(QWidget):
 
         # Audio
         frame_audio, av = self._card_frame(self.tr("Audio"), page)
+        self.frame_manual_audio = frame_audio
         lbl_acodec = QLabel(self.tr("Códec:"), frame_audio)
         lbl_acodec.setObjectName("menuLabel")
         av.addWidget(lbl_acodec)
@@ -395,6 +422,10 @@ class CompressPanel(QWidget):
             self.combo_manual_audio_codec.setCurrentIndex(default_idx)
         self.combo_manual_audio_codec.currentIndexChanged.connect(self._on_manual_changed)
         av.addWidget(self.combo_manual_audio_codec)
+
+        lbl_audio_bitrate = QLabel(self.tr("Bitrate de audio:"), frame_audio)
+        lbl_audio_bitrate.setObjectName("menuLabel")
+        av.addWidget(lbl_audio_bitrate)
 
         self.spin_manual_audio_bitrate = QSpinBox(frame_audio)
         self.spin_manual_audio_bitrate.setRange(32, 320)
@@ -410,10 +441,6 @@ class CompressPanel(QWidget):
         self.combo_manual_container = AutoPopupComboBox(frame_container)
         self._setup_fixed_combo(self.combo_manual_container)
         self.combo_manual_container.currentIndexChanged.connect(self._on_manual_changed)
-        # `activated` (a diferencia de currentIndexChanged) solo dispara con interacción
-        # real del usuario, no con los setCurrentIndex() programáticos de
-        # _reload_manual_containers - así distinguimos "el usuario ya eligió a mano" de
-        # "hay que recalcular el default sensato" (ver _reload_manual_containers).
         self.combo_manual_container.activated.connect(self._on_container_touched)
         cv.addWidget(self.combo_manual_container)
         lbl_container_hint = QLabel(self.tr("Solo se muestran los contenedores compatibles con los códecs elegidos."), frame_container)
@@ -432,6 +459,22 @@ class CompressPanel(QWidget):
         v.addStretch(1)
         return page
 
+    def _current_manual_stream_mode(self) -> str:
+        if not hasattr(self, "manual_stream_mode"):
+            return "video+audio"
+        mode = self.manual_stream_mode.current_mode()
+        if mode == self.tr("Solo Audio"):
+            return "audio_only"
+        if mode == self.tr("Solo Video"):
+            return "video_only"
+        return "video+audio"
+
+    def _on_manual_stream_mode_changed(self, mode_text: str):
+        stream_mode = self._current_manual_stream_mode()
+        self.frame_manual_video.setVisible(stream_mode in ("video+audio", "video_only"))
+        self.frame_manual_audio.setVisible(stream_mode in ("video+audio", "audio_only"))
+        self._on_manual_changed()
+
     def _reload_manual_video_codecs(self):
         self._building = True
         try:
@@ -439,9 +482,6 @@ class CompressPanel(QWidget):
             for codec in get_video_codecs(only_verified=False):
                 if codec["codec_id"] in _VIDEO_CODEC_IDS:
                     self.combo_manual_video_codec.addItem(codec["display_name"], codec["codec_id"])
-            # Default explicito a H.264 (compatibilidad maxima) en vez de lo que haya
-            # quedado primero por orden alfabetico de display_name (podria ser AV1, que en
-            # muchos equipos ni siquiera tiene encoder disponible todavia).
             idx = self.combo_manual_video_codec.findData("h264")
             if idx >= 0:
                 self.combo_manual_video_codec.setCurrentIndex(idx)
@@ -506,22 +546,28 @@ class CompressPanel(QWidget):
     def _reload_manual_containers(self):
         self._building = True
         try:
-            # Solo se preserva la selección anterior si el usuario la eligió a mano
-            # (self._container_touched, ver conexión a `activated`) - si no, se recalcula
-            # el default sensato cada vez (ver más abajo), en vez de quedar pegado a
-            # cualquier cosa que haya caído primera por orden alfabético la primera vez
-            # que se armó la lista (ej. "3G2" en vez de "MP4").
             current = self.combo_manual_container.currentData() if self._container_touched else None
             self.combo_manual_container.clear()
-            codec_ids = [self._current_manual_video_codec_id(), self._current_manual_audio_codec_id()]
-            compatible = get_compatible_containers(codec_ids)
+
+            stream_mode = self._current_manual_stream_mode()
+            if stream_mode == "audio_only":
+                codec_ids = [self._current_manual_audio_codec_id()]
+                all_comp = get_compatible_containers(codec_ids)
+                audio_order = ["m4a", "mp3", "opus", "ogg", "flac", "wav", "mkv", "mp4"]
+                compatible = [c for c in audio_order if c in all_comp] or all_comp
+            elif stream_mode == "video_only":
+                codec_ids = [self._current_manual_video_codec_id()]
+                compatible = get_compatible_containers(codec_ids)
+            else:
+                codec_ids = [self._current_manual_video_codec_id(), self._current_manual_audio_codec_id()]
+                compatible = get_compatible_containers(codec_ids)
 
             source_id = self._source_container_id()
             if source_id and source_id in compatible:
                 self.combo_manual_container.addItem(self.tr("Mismo que el original"), "same")
 
             if not compatible and self.combo_manual_container.count() == 0:
-                compatible = ["mp4"]
+                compatible = ["m4a"] if stream_mode == "audio_only" else ["mp4"]
             for container_id in compatible:
                 label = CONTAINER_LABELS.get(container_id, container_id.upper())
                 self.combo_manual_container.addItem(label, container_id)
@@ -531,11 +577,14 @@ class CompressPanel(QWidget):
             else:
                 idx = -1
             if idx < 0:
-                # Default sensato: "Mismo que el original" si hay archivo, si no MP4
-                # (el contenedor más universalmente compatible), si no el primero disponible.
                 idx = self.combo_manual_container.findData("same")
                 if idx < 0:
-                    idx = self.combo_manual_container.findData("mp4")
+                    if stream_mode == "audio_only":
+                        acodec = self._current_manual_audio_codec_id()
+                        pref = "mp3" if acodec == "mp3" else ("opus" if acodec == "opus" else "m4a")
+                        idx = self.combo_manual_container.findData(pref)
+                    else:
+                        idx = self.combo_manual_container.findData("mp4")
                 if idx < 0:
                     idx = 0
             self.combo_manual_container.setCurrentIndex(max(idx, 0))
@@ -550,7 +599,7 @@ class CompressPanel(QWidget):
             if not duration_sec or duration_sec <= 0:
                 return None
             target_mb = self.spin_manual_target_mb.value()
-            audio_kbps = float(self.spin_manual_audio_bitrate.value())
+            audio_kbps = float(self.spin_manual_audio_bitrate.value()) if self._current_manual_stream_mode() != "video_only" else 0.0
             total_kbps = (target_mb * 8 * 1024) / duration_sec
             video_kbps = total_kbps - audio_kbps
             return max(100.0, video_kbps)
@@ -563,8 +612,6 @@ class CompressPanel(QWidget):
             return build_custom_quality_args(encoder, self.spin_manual_cq.value())
         kbps = self._manual_video_kbps_for_duration(duration_sec)
         if kbps is None:
-            # Tamaño objetivo sin duración conocida todavía: cae a un bitrate conservador
-            # en vez de bloquear — se corrige solo apenas haya metadata disponible.
             kbps = 4000.0
         return build_custom_bitrate_args(encoder, "vbr", round(kbps))
 
@@ -585,7 +632,20 @@ class CompressPanel(QWidget):
             self.lbl_manual_size_estimate.setText(self.tr("Duración del archivo todavía no disponible."))
             return
 
+        stream_mode = self._current_manual_stream_mode()
         mode = self._current_quality_mode()
+
+        if stream_mode == "audio_only":
+            audio_kbps = float(self.spin_manual_audio_bitrate.value())
+            size_mb = estimate_size_mb(0, audio_kbps, duration_sec)
+            if size_mb is None:
+                self.lbl_manual_size_estimate.setText("")
+                return
+            self.lbl_manual_size_estimate.setText(
+                self.tr("~{0:.1f} MB (audio: {1:.0f} kbps)").format(size_mb, audio_kbps)
+            )
+            return
+
         if mode == _QUALITY_MODE_CQ:
             self.lbl_manual_size_estimate.setText(self.tr(
                 "No se puede estimar con calidad constante (CRF): el tamaño final depende del "
@@ -594,6 +654,16 @@ class CompressPanel(QWidget):
             return
 
         video_kbps = self._manual_video_kbps_for_duration(duration_sec)
+        if stream_mode == "video_only":
+            size_mb = estimate_size_mb(video_kbps, 0, duration_sec)
+            if size_mb is None:
+                self.lbl_manual_size_estimate.setText("")
+                return
+            self.lbl_manual_size_estimate.setText(
+                self.tr("~{0:.1f} MB (video: {1:.0f} kbps)").format(size_mb, video_kbps)
+            )
+            return
+
         audio_kbps = float(self.spin_manual_audio_bitrate.value())
         size_mb = estimate_size_mb(video_kbps, audio_kbps, duration_sec)
         if size_mb is None:
@@ -637,12 +707,37 @@ class CompressPanel(QWidget):
 
         if is_quick:
             meta = meta_override if meta_override is not None else (self._source_meta or {})
+            filepath = filepath_override if filepath_override is not None else self._source_filepath
             level = self._current_quick_level()
+            prefer_compat = self.compat_toggle.current_mode() == self.tr("Compatibilidad universal")
+
+            if advisor.is_audio_only(meta, filepath):
+                audio_codec = advisor.pick_audio_family(prefer_compat)
+                encoder = resolve_encoder(audio_codec) or audio_codec
+                if filepath:
+                    ext = os.path.splitext(filepath)[1].lower()
+                    if ext == ".mp3" and prefer_compat:
+                        audio_codec = "mp3"
+                        encoder = resolve_encoder("mp3") or "libmp3lame"
+                audio_args = advisor.build_level_audio_args(meta, level, encoder)
+                container = "mp3" if audio_codec == "mp3" else ("opus" if audio_codec == "opus" else "m4a")
+                return {
+                    "stream_mode": "audio_only",
+                    "video_mode": "none",
+                    "video_codec": None,
+                    "video_args": [],
+                    "audio_mode": "recode",
+                    "audio_codec": audio_codec,
+                    "audio_args": audio_args,
+                    "container": container,
+                }
+
             family = self._current_quick_family()
             encoder = self._current_quick_encoder()
             video_args = advisor.build_level_video_args(meta, level, encoder)
             audio_kbps = advisor.AUDIO_BITRATE_BY_LEVEL[level]
             return {
+                "stream_mode": "video+audio",
                 "video_mode": "recode",
                 "video_codec": family,
                 "video_args": video_args,
@@ -653,28 +748,73 @@ class CompressPanel(QWidget):
             }
 
         effective_meta = meta_override if meta_override is not None else self._source_meta
+        effective_filepath = filepath_override if filepath_override is not None else self._source_filepath
         duration_sec = parse_duration_to_seconds(effective_meta.get("duración", "0")) if effective_meta else None
+        stream_mode = self._current_manual_stream_mode()
 
-        video_codec_id = self._current_manual_video_codec_id()
-        video_args = self._build_manual_video_args(duration_sec)
         audio_codec_id = self._current_manual_audio_codec_id()
         audio_encoder = self._current_manual_audio_encoder()
         audio_kbps = self.spin_manual_audio_bitrate.value()
+        audio_args = build_custom_audio_bitrate_args(audio_encoder, audio_kbps)
+
         container = self.combo_manual_container.currentData() or "mp4"
         if container == "same":
-            if filepath_override:
-                ext = os.path.splitext(filepath_override)[1]
+            if effective_filepath:
+                ext = os.path.splitext(effective_filepath)[1]
                 resolved = normalize_container(ext) if ext else None
             else:
                 resolved = self._source_container_id()
-            container = resolved or "mp4"
+            container = resolved or ("m4a" if stream_mode == "audio_only" else "mp4")
 
+        if stream_mode == "audio_only":
+            return {
+                "stream_mode": "audio_only",
+                "video_mode": "none",
+                "video_codec": None,
+                "video_args": [],
+                "audio_mode": "recode",
+                "audio_codec": audio_codec_id,
+                "audio_args": audio_args,
+                "container": container,
+            }
+
+        if stream_mode == "video_only":
+            video_codec_id = self._current_manual_video_codec_id()
+            video_args = self._build_manual_video_args(duration_sec)
+            return {
+                "stream_mode": "video_only",
+                "video_mode": "recode",
+                "video_codec": video_codec_id,
+                "video_args": video_args,
+                "audio_mode": "none",
+                "audio_codec": None,
+                "audio_args": [],
+                "container": container,
+            }
+
+        # stream_mode == "video+audio"
+        if effective_meta and advisor.is_audio_only(effective_meta, effective_filepath):
+            # Fallback seguro para audios puros si se dejaron en lote con modo Video+Audio
+            return {
+                "stream_mode": "audio_only",
+                "video_mode": "none",
+                "video_codec": None,
+                "video_args": [],
+                "audio_mode": "recode",
+                "audio_codec": audio_codec_id,
+                "audio_args": audio_args,
+                "container": "m4a" if container in ("mp4", "mkv") else container,
+            }
+
+        video_codec_id = self._current_manual_video_codec_id()
+        video_args = self._build_manual_video_args(duration_sec)
         return {
+            "stream_mode": "video+audio",
             "video_mode": "recode",
             "video_codec": video_codec_id,
             "video_args": video_args,
             "audio_mode": "recode",
             "audio_codec": audio_codec_id,
-            "audio_args": build_custom_audio_bitrate_args(audio_encoder, audio_kbps),
+            "audio_args": audio_args,
             "container": container,
         }

@@ -19,6 +19,11 @@ Combina tres fuentes independientes, cada una con su propio rol, sin fusionarlas
 solo campo:
   - ffmpeg_codec_matrix.json: verificado empiricamente contra el ffmpeg empaquetado (ver
     tools/codec_matrix/). Fuente primaria: "¿este contenedor acepta este codec aca?".
+    Incluye ademas "container_streams" (mismo archivo, eje independiente): "¿este
+    contenedor acepta 2+ streams de audio simultaneos - solo-audio, o video+audio?" -
+    ver container_supports_multi_audio(). No asumir que "contenedor de audio puro"
+    implica "1 sola pista": el matrix confirmo que m4a/ogg/opus SI aceptan multipista,
+    y que mp3/wav/flac (y ciertos codecs PCM en flv) NO.
   - codec_container_compatibility.json (Wikipedia): NO se usa para decidir bloqueo. Solo
     se consulta como señal secundaria de "riesgo de reproduccion" cuando ffmpeg ya acepto
     el mux, para casos donde el contenedor es permisivo (acepta cualquier FourCC) pero el
@@ -42,7 +47,12 @@ _WIKI_PATH = os.path.join(_DATA_DIR, "codec_container_compatibility.json")
 
 CONTAINER_ALIASES = {
     "mkv": "mkv", "mk3d": "mkv", "mka": "mkv", "mks": "mkv",
-    "mp4": "mp4", "m4v": "mp4", "m4a": "mp4",
+    "mp4": "mp4", "m4v": "mp4",
+    # NOTA: "m4a" NO alias a "mp4" a proposito (a diferencia de m4v). El matrix ya prueba
+    # "m4a" como id propio - ffmpeg elige el muxer "ipod" (mas restrictivo que "mp4") para
+    # esa extension, y aliasarlo a "mp4" descartaba esa entrada real y mas estricta (ej.
+    # HEVC entra en mp4 pero no en m4a: "[ipod] Could not find tag for codec hevc..." - ver
+    # conversacion). Sin entrada aca, normalize_container("m4a") devuelve "m4a" tal cual.
     "mov": "qtff", "qt": "qtff",
     "asf": "asf", "wmv": "asf", "wma": "asf",
     "avi": "avi",
@@ -275,6 +285,61 @@ def is_stream_copy_compatible(codec_id: str | None, container_id: str) -> bool:
         return False
     info = entry.get("containers", {}).get(normalize_container(container_id))
     return bool(info and info.get("supported"))
+
+
+def _load_container_streams() -> dict:
+    return _load_matrix().get("container_streams", {})
+
+
+def container_supports_multi_audio(
+    container_id: str,
+    audio_codec_id: str | None = None,
+    video_codec_id: str | None = None,
+) -> bool:
+    """True si el matrix confirma EMPIRICAMENTE que este contenedor acepta 2+ streams de
+    audio simultaneos (ej. microfono + audio de sistema de OBS) - eje INDEPENDIENTE de
+    "¿este codec entra en este contenedor?" (is_stream_copy_compatible/
+    get_compatible_codecs): un contenedor puede aceptar un codec con 1 sola pista y
+    rechazarlo con 2 (ej. mp3/wav/flac, que son de 1 sola pista SIEMPRE, sin importar el
+    codec) - o aceptar 2 pistas con un codec puntual y no con otro (ej. flv rechaza
+    multipista con ciertos PCM pero no con AAC/MP3). Nunca asumir por el nombre/convencion
+    del contenedor: el matrix confirmo que m4a/ogg/opus SI aceptan multipista pese a ser
+    "de audio puro", y que HEVC en particular es lo unico irregular de m4a (ver
+    container_supports_video / is_stream_copy_compatible para esa otra restriccion).
+
+    Args:
+        container_id: extension o alias de contenedor (ej. "mp3", ".m4a", "mkv").
+        audio_codec_id: si se pasa, la pregunta es especifica a ESE codec de audio (mas
+            estricto - recomendado cuando ya se sabe con que codec se va a exportar,
+            ej. antes de decidir si hace falta el fallback a "solo la pista 1"). Sin
+            esto, la pregunta es permisiva: True si ALGUN codec de audio ya confirmado
+            para este contenedor acepta multipista (util solo para listados de UI).
+        video_codec_id: si se pasa (junto con audio_codec_id), pregunta por el escenario
+            "1 video + 2 audio" en vez de "solo audio" - los dos escenarios se probaron
+            por separado porque no son equivalentes (ver
+            tools/codec_matrix/run_matrix.py::probe_container_streams).
+
+    Returns:
+        False tambien si el contenedor no tiene NINGUN dato para este eje (ej. video_codec_id
+        en un contenedor que nunca acepta video, como mp3/wav/flac) - "no aplica" y "no
+        soportado" devuelven lo mismo aca a proposito: en ambos casos no hay que ofrecer
+        multipista.
+    """
+    container_id = normalize_container(container_id)
+    streams = _load_container_streams().get(container_id, {})
+
+    if video_codec_id is not None:
+        entries = streams.get("video_audio_multi", {})
+        if audio_codec_id is None:
+            return any(e.get("supported") for k, e in entries.items() if k.startswith(f"{video_codec_id}+"))
+        entry = entries.get(f"{video_codec_id}+{audio_codec_id}")
+        return bool(entry and entry.get("supported"))
+
+    entries = streams.get("audio_only_multi", {})
+    if audio_codec_id is None:
+        return any(e.get("supported") for e in entries.values())
+    entry = entries.get(audio_codec_id)
+    return bool(entry and entry.get("supported"))
 
 
 def get_dimension_alignment(codec_id: str | None) -> dict:

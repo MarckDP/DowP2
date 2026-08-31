@@ -120,6 +120,156 @@ def _channels_probe_cmd(ffmpeg, spec, cont_id, muxer, out_path, ac):
     return base_cmd + ["-f", muxer, out_path]
 
 
+def _passing_codecs(results, kind, cont_id):
+    """Nombres (clave en VIDEO_CODECS/AUDIO_CODECS, no codec_id) de TODOS los codecs de
+    este tipo que el matrix YA confirmo (loop principal, arriba en el mismo run) que
+    entran en este contenedor con 1 sola pista - la base real sobre la que tiene sentido
+    probar multipista (probar 2 streams de un codec que ni siquiera entra con 1 solo
+    confundiria "el contenedor rechaza 2 pistas" con "este codec nunca entro aca"). A
+    proposito NO se recorta a uno "representativo": el usuario quiere el dato real por
+    cada codec, no una muestra adivinada."""
+    key = f"{kind}_codecs"
+    return [
+        name
+        for name, entry in results[key].items()
+        if entry.get("testable") and entry["containers"].get(cont_id, {}).get("result") == "pass"
+    ]
+
+
+def _multi_audio_only_cmd(ffmpeg, spec, muxer, out_path, ar_override=None):
+    """Mux de 2 streams de audio independientes del MISMO codec (sin video) - para saber
+    si el CONTENEDOR en si (no el codec) acepta multipista, o si por diseño/estandar solo
+    admite un stream elemental (ej. MP3/WAV/FLAC clasicos). Reusa ar/ac/extra del spec
+    real del codec (igual que _audio_source_cmd) - sin esto, codecs con requisitos propios
+    (DTS necesita '-strict -2', AMR-WB necesita 16kHz) fallarian por un parametro de
+    encoder faltante, no por una restriccion real del contenedor."""
+    ar = ar_override or spec.get("ar", 44100)
+    ac = spec.get("ac", 2)
+    cmd = [
+        ffmpeg, "-y", "-v", "error",
+        "-f", "lavfi", "-i", f"sine=frequency=1000:duration=0.4:sample_rate={ar}",
+        "-f", "lavfi", "-i", f"sine=frequency=1500:duration=0.4:sample_rate={ar}",
+        "-map", "0:a", "-map", "1:a", "-ac", str(ac), "-c:a", spec["encoder"],
+    ]
+    cmd += spec.get("extra", [])
+    cmd += ["-f", muxer, out_path]
+    return cmd
+
+
+def _multi_audio_with_video_cmd(ffmpeg, video_spec, audio_spec, muxer, out_path, ar_override=None):
+    """Mux de 1 video + 2 audio (ej. OBS: microfono + audio del sistema) - eje DISTINTO
+    del anterior: un contenedor puede aceptar 2 audios solos pero no junto a video (o
+    viceversa), asi que se prueban por separado en vez de asumir que uno implica el otro.
+    Reusa size/pix_fmt/fps/extra del spec real de CADA codec (igual que
+    _video_source_cmd/_audio_source_cmd), por el mismo motivo que en
+    _multi_audio_only_cmd - varios codecs de video del matrix exigen resolucion/pix_fmt
+    fijos (H.263 = QCIF, ProRes = yuv422p10le, DV = 720x576@25, etc.)."""
+    size = video_spec.get("size", "256x256")
+    fps = video_spec.get("fps", "25")
+    ar = ar_override or audio_spec.get("ar", 44100)
+    ac = audio_spec.get("ac", 2)
+    # Los 3 -i van TODOS primero, seguidos de TODAS las opciones de salida (-map, -pix_fmt,
+    # -c:v, -c:a...) - a diferencia de _video_source_cmd (que solo tiene 1 input, asi que
+    # poner "-pix_fmt" justo despues de su unico -i ya lo deja correctamente del lado de
+    # salida), aca intercalar "-pix_fmt" entre el -i de video y los -i de audio hace que
+    # ffmpeg lo reinterprete como opcion de ENTRADA del siguiente -i (el primer audio), que
+    # no tiene ese AVOption -> "Option pixel_format not found". Agrupar todos los -i antes
+    # que cualquier opcion de salida evita la ambiguedad sin depender de este detalle fino.
+    cmd = [
+        ffmpeg, "-y", "-v", "error",
+        "-f", "lavfi", "-i", f"color=c=black:s={size}:r={fps}:d=0.4",
+        "-f", "lavfi", "-i", f"sine=frequency=1000:duration=0.4:sample_rate={ar}",
+        "-f", "lavfi", "-i", f"sine=frequency=1500:duration=0.4:sample_rate={ar}",
+        "-map", "0:v", "-map", "1:a", "-map", "2:a",
+    ]
+    if video_spec.get("pix_fmt"):
+        cmd += ["-pix_fmt", video_spec["pix_fmt"]]
+    cmd += ["-frames:v", "5", "-c:v", video_spec["encoder"]]
+    cmd += video_spec.get("extra", [])
+    cmd += ["-ac", str(ac), "-c:a", audio_spec["encoder"]]
+    cmd += audio_spec.get("extra", [])
+    cmd += ["-f", muxer, out_path]
+    return cmd
+
+
+def probe_container_streams(ffmpeg, results, cont_id, muxer, ext):
+    """Prueba, para UN contenedor, si acepta 2 streams de audio simultaneos - en 2
+    escenarios independientes (solo-audio, y video+audio). A diferencia de un primer
+    intento con "un codec representativo", esto prueba TODOS los codecs que el matrix ya
+    confirmo como validos (1 sola pista) en este contenedor - el usuario quiere el dato
+    real por codec, no una muestra: es perfectamente posible que un contenedor acepte 2
+    pistas de AAC pero no 2 de AC-3, por ejemplo, y adivinar con uno solo ocultaria eso.
+
+    Returns: {"audio_only_multi": {codec_name: {result,error}, ...},
+              "video_audio_multi": {"video+audio": {result,error}, ...}}
+    Un contenedor sin NINGUN codec de audio (GIF/WEBP/APNG) devuelve dicts vacios en vez
+    de intentar nada - no hay con que probar."""
+    result = {"audio_only_multi": {}, "video_audio_multi": {}}
+    audio_names = _passing_codecs(results, "audio", cont_id)
+
+    if cont_id == "mxf":
+        # MXF no tiene un modo "solo audio" real (el muxer exige un track de video como
+        # primero y unico "track" propiamente dicho) - se prueba directo video+audio, con
+        # el mismo companion/framerate que ya usa el resto del matrix para audio en MXF
+        # (ver _audio_paired_mxf_cmd), cruzado igual con TODOS los codecs de audio validos.
+        mxf_video_spec = {"encoder": MXF_COMPANION_VIDEO_ENCODER, "size": "256x256", "fps": "25"}
+        for a_name in audio_names:
+            a_spec = AUDIO_CODECS[a_name]
+            out_path = os.path.join(TMP_DIR, f"multi_{cont_id}_mxf_{a_name}.{ext}")
+            cmd = _multi_audio_with_video_cmd(
+                ffmpeg, mxf_video_spec, a_spec, muxer, out_path, ar_override=MXF_REQUIRED_AUDIO_RATE,
+            )
+            rc, err = _run(cmd)
+            ok = (rc == 0) and os.path.exists(out_path) and os.path.getsize(out_path) > 0
+            result["video_audio_multi"][f"{MXF_COMPANION_VIDEO_ENCODER}+{a_name}"] = {
+                "result": "pass" if ok else "fail",
+                "error": None if ok else (_first_meaningful_line(err) or f"exit code {rc}"),
+            }
+            if os.path.exists(out_path):
+                try:
+                    os.remove(out_path)
+                except OSError:
+                    pass
+        return result
+
+    for a_name in audio_names:
+        a_spec = AUDIO_CODECS[a_name]
+        out_path = os.path.join(TMP_DIR, f"multi_{cont_id}_audioonly_{a_name}.{ext}")
+        cmd = _multi_audio_only_cmd(ffmpeg, a_spec, muxer, out_path)
+        rc, err = _run(cmd)
+        ok = (rc == 0) and os.path.exists(out_path) and os.path.getsize(out_path) > 0
+        result["audio_only_multi"][a_name] = {
+            "result": "pass" if ok else "fail",
+            "error": None if ok else (_first_meaningful_line(err) or f"exit code {rc}"),
+        }
+        if os.path.exists(out_path):
+            try:
+                os.remove(out_path)
+            except OSError:
+                pass
+
+    video_names = _passing_codecs(results, "video", cont_id)
+    for v_name in video_names:
+        v_spec = VIDEO_CODECS[v_name]
+        for a_name in audio_names:
+            a_spec = AUDIO_CODECS[a_name]
+            out_path = os.path.join(TMP_DIR, f"multi_{cont_id}_va_{v_name}_{a_name}.{ext}")
+            cmd = _multi_audio_with_video_cmd(ffmpeg, v_spec, a_spec, muxer, out_path)
+            rc, err = _run(cmd)
+            ok = (rc == 0) and os.path.exists(out_path) and os.path.getsize(out_path) > 0
+            result["video_audio_multi"][f"{v_name}+{a_name}"] = {
+                "result": "pass" if ok else "fail",
+                "error": None if ok else (_first_meaningful_line(err) or f"exit code {rc}"),
+            }
+            if os.path.exists(out_path):
+                try:
+                    os.remove(out_path)
+                except OSError:
+                    pass
+
+    return result
+
+
 def _probe_dimension_alignment(ffmpeg, spec):
     """Prueba si el encoder de un codec de VIDEO acepta ancho impar y alto impar por
     separado (perturbando en -1 el 'size' que ya tiene el spec), directo a '-f null -' sin
@@ -263,6 +413,23 @@ def main():
                 r["note"] = spec["note"]
             results[key][name] = r
 
+    elapsed_codecs = round(time.time() - t0, 1)
+    print(f"Matrix codec x contenedor lista en {elapsed_codecs}s", file=sys.stderr)
+
+    # Multipista (audio solo, y video+audio): eje aparte del matrix codec x contenedor de
+    # arriba, corrido DESPUES porque necesita sus resultados ya completos (ver
+    # _passing_codecs: solo tiene sentido probar 2 streams de un codec que ya paso con 1).
+    print("Probando multipista (audio solo + video/audio) por contenedor...", file=sys.stderr)
+    t1 = time.time()
+    container_streams = {}
+    cont_items = list(CONTAINERS.items())
+    for i, (cont_id, muxer_list) in enumerate(cont_items, 1):
+        muxer, ext = muxer_list[0]
+        print(f"  [{i}/{len(cont_items)}] {cont_id}", file=sys.stderr)
+        container_streams[cont_id] = probe_container_streams(args.ffmpeg, results, cont_id, muxer, ext)
+    elapsed_streams = round(time.time() - t1, 1)
+    print(f"Multipista lista en {elapsed_streams}s", file=sys.stderr)
+
     elapsed = round(time.time() - t0, 1)
     print(f"Listo en {elapsed}s", file=sys.stderr)
 
@@ -276,6 +443,7 @@ def main():
             "elapsed_sec": elapsed,
         },
         "results": results,
+        "container_streams": container_streams,
     }
 
     safe_version = re.sub(r"[^A-Za-z0-9._-]", "_", version_str)

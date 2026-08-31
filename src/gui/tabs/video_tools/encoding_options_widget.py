@@ -3,7 +3,6 @@ from PySide6.QtWidgets import (
     QFrame,
     QVBoxLayout,
     QTabWidget,
-    QWidget,
 )
 from PySide6.QtCore import Signal
 
@@ -11,11 +10,12 @@ from gui.styles import get_theme_token
 from gui.tabs.video_tools.presets_panel import PresetsPanel
 from gui.tabs.video_tools.compress_panel import CompressPanel
 from gui.tabs.video_tools.convert_panel import ConvertPanel
+from gui.tabs.video_tools.editing_panel import EditingPanel
 from gui.tabs.video_tools.advanced_recode_panel import AdvancedRecodePanel
 
 class EncodingOptionsWidget(QFrame):
     """
-    Panel derecho de opciones con pestañas (Preajustes, Comprimir, Convertir, Proxies, Avanzado).
+    Panel derecho de opciones con pestañas (Preajustes, Comprimir, Convertir, Edición, Avanzado).
     Caja principal contenedora con fondo transparente y borde acorde al tema.
     """
     options_changed = Signal(dict)
@@ -71,8 +71,9 @@ class EncodingOptionsWidget(QFrame):
         self.tabs.addTab(self.tab_convert, self.tr("Convertir"))
         self.tab_convert.validity_changed.connect(self._on_convert_validity_changed)
 
-        self.tab_proxies = QWidget()
-        self.tabs.addTab(self.tab_proxies, self.tr("Proxies"))
+        self.tab_editing = EditingPanel(self)
+        self.tabs.addTab(self.tab_editing, self.tr("Edición"))
+        self.tab_editing.validity_changed.connect(self._on_editing_validity_changed)
 
         self.tab_advanced = AdvancedRecodePanel(self)
         self.tabs.addTab(self.tab_advanced, self.tr("Avanzado"))
@@ -95,6 +96,8 @@ class EncodingOptionsWidget(QFrame):
             return self.tab_compress.get_status()
         if current is self.tab_convert:
             return self.tab_convert.get_status()
+        if current is self.tab_editing:
+            return self.tab_editing.get_status()
         return True, self.tr("Iniciar Recodificación")
 
     def _emit_current_status(self):
@@ -120,6 +123,10 @@ class EncodingOptionsWidget(QFrame):
         if self.tabs.currentWidget() is self.tab_convert:
             self._emit_current_status()
 
+    def _on_editing_validity_changed(self, _is_valid: bool):
+        if self.tabs.currentWidget() is self.tab_editing:
+            self._emit_current_status()
+
     def get_encoding_settings(self, file_meta: dict | None = None, filepath: str | None = None) -> dict:
         """`file_meta`/`filepath`, si se pasan, describen un archivo del lote DISTINTO al
         que está en preview - Comprimir los necesita para recalcular por archivo (Rápido:
@@ -130,9 +137,11 @@ class EncodingOptionsWidget(QFrame):
         if current is self.tab_advanced:
             return self.tab_advanced.get_settings()
         if current is self.tab_presets:
-            return self.tab_presets.get_settings()
+            return self.tab_presets.get_settings(meta_override=file_meta, filepath_override=filepath)
         if current is self.tab_compress:
             return self.tab_compress.get_settings(meta_override=file_meta, filepath_override=filepath)
         if current is self.tab_convert:
             return self.tab_convert.get_settings(meta_override=file_meta, filepath_override=filepath)
+        if current is self.tab_editing:
+            return self.tab_editing.get_settings(meta_override=file_meta, filepath_override=filepath)
         return {}

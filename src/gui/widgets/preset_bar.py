@@ -14,7 +14,7 @@ import os
 from gui.widgets.combo_box import AutoPopupComboBox
 from gui.dialogs.dialogs import SavePresetDialog
 from core.logger.logger_manager import logger
-from core.utils.preset_manager import get_preset_manager
+from core.utils.preset_manager import get_preset_manager, PRESET_FUNCTIONS, UNSPECIFIED_FUNCTION_LABEL
 from core.utils.watermark_builder import check_watermark_file
 
 _NO_PRESET_DATA = None  # dato del item "Sin preset" (siempre el primero del combo)
@@ -49,10 +49,19 @@ class PresetBar(QWidget):
     preset_applied = Signal(str)  # nombre del preset activo, o "" si se deseleccionó
 
     def __init__(self, namespace: str, get_settings=None, parent=None,
-                 show_picker: bool = True, show_save_button: bool = True):
+                 show_picker: bool = True, show_save_button: bool = True,
+                 default_function: str | None = None, job_type: str = "RECODE"):
         super().__init__(parent)
         self.namespace = namespace
         self._get_settings = get_settings
+        # Metadata de categorización para lo que esta barra GUARDE (ver
+        # core.utils.preset_manager.PRESET_FUNCTIONS) - default_function precarga (pero
+        # no fija) la categoría en el diálogo de guardado cuando esta barra vive en una
+        # pestaña con una función fija conocida (ej. una futura Convertir con guardado
+        # propio pasaría "convertir" acá); None (ej. Avanzado, que arma cualquier cosa)
+        # deja el combo del diálogo sin preseleccionar nada en particular.
+        self._default_function = default_function
+        self._job_type = job_type
         self._active_name = None
         self._is_picker = show_picker  # NO usar combo.isVisible(): una pestaña
         # inactiva del QTabWidget reporta isVisible()==False aunque este
@@ -134,14 +143,42 @@ class PresetBar(QWidget):
 
     # ─── Internos ────────────────────────────────────────────────
 
+    def _add_group_header(self, title: str):
+        """Encabezado no seleccionable dentro del MISMO combo (mismo patrón que
+        convert_panel.py::_populate_container_combo para agrupar VIDEO/SOLO AUDIO) - a
+        propósito UN solo menú con secciones adentro, no un combo de filtro aparte más
+        el picker (ver conversación)."""
+        self.combo.addItem(f"─── {title} ───")
+        item = self.combo.model().item(self.combo.count() - 1)
+        item.setEnabled(False)
+        font = item.font()
+        font.setBold(True)
+        item.setFont(font)
+        item.setTextAlignment(Qt.AlignCenter)
+
     def refresh(self, select_name: str = ""):
-        """Recarga la lista de presets desde el manager."""
+        """Recarga la lista de presets desde el manager, agrupada por función (ver
+        core.utils.preset_manager.PRESET_FUNCTIONS) dentro del mismo combo - un grupo se
+        omite si no tiene ningún preset."""
         target = select_name or self._active_name
         self.combo.blockSignals(True)
         self.combo.clear()
         self.combo.addItem(self.tr("Sin preset"), _NO_PRESET_DATA)
-        for name in get_preset_manager().list_names(self.namespace):
-            self.combo.addItem(name, name)
+
+        presets = get_preset_manager().list_presets(self.namespace)
+        by_function = {}
+        for preset in presets:
+            by_function.setdefault(preset.get("function"), []).append(preset["name"])
+
+        group_order = list(PRESET_FUNCTIONS.items()) + [(None, UNSPECIFIED_FUNCTION_LABEL)]
+        for func_id, label in group_order:
+            names = by_function.get(func_id)
+            if not names:
+                continue
+            self._add_group_header(self.tr(label))
+            for name in names:
+                self.combo.addItem(f"  {name}", name)
+
         if target:
             idx = self.combo.findData(target)
             self.combo.setCurrentIndex(idx if idx >= 0 else 0)
@@ -163,11 +200,14 @@ class PresetBar(QWidget):
     def _on_save_clicked(self):
         manager = get_preset_manager()
         existing = manager.list_names(self.namespace)
-        dialog = SavePresetDialog(self, existing_names=existing)
+        dialog = SavePresetDialog(self, existing_names=existing, default_function=self._default_function)
         if not dialog.exec() or not dialog.result_name:
             return
         name = dialog.result_name
-        manager.save_preset(self.namespace, name, self._get_settings())
+        manager.save_preset(
+            self.namespace, name, self._get_settings(),
+            function=dialog.result_function, job_type=self._job_type,
+        )
 
     def _on_export_clicked(self):
         if not self._active_name:

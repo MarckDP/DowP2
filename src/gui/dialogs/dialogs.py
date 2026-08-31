@@ -1,6 +1,7 @@
 # src/gui/tabs/single_process/dialogs.py
-from PySide6.QtWidgets import (QMessageBox, QDialog, QVBoxLayout, QHBoxLayout, 
-                                 QLabel, QLineEdit, QPushButton, QFileDialog, QColorDialog, QSlider, QWidget, QFrame)
+from PySide6.QtWidgets import (QMessageBox, QDialog, QVBoxLayout, QHBoxLayout,
+                                 QLabel, QLineEdit, QPushButton, QFileDialog, QColorDialog, QSlider, QWidget, QFrame,
+                                 QComboBox)
 from PySide6.QtCore import Qt, Signal, QPoint
 from PySide6.QtGui import QColor, QImage, QPainter, QPen, QLinearGradient
 import os
@@ -315,14 +316,16 @@ class SavePresetDialog(QDialog):
     PresetBar). Reemplaza al patrón anterior de escribir el nombre directo en el combo
     -no tenía sentido tener que escribir dentro de un combo pensado para elegir de una
     lista existente."""
-    def __init__(self, parent=None, existing_names=None):
+    def __init__(self, parent=None, existing_names=None, default_function=None):
         super().__init__(parent)
         self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setWindowTitle(self.tr("Guardar como preajuste"))
-        self.setFixedSize(360, 190)
+        self.setFixedSize(360, 230)
         self._existing_names = existing_names or []
+        self._default_function = default_function
         self.result_name = None
+        self.result_function = None
         self.init_ui()
 
     def init_ui(self):
@@ -347,7 +350,7 @@ class SavePresetDialog(QDialog):
                 border: none;
                 background: transparent;
             }}
-            QLineEdit {{
+            QLineEdit, QComboBox {{
                 background-color: {get_theme_token("fondo_principal", "#121212")};
                 color: {get_theme_token("texto_principal", "#ffffff")};
                 border: 1px solid {get_theme_token("borde", "#2d2d2d")};
@@ -409,6 +412,24 @@ class SavePresetDialog(QDialog):
         layout.addWidget(self.lbl_name)
         layout.addWidget(self.name_input)
 
+        # Categoría de "qué hace" el preajuste (ver core.utils.preset_manager.
+        # PRESET_FUNCTIONS) - independiente de qué pestaña lo armó, pensado para un
+        # futuro filtro/menú universal (ver conversación). Siempre visible y editable
+        # (nunca se pre-fija sin poder cambiarla): Avanzado puede armar cualquier cosa,
+        # así que no hay una función "correcta" única que asumir por default ahí.
+        from core.utils.preset_manager import PRESET_FUNCTIONS
+        self.lbl_function = QLabel(self.tr("Tipo de tarea:"))
+        self.combo_function = QComboBox()
+        self.combo_function.setCursor(Qt.PointingHandCursor)
+        for func_id, label in PRESET_FUNCTIONS.items():
+            self.combo_function.addItem(label, func_id)
+        if self._default_function:
+            idx = self.combo_function.findData(self._default_function)
+            if idx >= 0:
+                self.combo_function.setCurrentIndex(idx)
+        layout.addWidget(self.lbl_function)
+        layout.addWidget(self.combo_function)
+
         self.error_lbl = QLabel("")
         self.error_lbl.setStyleSheet("color: #e74c3c; font-size: 11px;")
         self.error_lbl.hide()
@@ -446,6 +467,7 @@ class SavePresetDialog(QDialog):
             if not resp:
                 return
         self.result_name = name
+        self.result_function = self.combo_function.currentData()
         self.accept()
 
 

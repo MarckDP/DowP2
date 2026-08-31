@@ -287,3 +287,52 @@ class PresetManager(QObject):
 def get_preset_manager() -> PresetManager:
     """Acceso global al PresetManager (singleton)."""
     return PresetManager.get_instance()
+
+
+_RECODE_COLLISION_SUFFIX = " (recodificado)"
+
+
+def build_recode_output_path(input_path: str, namespace: str, preset_name: str | None,
+                              prefix: str = "", suffix: str = "") -> tuple[dict | None, str | None]:
+    """
+    Resuelve un preset guardado en un (settings, out_file) listos para un job RECODE (ver
+    QueueWorker._execute_recode / run_ffmpeg_recode en core.utils.queue_manager), a partir
+    de la ruta de un archivo ya existente. Único punto que traduce "el usuario eligió el
+    preset X" en "esto es lo que hay que ejecutar y dónde va a quedar" — usado tanto por la
+    recodificación síncrona de cada hijo de una playlist (queue_manager._execute_playlist)
+    como por la asíncrona de una descarga individual (advanced_process/download_controller.py),
+    para no repetir esta traducción en cada lugar.
+
+    input_path es siempre la ruta LIMPIA (antes de ponerla en cuarentena con
+    quarantine_for_recode - el llamador es quien decide eso después) - prefix/suffix (de
+    la tarjeta "Recodificar") se aplican al nombre base, y la extensión cambia según el
+    contenedor del preset (ver core.utils.recode_guard.CONTAINER_TO_EXTENSION).
+
+    Salvaguarda: si el resultado sin prefijo/sufijo terminaría siendo IDÉNTICO a
+    input_path (mismo contenedor, sin texto elegido), se fuerza un sufijo por defecto -
+    si no, "mantener medios originales" restauraría el .dbak sobre ese mismo nombre y
+    borraría el recodificado recién creado (ver rollback_backup), que quedó ocupando esa
+    ruta mientras el original estaba en cuarentena.
+
+    Devuelve (None, None) si el preset no existe o no tiene ajustes.
+    """
+    if not preset_name:
+        return None, None
+    settings = get_preset_manager().get_settings(namespace, preset_name)
+    if not settings:
+        return None, None
+
+    from core.utils.recode_guard import CONTAINER_TO_EXTENSION
+
+    base, original_ext = os.path.splitext(input_path)
+    base_dir, base_name = os.path.split(base)
+    container = settings.get("container") or "same"
+    ext = original_ext.lstrip(".") if container == "same" else CONTAINER_TO_EXTENSION.get(container, container)
+
+    new_base_name = f"{prefix}{base_name}{suffix}"
+    out_file = os.path.join(base_dir, f"{new_base_name}.{ext}") if ext else input_path
+
+    if os.path.normcase(os.path.normpath(out_file)) == os.path.normcase(os.path.normpath(input_path)):
+        out_file = os.path.join(base_dir, f"{new_base_name}{_RECODE_COLLISION_SUFFIX}.{ext}")
+
+    return settings, out_file

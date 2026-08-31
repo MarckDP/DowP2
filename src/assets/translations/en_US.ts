@@ -150,8 +150,8 @@
     <name>AdvancedProcessTab</name>
     <message>
         <location filename="../../gui/tabs/advanced_process/advanced_process_view.py" line="165"/>
-        <source>Análisis de playlist</source>
-        <translation>Playlist analysis</translation>
+        <source>Playlist</source>
+        <translation>Playlist</translation>
     </message>
     <message>
         <location filename="../../gui/tabs/advanced_process/advanced_process_view.py" line="169"/>
@@ -2839,8 +2839,8 @@ Se eliminaron {res.get(&apos;files_removed&apos;, 0)} archivos y se liberaron {r
     </message>
     <message>
         <location filename="../../gui/tabs/quick_mode/quick_mode_view.py" line="156"/>
-        <source>Seleccionar playlist</source>
-        <translation>Select playlist</translation>
+        <source>Playlist</source>
+        <translation>Playlist</translation>
     </message>
     <message>
         <location filename="../../gui/tabs/quick_mode/quick_mode_view.py" line="160"/>
@@ -3548,8 +3548,8 @@ Add items by right-clicking any media.</translation>
     <name>VideoDetailsWidget</name>
     <message>
         <location filename="../../gui/tabs/advanced_process/video_details.py" line="61"/>
-        <source>Descargar miniatura</source>
-        <translation>Download thumbnail</translation>
+        <source>Guardar imagen</source>
+        <translation>Save image</translation>
     </message>
     <message>
         <location filename="../../gui/tabs/advanced_process/video_details.py" line="65"/>
@@ -3558,8 +3558,8 @@ Add items by right-clicking any media.</translation>
     </message>
     <message>
         <location filename="../../gui/tabs/advanced_process/video_details.py" line="76"/>
-        <source>Descargar junto con el video</source>
-        <translation>Download together with the video</translation>
+        <source>Descargar junto con el medio</source>
+        <translation>Download together with the media</translation>
     </message>
     <message>
         <location filename="../../gui/tabs/advanced_process/video_details.py" line="101"/>

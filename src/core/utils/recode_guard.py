@@ -197,6 +197,16 @@ def has_hardware_encoder(codec_id: str | None) -> bool:
     return bool(status and status.get("status") == "full")
 
 
+# Mapeo contenedor -> extensión de archivo real, para los pocos casos donde el id de
+# contenedor no coincide con su extensión (ej. "qtff" produce un .mov, no un .qtff).
+# Cualquier contenedor no listado acá usa su propio id como extensión tal cual. Unica
+# fuente para esto (antes vivía duplicado dentro de video_tools_view.py).
+CONTAINER_TO_EXTENSION = {
+    "qtff": "mov",
+    "asf": "wmv",
+    "ps": "mpg",
+}
+
 # Etiquetas de UI por contenedor, para combos que listan TODOS los contenedores
 # compatibles con un codec (ver get_compatible_containers) - no solo un subconjunto
 # curado. Unica fuente para esto (antes vivia solo dentro de advanced_recode_panel.py).

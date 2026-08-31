@@ -150,13 +150,41 @@ def resolve_conflict(desired_path: str, policy: str) -> tuple[str | None, str | 
     raise ValueError(f"Política de conflicto desconocida: {policy}")
 
 
+def quarantine_for_recode(original_path: str) -> str:
+    """
+    Pone en cuarentena un archivo EXISTENTE (ej. un medio recién descargado) antes de una
+    operación que puede fallar (ej. recodificación), renombrándolo a "<original>.dbak" y
+    registrándolo en el mismo manifiesto que usa resolve_conflict() — así, si la app se
+    cierra a la fuerza a mitad de la operación, recover_orphaned_backups() lo restaura solo
+    al reabrir.
+
+    A diferencia de resolve_conflict() (que respalda un archivo de SALIDA que ya existe,
+    para no perderlo al sobrescribirlo), esto respalda el archivo de ENTRADA sin importar si
+    su nombre choca con algo — el llamador decide después, con commit_backup() (confirmar,
+    borra el .dbak) o rollback_backup() (restaurar, sea por fallo o porque el usuario elige
+    conservar el original), qué hacer con la cuarentena.
+    """
+    backup_path = original_path + BACKUP_SUFFIX
+    try:
+        if os.path.exists(backup_path):
+            os.remove(backup_path)
+        os.rename(original_path, backup_path)
+    except OSError as e:
+        raise Exception(f"No se pudo poner en cuarentena el archivo original: {e}")
+    _register_pending_backup(original_path, backup_path)
+    logger.info(f"FileConflictManager: Original puesto en cuarentena para recodificación: {backup_path}")
+    return backup_path
+
+
 def commit_backup(backup_path: str | None):
     """Descarta un backup pendiente porque la operación terminó bien."""
     if not backup_path:
         return
     try:
         if os.path.exists(backup_path):
-            os.remove(backup_path)
+            from core.utils.cleanup_manager import CleanupManager
+            if not CleanupManager.safe_remove(backup_path):
+                logger.warning(f"FileConflictManager: No se pudo eliminar el backup '{backup_path}' tras reintentos.")
         logger.debug(f"FileConflictManager: Backup confirmado (eliminado): {backup_path}")
     except OSError as e:
         logger.warning(f"FileConflictManager: No se pudo eliminar el backup '{backup_path}': {e}")

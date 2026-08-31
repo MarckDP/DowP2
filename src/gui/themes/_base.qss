@@ -772,6 +772,15 @@ QWidget#subtitleHeaderWidget:hover {
     background-color: rgba(255, 255, 255, 0.05);
 }
 
+QWidget#recodeHeaderWidget {
+    background: transparent;
+    border-radius: 6px;
+}
+
+QWidget#recodeHeaderWidget:hover {
+    background-color: rgba(255, 255, 255, 0.05);
+}
+
 QScrollArea#advancedProcessLowerScrollArea {
     background: transparent;
     border: none;

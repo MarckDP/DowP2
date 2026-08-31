@@ -187,6 +187,11 @@ class AutoPopupComboBox(QComboBox):
             if w > max_width:
                 max_width = w
 
+        if self.placeholderText():
+            pw = fm.horizontalAdvance(self.placeholderText())
+            if pw > max_width:
+                max_width = pw
+
         # Margen para padding izquierdo (14), espacio de checkmark derecho (36) y scrollbar
         extra = 58
         if has_icons:
@@ -194,6 +199,15 @@ class AutoPopupComboBox(QComboBox):
         if self.count() > self.maxVisibleItems():
             extra += 16
         return max_width + extra
+
+    def sizeHint(self):
+        hint = super().sizeHint()
+        if self.placeholderText():
+            fm = self.fontMetrics()
+            w = fm.horizontalAdvance(self.placeholderText()) + 42
+            if w > hint.width():
+                hint.setWidth(w)
+        return hint
 
     def showPopup(self):
         super().showPopup()
@@ -207,11 +221,6 @@ class AutoPopupComboBox(QComboBox):
         """Repinta la flechita de apertura con la versión atenuada (texto_deshabilitado) exactamente
         encima de donde el estilo ya dibujó la de acento, para representar visualmente el estado
         deshabilitado sin depender de un segundo QComboBox::down-arrow por pseudo-estado."""
-        # No se lee vía get_theme_token(): los íconos dinámicos (triángulo, etc.) que arma
-        # load_stylesheet() nunca quedan persistidos en el caché de tokens que get_theme_token()
-        # consulta (load_stylesheet limpia ese caché al final de cada llamada) — se genera acá
-        # directo con el mismo helper, que ya cachea en disco por color y es barato de llamar
-        # de nuevo en cada repintado.
         muted_color = get_theme_token("texto_deshabilitado", "#555555")
         icon_path = generate_triangle_svg(muted_color)
         if not icon_path or not os.path.exists(icon_path):
@@ -231,16 +240,8 @@ class AutoPopupComboBox(QComboBox):
 
     def paintEvent(self, event):
         if self.isEditable():
-            # El dibujado manual de texto de más abajo asume una caja de solo lectura (sin
-            # QLineEdit interno real) — con setEditable(True) sí existe ese QLineEdit propio de
-            # Qt posicionado sobre SC_ComboBoxEditField, y dibujar texto manual encima produce un
-            # doble renderizado (caja achicada/superpuesta). En modo editable alcanza con el
-            # pintado nativo: el QLineEdit ya se dibuja y elide solo.
             super().paintEvent(event)
             if not self.isEnabled():
-                # El pintado nativo de arriba ya terminó y liberó su propio QPainter interno —
-                # se abre uno nuevo acá para superponer la flecha atenuada, mismo mecanismo que
-                # el camino no editable de abajo.
                 painter = QPainter(self)
                 painter.setRenderHint(QPainter.RenderHint.Antialiasing)
                 opt = QStyleOptionComboBox()
@@ -254,17 +255,15 @@ class AutoPopupComboBox(QComboBox):
         opt = QStyleOptionComboBox()
         self.initStyleOption(opt)
         text = opt.currentText
+        is_placeholder = False
+        if not text:
+            text = self.placeholderText()
+            is_placeholder = True
         opt.currentText = ""  # el texto se dibuja a mano más abajo, con el rect real
 
         self.style().drawComplexControl(QStyle.ComplexControl.CC_ComboBox, opt, painter, self)
 
         if not self.isEnabled():
-            # No usamos un QSS "QComboBox:disabled::down-arrow" para esto: agregar una segunda
-            # regla de subcontrol image/tamaño para ::down-arrow (aunque redeclare el mismo
-            # width/height que la regla general) rompe el cálculo de geometría del ícono para
-            # TODOS los combobox, habilitados incluidos (flecha gigante superpuesta al texto —
-            # comprobado). En cambio, se repinta a mano la flecha ya dibujada arriba con la
-            # versión atenuada, en el mismo rect exacto que reporta el estilo.
             self._paint_disabled_arrow_overlay(painter, opt)
 
         self.style().drawControl(QStyle.ControlElement.CE_ComboBoxLabel, opt, painter, self)

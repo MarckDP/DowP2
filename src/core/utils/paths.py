@@ -96,6 +96,11 @@ def get_subclips_dir() -> str:
     from core.utils.config_manager import get_default_subclip_dir
     return get_default_subclip_dir()
 
+def get_default_download_dir() -> str:
+    """Retorna el directorio predeterminado de descargas del usuario."""
+    from core.tabs.advanced_process.output_logic import get_default_download_path
+    return get_default_download_path()
+
 
 
 def get_user_fonts_dir() -> str:

@@ -58,6 +58,8 @@ def get_config():
         "ffmpeg_custom_path": "",       # Ruta personalizada a ffmpeg.exe o carpeta
         "max_concurrent_downloads": 3,  # Número máximo de descargas simultáneas (1 a 10)
         "hardware_info": {},            # Información del sistema y GPU detectada
+        "analyze_playlist": True,       # Estado de casilla de análisis de playlist
+        "fast_mode": True,              # Estado de casilla de modo rápido
     }
     for k, v in defaults.items():
         if k not in _cached_config:
@@ -65,8 +67,6 @@ def get_config():
 
     # Opciones transitorias de AdvancedProcessTab (siempre inician en su valor por defecto al arrancar)
     transient_defaults = {
-        "analyze_playlist": True,
-        "fast_mode": True,
         "batch_thumbnail_mode": "manual",
         "global_download_mode": "manual",
         "global_download_quality": "manual"
@@ -84,8 +84,6 @@ def save_config(config):
     # Filtrar las opciones transitorias de la AdvancedProcessTab
     save_dict = config.copy()
     transient_keys = [
-        "analyze_playlist",
-        "fast_mode",
         "batch_thumbnail_mode",
         "global_download_mode",
         "global_download_quality"

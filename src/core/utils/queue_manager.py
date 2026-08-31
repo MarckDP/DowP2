@@ -351,7 +351,29 @@ class QueueWorker(QThread):
         if success:
             job.status = JobStatus.COMPLETED
             job.progress = 100.0
-            
+
+            # config_to_use quedó con el título REAL usado (sanitizado, y renombrado con
+            # "(1)" si hubo conflicto con policy "conservar") - DownloaderMaster muta esa
+            # copia adentro de download(), nunca job.request_data (ver
+            # _resolve_output_conflict/_sanitize_filename en downloader_master.py). El
+            # hint de yt-dlp ya cargado en job.final_filepath (arriba, vía el hook de
+            # progreso) además apunta al archivo INTERMEDIO de un stream en modos que
+            # fusionan video+audio (ej. HLS) - se reconstruye la ruta real acá, en la
+            # única capa que tiene la copia mutada a mano, y solo se usa si existe en
+            # disco (si no, se deja el hint como estaba).
+            title = config_to_use.get("title")
+            output_path_final = config_to_use.get("output_path")
+            mode_final = config_to_use.get("mode", "video+audio")
+            if title and output_path_final and mode_final in ("video+audio", "video_only", "audio_only"):
+                from core.utils.file_conflict_manager import predict_final_extension
+                predicted_ext = predict_final_extension(
+                    config_to_use.get("video_ext"), config_to_use.get("audio_ext"),
+                    mode_final, bool(config_to_use.get("video_is_combined")),
+                )
+                predicted_path = os.path.join(output_path_final, f"{title}{predicted_ext}")
+                if os.path.exists(predicted_path):
+                    job.final_filepath = predicted_path
+
             if should_download_thumb_file:
                 try:
                     output_dir = config_to_use.get("output_path") or self._default_output_path()
@@ -472,6 +494,8 @@ class QueueWorker(QThread):
                 "conflict_policy": conflict_policy,
             }
 
+            child_final_path = [None]
+
             def progress_callback(d, item_pos=pos, item_name=item_title):
                 if d.get("status") == "downloading":
                     from core.ytdlp_logic.analyzer import strip_ansi_codes
@@ -486,6 +510,8 @@ class QueueWorker(QThread):
                     job.eta = strip_ansi_codes(d.get('_eta_str', '')).strip() or "..."
                     self.job_progress_changed.emit(job.job_id, total_percent, job.speed, job.eta)
                 elif d.get("status") == "finished":
+                    if d.get("filename"):
+                        child_final_path[0] = d.get("filename")
                     total_percent = item_pos / total * 100.0
                     job.progress = total_percent
                     self.job_progress_changed.emit(job.job_id, total_percent, f"[{item_pos}/{total}] Procesando", "")
@@ -495,9 +521,26 @@ class QueueWorker(QThread):
                 progress_callback=progress_callback,
                 cancellation_event=cancellation_event
             )
-            
+
             if success:
                 completed_count += 1
+
+                # Recodificación post-descarga: config única para toda la playlist (ver
+                # advanced_process_view.py - los jobs PLAYLIST no tienen request_data por
+                # ítem). Corre síncrona e inline, en el mismo hilo que el resto del loop
+                # (no se encola un job RECODE aparte) - mismo criterio que ya usaba
+                # DowP-Lite para no competir por el cupo de "1 recode simultáneo" de la
+                # cola ni complicar el borrado del original con una espera async.
+                if job.config.get("recode_enabled") and child_final_path[0] and os.path.exists(child_final_path[0]):
+                    self._recode_downloaded_file(
+                        job, child_final_path[0],
+                        preset_name=job.config.get("recode_preset_name"),
+                        keep_original=job.config.get("recode_keep_original", True),
+                        duration_sec=entry.get("duration") or 0.0,
+                        cancellation_event=cancellation_event,
+                        item_pos=pos, item_total=total,
+                    )
+
                 if should_download_thumb_file:
                     try:
                         self._download_best_thumb(entry, playlist_output, f"{prefix}{item_title}", force_png=True)
@@ -562,30 +605,78 @@ class QueueWorker(QThread):
         from core.ytdlp_logic.format_selectors import playlist_format_selector
         return playlist_format_selector(mode, quality, url=url)
 
-    def _execute_recode(self, job, cancellation_event=None, worker_ref=None):
+    def _recode_downloaded_file(self, job, input_path, preset_name, keep_original,
+                                 duration_sec, cancellation_event, item_pos=1, item_total=1):
+        """
+        Recodifica SÍNCRONAMENTE (mismo hilo, sin encolar un job RECODE aparte) un archivo
+        ya descargado, usado por _execute_playlist para cada hijo — a diferencia de una
+        descarga individual (ver advanced_process/download_controller.py), que sí encola un
+        job RECODE async porque ahí cada item ya ocupa su propia tarjeta/posición en la cola.
+
+        Pone el original en cuarentena (.dbak) antes de recodificar, y siempre lo restaura
+        si la recodificación falla o se cancela, sin importar `keep_original` (que solo
+        decide qué pasa cuando SÍ hubo éxito) — mismo contrato que la ruta async.
+        """
+        from core.utils.preset_manager import build_recode_output_path
+        from core.utils.file_conflict_manager import quarantine_for_recode, commit_backup, rollback_backup
+
+        settings, out_file = build_recode_output_path(
+            input_path, "video_tools/avanzado", preset_name,
+            prefix=job.config.get("recode_filename_prefix") or "",
+            suffix=job.config.get("recode_filename_suffix") or "",
+        )
+        if not settings:
+            logger.warning(f"QueueWorker: [Playlist] Preset de recodificación '{preset_name}' no encontrado, se omite.")
+            return
+
+        try:
+            backup_path = quarantine_for_recode(input_path)
+        except Exception as e:
+            logger.error(f"QueueWorker: [Playlist] No se pudo poner en cuarentena '{input_path}': {e}")
+            return
+
+        def progress_callback(percent, speed_str, eta_str):
+            total_percent = ((item_pos - 1) + (percent / 100.0)) / item_total * 100.0
+            job.progress = total_percent
+            self.job_progress_changed.emit(
+                job.job_id, total_percent, f"[{item_pos}/{item_total}] Recodificando {percent:.0f}%", eta_str
+            )
+
+        success, error = self._run_ffmpeg_command(
+            backup_path, out_file, settings, duration_sec, cancellation_event,
+            progress_callback=progress_callback,
+        )
+
+        if success and not cancellation_event.is_set():
+            if keep_original:
+                rollback_backup(backup_path)  # éxito + mantener: restaura el original junto al recodificado
+            else:
+                commit_backup(backup_path)  # éxito + no mantener: confirma (borra) el original
+            logger.info(f"QueueWorker: [Playlist] Recodificado: {out_file}")
+        else:
+            rollback_backup(backup_path)  # fallo o cancelación: SIEMPRE se restaura, sin importar keep_original
+            logger.warning(f"QueueWorker: [Playlist] Recodificación falló para '{input_path}': {error or 'cancelado'}")
+
+    def _run_ffmpeg_command(self, input_file, output_file, settings, duration_sec,
+                             cancellation_event, progress_callback=None, worker_ref=None):
+        """
+        Arma y ejecuta el comando ffmpeg de recodificación a partir de (input_file,
+        output_file, settings, duration_sec) — motor compartido por un job RECODE async
+        (ver _execute_recode) y por la recodificación síncrona inline de cada hijo de una
+        playlist (ver _execute_playlist), para no duplicar el armado del comando.
+
+        progress_callback(percent, speed_str, eta_str), si se pasa, se invoca en cada
+        línea de progreso parseada de ffmpeg — el llamador decide cómo reportarlo (señal
+        de un job propio, o el progreso agregado de una playlist).
+
+        Devuelve (success: bool, error_message: str | None).
+        """
         import subprocess
         from core.setup.ffmpeg_setup import get_ffmpeg_dir
-        
-        if cancellation_event is None:
-            cancellation_event = self._cancellation_event
 
-        job.status = JobStatus.RUNNING
-        job.progress = 0.0
-        self.job_status_changed.emit(job.job_id, JobStatus.RUNNING)
-        self.job_progress_changed.emit(job.job_id, 0.0, "Iniciando FFmpeg...", "")
-
-        config = job.config
-        input_file = config.get("input_path")
-        output_file = config.get("output_path")
-        settings = config.get("settings", {})
-        duration_sec = config.get("duration_sec", 0.0)
-        
         ffmpeg_exe = os.path.join(get_ffmpeg_dir(), "ffmpeg.exe" if os.name == 'nt' else "ffmpeg")
         if not os.path.exists(ffmpeg_exe):
-            job.status = JobStatus.FAILED
-            job.error_message = "No se encontró ffmpeg."
-            self.job_status_changed.emit(job.job_id, JobStatus.FAILED)
-            return
+            return False, "No se encontró ffmpeg."
 
         # Construir comando FFmpeg
         cmd = [ffmpeg_exe, "-y"]
@@ -691,8 +782,8 @@ class QueueWorker(QThread):
 
         cmd.append(output_file)
 
-        logger.info(f"QueueWorker: Iniciando RECODE con comando: {' '.join(cmd)}")
-        
+        logger.info(f"QueueWorker: Ejecutando FFmpeg: {' '.join(cmd)}")
+
         startupinfo = None
         if os.name == 'nt':
             startupinfo = subprocess.STARTUPINFO()
@@ -708,7 +799,7 @@ class QueueWorker(QThread):
                 encoding="utf-8",
                 errors="replace"
             )
-            
+
             # Guardamos la referencia para poder cancelarlo
             if worker_ref:
                 worker_ref.downloader = proc # Usamos downloader para guardar el Popen, sobrecargando su uso temporalmente
@@ -726,7 +817,7 @@ class QueueWorker(QThread):
             time_regex = re.compile(r"time=\s*(\d+):(\d+):(\d+\.\d+|\d+)")
             speed_regex = re.compile(r"speed=\s*([\d\.]+)x")
             last_log_time = 0.0
-            
+
             for line in proc.stderr:
                 if cancellation_event.is_set():
                     proc.terminate()
@@ -735,34 +826,32 @@ class QueueWorker(QThread):
                 clean_line = line.strip()
                 if not clean_line:
                     continue
-                    
+
                 time_match = time_regex.search(clean_line)
                 speed_match = speed_regex.search(clean_line)
-                
+
                 if time_match and duration_sec > 0:
                     h, m, s = float(time_match.group(1)), float(time_match.group(2)), float(time_match.group(3))
                     current_sec = h * 3600 + m * 60 + s
                     percent = min((current_sec / duration_sec) * 100.0, 100.0)
-                    
+
                     speed_str = f"{speed_match.group(1)}x" if speed_match else "..."
-                    
+
                     eta_str = "..."
                     if speed_match:
                         sp = float(speed_match.group(1))
                         if sp > 0:
                             rem = (duration_sec - current_sec) / sp
                             eta_str = f"{int(rem)}s"
-                    
-                    job.progress = percent
-                    job.speed = speed_str
-                    job.eta = eta_str
-                    self.job_progress_changed.emit(job.job_id, percent, f"Velocidad: {speed_str}", f"ETA: {eta_str}")
+
+                    if progress_callback:
+                        progress_callback(percent, speed_str, eta_str)
 
                     # Registrar en consola con cadencia controlada (cada 1.0s) para progreso claro
                     now = time.time()
                     if now - last_log_time >= 1.0 or percent >= 100.0:
                         last_log_time = now
-                        logger.info(f"QueueWorker: [RECODE] {percent:.1f}% | Velocidad: {speed_str} | ETA: {eta_str} ({job.title})")
+                        logger.info(f"QueueWorker: [FFmpeg] {percent:.1f}% | Velocidad: {speed_str} | ETA: {eta_str}")
                 else:
                     # Registrar líneas clave de mapeo, inicio o advertencias de FFmpeg
                     lower_line = clean_line.lower()
@@ -772,36 +861,71 @@ class QueueWorker(QThread):
                         logger.debug(f"[FFmpeg] {clean_line}")
 
             proc.wait()
-            
+
             if cancellation_event.is_set():
-                job.status = JobStatus.CANCELLED
-                self.job_status_changed.emit(job.job_id, JobStatus.CANCELLED)
-                logger.info(f"QueueWorker: [RECODE] Trabajo cancelado por el usuario: {job.title}")
+                logger.info("QueueWorker: [FFmpeg] Proceso cancelado por el usuario.")
                 if os.path.exists(output_file):
                     try:
                         os.remove(output_file)
                     except Exception:
                         pass
-                return
-                
+                return False, "Cancelado por el usuario"
+
             if proc.returncode == 0:
-                job.status = JobStatus.COMPLETED
-                job.progress = 100.0
-                job.final_filepath = output_file
-                self.job_progress_changed.emit(job.job_id, 100.0, "Completado", "")
-                self.job_status_changed.emit(job.job_id, JobStatus.COMPLETED)
-                logger.info(f"QueueWorker: [RECODE] Recodificación finalizada exitosamente: {output_file}")
+                return True, None
             else:
-                job.status = JobStatus.FAILED
-                job.error_message = f"FFmpeg terminó con código {proc.returncode}"
-                self.job_status_changed.emit(job.job_id, JobStatus.FAILED)
-                logger.error(f"QueueWorker: [RECODE] FFmpeg falló con código {proc.returncode} ({job.title})")
-                
+                error = f"FFmpeg terminó con código {proc.returncode}"
+                logger.error(f"QueueWorker: [FFmpeg] {error}")
+                return False, error
+
         except Exception as e:
-            logger.error(f"QueueWorker: Error en RECODE: {e}")
+            logger.error(f"QueueWorker: Error ejecutando FFmpeg: {e}")
+            return False, str(e)
+
+    def _execute_recode(self, job, cancellation_event=None, worker_ref=None):
+        if cancellation_event is None:
+            cancellation_event = self._cancellation_event
+
+        job.status = JobStatus.RUNNING
+        job.progress = 0.0
+        self.job_status_changed.emit(job.job_id, JobStatus.RUNNING)
+        self.job_progress_changed.emit(job.job_id, 0.0, "Iniciando FFmpeg...", "")
+
+        config = job.config
+        input_file = config.get("input_path")
+        output_file = config.get("output_path")
+        settings = config.get("settings", {})
+        duration_sec = config.get("duration_sec", 0.0)
+
+        def progress_callback(percent, speed_str, eta_str):
+            job.progress = percent
+            job.speed = speed_str
+            job.eta = eta_str
+            self.job_progress_changed.emit(job.job_id, percent, f"Velocidad: {speed_str}", f"ETA: {eta_str}")
+
+        success, error = self._run_ffmpeg_command(
+            input_file, output_file, settings, duration_sec, cancellation_event,
+            progress_callback=progress_callback, worker_ref=worker_ref,
+        )
+
+        if cancellation_event.is_set():
+            job.status = JobStatus.CANCELLED
+            self.job_status_changed.emit(job.job_id, JobStatus.CANCELLED)
+            logger.info(f"QueueWorker: [RECODE] Trabajo cancelado por el usuario: {job.title}")
+            return
+
+        if success:
+            job.status = JobStatus.COMPLETED
+            job.progress = 100.0
+            job.final_filepath = output_file
+            self.job_progress_changed.emit(job.job_id, 100.0, "Completado", "")
+            self.job_status_changed.emit(job.job_id, JobStatus.COMPLETED)
+            logger.info(f"QueueWorker: [RECODE] Recodificación finalizada exitosamente: {output_file}")
+        else:
             job.status = JobStatus.FAILED
-            job.error_message = str(e)
+            job.error_message = error or "Error desconocido en FFmpeg"
             self.job_status_changed.emit(job.job_id, JobStatus.FAILED)
+            logger.error(f"QueueWorker: [RECODE] FFmpeg falló: {job.error_message} ({job.title})")
 
     @staticmethod
     def _default_output_path():

@@ -9,7 +9,6 @@ from PySide6.QtGui import QPixmap, QImage, QIcon, QFontMetrics, QPainter
 from core.logger.logger_manager import logger
 from core.utils.paths import get_src_dir
 from gui.widgets.mode_selector import ModeSelector
-from gui.widgets.toggle_switch import ToggleSwitch
 from gui.dialogs.fragment_dialog import FragmentDialog
 from gui.styles import get_theme_token
 from core.utils.config_manager import get_config
@@ -50,7 +49,7 @@ class VideoDetailsWidget(QFrame):
         self.left_column_widget.setMaximumWidth(600)
         col1_layout = QVBoxLayout(self.left_column_widget)
         col1_layout.setContentsMargins(0, 0, 0, 0)
-        col1_layout.setSpacing(3)
+        col1_layout.setSpacing(6)
         
         # Thumbnail Responsivo
         self.thumb_container = ResponsiveThumbnail()
@@ -60,7 +59,7 @@ class VideoDetailsWidget(QFrame):
         # Secondary Buttons
         btns_layout = QHBoxLayout()
         btns_layout.setSpacing(10)
-        self.btn_download_thumb = QPushButton(self.tr("Descargar miniatura"))
+        self.btn_download_thumb = QPushButton(self.tr("Guardar imagen"))
         self.btn_download_thumb.setObjectName("secondaryButton")
         self.btn_download_thumb.setEnabled(False)
         self.btn_download_thumb.clicked.connect(lambda: download_thumbnail(self))
@@ -72,16 +71,16 @@ class VideoDetailsWidget(QFrame):
         btns_layout.addWidget(self.btn_send_hi)
         col1_layout.addLayout(btns_layout)
 
-        # Toggle Switch row
+        # Checkbox "Descargar junto con el medio": texto propio del checkbox (no un
+        # QLabel aparte) - el tema ya define QCheckBox { spacing: 8px } para el hueco
+        # entre el indicador y su texto.
         toggle_layout = QHBoxLayout()
-        toggle_layout.setSpacing(8)
-        self.lbl_download_with_video = QLabel(self.tr("Descargar junto con el video"))
-        self.chk_download_with_video = ToggleSwitch()
+        self.chk_download_with_video = QCheckBox(self.tr("Descargar junto con el medio"))
+        self.chk_download_with_video.setCursor(Qt.PointingHandCursor)
 
         toggle_layout.addWidget(self.chk_download_with_video)
-        toggle_layout.addWidget(self.lbl_download_with_video)
         toggle_layout.addStretch()
-        
+
         col1_layout.addLayout(toggle_layout)
         col1_layout.addStretch()
         

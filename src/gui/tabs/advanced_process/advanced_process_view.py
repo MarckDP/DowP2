@@ -1,5 +1,5 @@
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QCheckBox, QComboBox, QSizePolicy, QScrollArea
-from PySide6.QtCore import QPropertyAnimation, QParallelAnimationGroup, QEasingCurve, Qt
+from PySide6.QtCore import QPropertyAnimation, QParallelAnimationGroup, QEasingCurve, Qt, QSize
 from core.logger.logger_manager import logger
 from core.utils.format_manager import FormatManager
 import os
@@ -9,12 +9,29 @@ from core.utils.cleanup_manager import CleanupManager
 from core.utils.config_manager import get_config, save_config
 from core.ytdlp_logic.analyzer import strip_ansi_codes
 
+
+class _ScrollContentWidget(QWidget):
+    """
+    QScrollArea.setWidgetResizable(True) usa minimumSizeHint() del widget contenido
+    como piso DURO para su ancho (vía qSmartMinSize interno de Qt) sin importar cuánto
+    se achique la ventana - verificado que, sin este parche, video_details (que antes
+    de vivir acá adentro se comprimía sin problema muy por debajo de su propio
+    minimumSizeHint) queda clavado en ~884px y el resto se desborda en vez de seguir
+    achicándose con texto recortado, que es el comportamiento que tenía antes y se
+    quiere conservar (ver conversación). Se fuerza el ancho del hint a 0 - el alto real
+    se conserva intacto, así el cálculo de scroll vertical no se ve afectado.
+    """
+    def minimumSizeHint(self):
+        hint = super().minimumSizeHint()
+        return QSize(0, hint.height())
+
 # Widgets
 from gui.widgets.url_bar import URLBar
 from gui.tabs.advanced_process.video_details import VideoDetailsWidget
 from gui.tabs.advanced_process.video_details_components import RichComboBox, RichTextDelegate
 from gui.widgets.combo_box import AutoPopupComboBox
 from gui.tabs.advanced_process.subtitle_options import SubtitleOptionsWidget
+from gui.tabs.advanced_process.recode_options import RecodeOptionsWidget
 from gui.tabs.advanced_process.output_options import OutputOptionsWidget
 from gui.widgets.queue_panel import QueuePanel
 from gui.widgets.queue_trigger_bar import QueueTriggerBar
@@ -22,6 +39,7 @@ from gui.widgets.queue_trigger_bar import QueueTriggerBar
 # Controllers and Workers
 from gui.tabs.advanced_process.workers import AnalysisWorker, DownloadWorker
 from gui.tabs.advanced_process.subtitle_controller import SubtitleController
+from gui.tabs.advanced_process.recode_controller import RecodeController
 from gui.tabs.advanced_process.playlist_controller import PlaylistController
 from gui.tabs.advanced_process.download_controller import DownloadController
 
@@ -29,6 +47,7 @@ class AdvancedProcessTab(QWidget):
     def __init__(self):
         super().__init__()
         self.subtitle_controller = SubtitleController(self)
+        self.recode_controller = RecodeController(self)
         self.playlist_controller = PlaylistController(self)
         self.init_ui()
 
@@ -41,6 +60,7 @@ class AdvancedProcessTab(QWidget):
         self.url_bar = URLBar()
         self.video_details = VideoDetailsWidget()
         self.subtitle_options = SubtitleOptionsWidget()
+        self.recode_options = RecodeOptionsWidget()
         self.output_options = OutputOptionsWidget()
 
         # New Collapsible Queue Components (agrupados sin separación entre panel y tirador)
@@ -61,16 +81,14 @@ class AdvancedProcessTab(QWidget):
         middle_layout.setContentsMargins(0, 0, 0, 0)
         middle_layout.setSpacing(8)
         
-        # Middle content container for standard details/subtitles
+        # Middle content container: todo (detalles de video + tarjetas) va DENTRO del
+        # mismo scroll (ver conversación) - así el panel de detalles también se corre
+        # hacia arriba en vez de quedar fijo mientras solo las tarjetas hacen scroll.
         self.middle_content_container = QWidget()
         middle_content_layout = QVBoxLayout(self.middle_content_container)
         middle_content_layout.setContentsMargins(0, 0, 0, 0)
-        middle_content_layout.setSpacing(8)
-        
-        # 1. Panel de detalles de video con altura fija (solo se expande horizontalmente)
-        middle_content_layout.addWidget(self.video_details)
-        
-        # 2. Área con scroll para lo que está debajo (subtítulos y futuros cuadros)
+        middle_content_layout.setSpacing(0)
+
         self.lower_scroll_area = QScrollArea()
         self.lower_scroll_area.setObjectName("advancedProcessLowerScrollArea")
         self.lower_scroll_area.setWidgetResizable(True)
@@ -78,13 +96,33 @@ class AdvancedProcessTab(QWidget):
         self.lower_scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.lower_scroll_area.setFrameShape(QFrame.NoFrame)
 
-        self.lower_scroll_content = QWidget()
+        self.lower_scroll_content = _ScrollContentWidget()
         self.lower_scroll_content.setObjectName("advancedProcessLowerScrollContent")
         self.lower_scroll_layout = QVBoxLayout(self.lower_scroll_content)
         self.lower_scroll_layout.setContentsMargins(0, 0, 4, 0)
         self.lower_scroll_layout.setSpacing(8)
 
-        self.lower_scroll_layout.addWidget(self.subtitle_options)
+        # 1. Panel de detalles de video (altura fija, solo se expande horizontalmente)
+        self.lower_scroll_layout.addWidget(self.video_details)
+
+        # 2. Fila con las tarjetas de opciones (Subtítulos + Recodificar)
+        cards_row = QHBoxLayout()
+        cards_row.setContentsMargins(0, 0, 0, 0)
+        cards_row.setSpacing(8)
+
+        # OJO: layout.setAlignment(Qt.AlignTop) alinea el LAYOUT dentro de su padre, no
+        # cada item dentro del layout - con dos tarjetas de alto variable (colapsable),
+        # sin esto Qt las centra verticalmente una respecto de la otra en vez de pegarlas
+        # arriba. El alineamiento por-widget (2do argumento de addWidget) es lo que
+        # realmente lo resuelve.
+        #
+        # Stretch 1 en ambas (no 0 + addStretch al final): con ancho MÍNIMO en vez de
+        # FIJO (ver subtitle_options.py/recode_options.py), esto reparte el espacio
+        # sobrante 50/50 entre las dos en vez de dejarlas ancladas a la izquierda con
+        # hueco muerto a la derecha - así toda la fila se estira con la ventana.
+        cards_row.addWidget(self.subtitle_options, 1, Qt.AlignTop)
+        cards_row.addWidget(self.recode_options, 1, Qt.AlignTop)
+        self.lower_scroll_layout.addLayout(cards_row)
         self.lower_scroll_layout.addStretch(1)
 
         self.lower_scroll_area.setWidget(self.lower_scroll_content)
@@ -186,12 +224,12 @@ class AdvancedProcessTab(QWidget):
         analyze_pl_val = config.get("analyze_playlist", True)
         fast_mode_val = config.get("fast_mode", True)
 
-        self.chk_playlist_analysis = QCheckBox(self.tr("Análisis de playlist"))
+        self.chk_playlist_analysis = QCheckBox(self.tr("Playlist"))
         self.chk_playlist_analysis.setChecked(analyze_pl_val)
         layout.addWidget(self.chk_playlist_analysis)
 
         self.chk_fast_mode = QCheckBox(self.tr("Modo rápido"))
-        self.chk_fast_mode.setChecked(fast_mode_val)
+        self.chk_fast_mode.setChecked(fast_mode_val if analyze_pl_val else False)
         self.chk_fast_mode.setEnabled(analyze_pl_val)
         layout.addWidget(self.chk_fast_mode)
 
@@ -596,6 +634,7 @@ class AdvancedProcessTab(QWidget):
         self._current_video_data = None
         self.video_details.reset_ui()
         self.subtitle_controller.clear_subtitles()
+        self.recode_controller.reset_to_defaults()
         self.url_bar.url_input.clear()
         self.output_options.set_download_state("idle")
         self.output_options.btn_start_download.setEnabled(False)
@@ -965,6 +1004,11 @@ class AdvancedProcessTab(QWidget):
                 card = self.queue_panel.cards.get(job.job_id)
                 if card:
                     card.update_title(new_title)
+
+            # Recodificación: una sola config para TODA la playlist (no hay
+            # request_data por hijo acá, ver comentario arriba) - misma tarjeta que
+            # una descarga individual, pero lo que junta se guarda en job.config.
+            job.config.update(self.recode_controller.collect_recode_data())
             return
 
         req_data = self._collect_request_data()
@@ -1089,7 +1133,12 @@ class AdvancedProcessTab(QWidget):
             "embed_metadata": get_config().get("embed_metadata", True),
             "embed_thumbnail": get_config().get("embed_thumbnail", True),
             "remove_sponsors": get_config().get("remove_sponsors", False),
-            "is_playlist": video_data.get("is_playlist", False)
+            "is_playlist": video_data.get("is_playlist", False),
+            "recode_enabled": False,
+            "recode_preset_name": None,
+            "recode_keep_original": True,
+            "recode_filename_prefix": "",
+            "recode_filename_suffix": "_recoded",
         }
 
     def _on_card_selected(self, job_id):
@@ -1168,6 +1217,7 @@ class AdvancedProcessTab(QWidget):
             self._current_video_data = None
             self.video_details.reset_ui()
             self.subtitle_controller.clear_subtitles()
+            self.recode_controller.reset_to_defaults()
             self.url_bar.url_input.clear()
             self.output_options.btn_start_download.setEnabled(False)
             self.output_options.set_progress(0, "", "wait")
@@ -1227,6 +1277,7 @@ class AdvancedProcessTab(QWidget):
                     break
                     
         self.subtitle_controller.restore_subtitles_to_ui(req)
+        self.recode_controller.restore_recode_to_ui(req)
 
         # Restaurar etiqueta
         label = req.get("label")
@@ -1331,6 +1382,7 @@ class AdvancedProcessTab(QWidget):
         }
 
         request_data.update(self.subtitle_controller.collect_subtitle_data())
+        request_data.update(self.recode_controller.collect_recode_data())
         return request_data
 
     def _on_download_button_clicked(self):

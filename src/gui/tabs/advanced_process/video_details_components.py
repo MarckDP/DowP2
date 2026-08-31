@@ -302,6 +302,10 @@ class RichComboBox(AutoPopupComboBox):
         self.initStyleOption(opt)
         
         text = opt.currentText
+        is_placeholder = False
+        if not text:
+            text = self.placeholderText()
+            is_placeholder = True
         opt.currentText = ""
         
         self.style().drawComplexControl(QStyle.ComplexControl.CC_ComboBox, opt, painter, self)
@@ -309,12 +313,23 @@ class RichComboBox(AutoPopupComboBox):
             self._paint_disabled_arrow_overlay(painter, opt)
         self.style().drawControl(QStyle.ControlElement.CE_ComboBoxLabel, opt, painter, self)
 
+        if not text:
+            return
+
         rect = self.style().subControlRect(QStyle.ComplexControl.CC_ComboBox, opt, QStyle.SubControl.SC_ComboBoxEditField, self)
         rect.setLeft(rect.left() + 5)
         rect.setRight(rect.right() - 5)
         
         painter.save()
         painter.setClipRect(rect)
+
+        if is_placeholder:
+            painter.setPen(self.palette().text().color())
+            fm = self.fontMetrics()
+            elided = fm.elidedText(text, Qt.TextElideMode.ElideRight, max(0, rect.width()))
+            painter.drawText(rect, Qt.AlignmentFlag.AlignVCenter, elided)
+            painter.restore()
+            return
         
         parts = text.split(' ')
         current_x = rect.left()

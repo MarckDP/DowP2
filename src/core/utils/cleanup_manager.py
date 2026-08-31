@@ -14,7 +14,30 @@ class CleanupManager:
     """
     Gestor centralizado para la limpieza de residuos de descargas y procesos de FFmpeg.
     """
-    
+
+    @staticmethod
+    def safe_remove(path: str, max_retries: int = 3) -> bool:
+        """
+        Borra un archivo con reintentos ante bloqueos temporales (ej. un proceso que
+        recién cerró el handle, o un antivirus escaneando el archivo). Reutilizado tanto
+        por la limpieza de temporales de yt-dlp como por la confirmación de backups
+        (ver file_conflict_manager.commit_backup). Devuelve True si se borró (o ya no
+        existía), False si falló tras agotar los reintentos.
+        """
+        if not os.path.exists(path):
+            return True
+        for attempt in range(max_retries):
+            try:
+                gc.collect()  # Liberar handles si es posible
+                if attempt > 0:
+                    time.sleep(0.5 * (2 ** attempt))
+                os.remove(path)
+                return True
+            except (PermissionError, OSError) as e:
+                if attempt == max_retries - 1:
+                    logger.warning(f"CleanupManager: No se pudo eliminar (bloqueado) '{path}': {e}")
+        return False
+
     @staticmethod
     def cleanup_ytdlp_temp_files(output_dir, base_title, keep_thumbnail=False):
         """
@@ -51,22 +74,10 @@ class CleanupManager:
             for temp_file in glob.glob(full_pattern):
                 if not os.path.exists(temp_file):
                     continue
-                
-                # Intentar eliminar con reintentos para archivos bloqueados
-                max_retries = 3
-                for attempt in range(max_retries):
-                    try:
-                        gc.collect() # Liberar handles si es posible
-                        if attempt > 0:
-                            time.sleep(0.5 * (2 ** attempt))
-                        
-                        os.remove(temp_file)
-                        logger.debug(f"CleanupManager: Eliminado archivo temporal: {temp_file}")
-                        cleaned_count += 1
-                        break
-                    except (PermissionError, OSError) as e:
-                        if attempt == max_retries - 1:
-                            logger.warning(f"CleanupManager: No se pudo eliminar (bloqueado): {temp_file}")
+
+                if CleanupManager.safe_remove(temp_file):
+                    logger.debug(f"CleanupManager: Eliminado archivo temporal: {temp_file}")
+                    cleaned_count += 1
         
         if cleaned_count > 0:
             logger.info(f"CleanupManager: Se limpiaron {cleaned_count} archivos residuales en {output_dir}")

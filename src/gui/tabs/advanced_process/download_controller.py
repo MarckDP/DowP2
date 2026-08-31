@@ -8,14 +8,22 @@ from PySide6.QtCore import QObject
 from core.logger.logger_manager import logger
 from core.utils.cleanup_manager import CleanupManager
 from core.utils.config_manager import get_config
+from core.utils.preset_manager import build_recode_output_path
+from core.utils.file_conflict_manager import quarantine_for_recode, commit_backup, rollback_backup, predict_final_extension
 from gui.tabs.advanced_process.workers import DownloadWorker
+
+# Clave sentinel para self._recode_by_download en modo SOLO: ahí no hay job_id de cola
+# (SOLO no pasa por QueueManager para la descarga en sí), así que el progreso/estado del
+# job RECODE se traduce a output_options en vez de a una tarjeta (ver _on_recode_job_*).
+_SOLO_RECODE_KEY = "__solo__"
+
 
 class DownloadController(QObject):
     def __init__(self, tab):
         super().__init__(tab)
         self.tab = tab
         self.queue_mgr = tab.queue_mgr
-        
+
         self.is_downloading = False
         self.solo_worker = None
         self.solo_request_data = None
@@ -23,10 +31,20 @@ class DownloadController(QObject):
         self.paused_job_ids = set()
         self.last_downloaded_filepath = None
         self.last_progress_update = 0
-        
+
+        # Recodificación post-descarga (ver Proceso Avanzado > tarjeta "Recodificar"):
+        # mapea el job_id del RECODE encolado -> job_id de la descarga original (o
+        # _SOLO_RECODE_KEY) y guarda el backup/checkbox pendiente para resolver al
+        # terminar (ver _on_recode_job_status).
+        self._recode_by_download = {}
+        self._recode_state = {}
+
         # Connect signals
         self.queue_mgr.job_progress_changed.connect(self._on_queue_job_progress)
         self.queue_mgr.job_status_changed.connect(self._on_queue_job_status)
+        self.queue_mgr.job_progress_changed.connect(self._on_recode_job_progress)
+        self.queue_mgr.job_status_changed.connect(self._on_recode_job_status)
+        self.queue_mgr.job_removed.connect(self._on_download_job_removed)
         self.queue_mgr._worker.finished_all.connect(self._on_queue_finished_all)
 
     def on_download_button_clicked(self):
@@ -132,13 +150,33 @@ class DownloadController(QObject):
                     keep_thumb = self.solo_request_data.get("download_thumbnail_file", False)
                     CleanupManager.cleanup_ytdlp_temp_files(output_dir, title, keep_thumbnail=keep_thumb)
                     CleanupManager.deferred_cleanup(output_dir, title, keep_thumbnail=keep_thumb)
-                self.tab.output_options.set_progress(100, self.tab.tr("Descarga completada con éxito"), "done")
                 logger.info("AdvancedProcessTab: Descarga directa SOLO finalizada con éxito.")
-                from core.services.editor_integration_manager import EditorIntegrationManager
-                editor_mgr = EditorIntegrationManager.get_instance()
-                if editor_mgr and editor_mgr.is_auto_send_enabled:
-                    actual_path = self._find_actual_downloaded_file(self.last_downloaded_filepath)
-                    editor_mgr.process_raw_download(actual_path or self.last_downloaded_filepath, self.solo_request_data)
+
+                # self.solo_worker.request_data es el MISMO dict que DownloadWorker pasó a
+                # DownloaderMaster.download() (sin copiar, ver workers.py::DownloadWorker) -
+                # ahí es donde queda mutado con el título REAL (sanitizado y renombrado si
+                # hubo conflicto). self.solo_request_data es una copia tomada ANTES de
+                # arrancar la descarga (ver start_solo_download más arriba) y nunca ve esas
+                # mutaciones - sirve para los ajustes elegidos en la UI (preset, keep
+                # original, etc.), no para reconstruir la ruta final del archivo.
+                resolved_request_data = self.solo_worker.request_data if self.solo_worker else self.solo_request_data
+
+                if self.solo_request_data.get("recode_enabled"):
+                    # No se marca "Descarga completada" todavía: la misma barra sigue
+                    # con "Recodificando..." (ver _on_recode_job_progress/_status) hasta
+                    # que el job RECODE encolado resuelva.
+                    actual_path = self._resolve_final_download_path(resolved_request_data, self.last_downloaded_filepath)
+                    self._start_post_download_recode(
+                        actual_path=actual_path,
+                        request_data=self.solo_request_data,
+                        video_data=self.tab._current_video_data,
+                        title=title or self.tab.tr("Descarga"),
+                        download_key=_SOLO_RECODE_KEY,
+                    )
+                else:
+                    self.tab.output_options.set_progress(100, self.tab.tr("Descarga completada con éxito"), "done")
+                    actual_path = self._resolve_final_download_path(resolved_request_data, self.last_downloaded_filepath)
+                    self._send_to_editor_if_enabled(actual_path or self.last_downloaded_filepath, self.solo_request_data)
             else:
                 self.tab.output_options.set_progress(0, self.tab.tr(f"Error: {message}"), "wait")
                 logger.error(f"AdvancedProcessTab: Error en descarga directa SOLO: {message}")
@@ -349,6 +387,19 @@ class DownloadController(QObject):
                         
                     CleanupManager.cleanup_ytdlp_temp_files(output_dir, title, keep_thumbnail=keep_thumb)
                     CleanupManager.deferred_cleanup(output_dir, title, keep_thumbnail=keep_thumb)
+
+                if job.job_type == "DOWNLOAD" and job.request_data.get("recode_enabled"):
+                    # job.final_filepath ya viene resuelto correctamente acá (ver
+                    # QueueWorker._execute_download en queue_manager.py, que lo reconstruye
+                    # con el título REAL post-conflicto — job.request_data en cambio nunca
+                    # se actualiza con ese título, así que NO sirve para reconstruir la ruta).
+                    self._start_post_download_recode(
+                        actual_path=self._find_actual_downloaded_file(job.final_filepath),
+                        request_data=job.request_data,
+                        video_data=job.video_data or job.analysis_data,
+                        title=job.title,
+                        download_key=job_id,
+                    )
         elif status in ("FAILED", "CANCELLED"):
             job = self.queue_mgr.get_job(job_id)
             err_msg = job.error_message if job else ""
@@ -367,6 +418,175 @@ class DownloadController(QObject):
                 self.tab.output_options.btn_start_download.setEnabled(True)
                 self.tab.subtitle_options.btn_download_subtitles.setEnabled(True)
                 self.tab.url_bar.solo_btn.setEnabled(True)
+
+    def _on_download_job_removed(self, job_id):
+        """
+        Si se elimina de la cola (botón "X" de la tarjeta) un job DOWNLOAD que todavía
+        tiene una recodificación en curso, cancelarla también - QueuePanel conecta el
+        botón de borrar directo a queue_mgr.remove_job() (ver queue_panel.py), sin pasar
+        por acá, así que sin esto el job RECODE quedaba huérfano: la tarjeta desaparece
+        pero ffmpeg sigue corriendo de fondo sin que nada lo controle (ver conversación,
+        reproducido con un GIF grande que tardaba minutos).
+
+        queue_mgr.remove_job() en el recode dispara la misma cancelación que ya usa
+        cualquier otro cancel (worker.cancel() -> termina el proceso ffmpeg -> termina
+        emitiendo job_status_changed CANCELLED), que _on_recode_job_status ya sabe
+        resolver (restaura el .dbak) - no hace falta duplicar esa lógica acá.
+        """
+        orphaned_recode_ids = [
+            recode_id for recode_id, target in self._recode_by_download.items()
+            if target == job_id
+        ]
+        for recode_id in orphaned_recode_ids:
+            logger.info(
+                f"AdvancedProcessTab: Job {job_id} eliminado con una recodificación en "
+                f"curso, cancelando el job RECODE asociado ({recode_id})."
+            )
+            self.queue_mgr.remove_job(recode_id)
+
+    def _send_to_editor_if_enabled(self, path, request_data):
+        if not path:
+            return
+        from core.services.editor_integration_manager import EditorIntegrationManager
+        editor_mgr = EditorIntegrationManager.get_instance()
+        if editor_mgr and editor_mgr.is_auto_send_enabled:
+            actual_path = self._find_actual_downloaded_file(path)
+            editor_mgr.process_raw_download(actual_path or path, request_data)
+
+    def _start_post_download_recode(self, actual_path, request_data, video_data, title, download_key):
+        """
+        Encola un job RECODE async para un medio recién descargado (individual, LOTES o
+        SOLO — `download_key` es el job_id de la descarga para LOTES, o _SOLO_RECODE_KEY
+        para SOLO, y decide cómo se refleja el progreso: tarjeta de la cola vs. la barra
+        de output_options). No se usa para PLAYLIST, que recodifica cada hijo síncrona e
+        inline dentro de QueueWorker._execute_playlist (ver core/utils/queue_manager.py).
+
+        El original se pone en cuarentena (.dbak) ANTES de encolar, para que quede
+        protegido incluso si la app se cierra mientras el job RECODE todavía está
+        esperando su turno en la cola.
+        """
+        if not actual_path or not os.path.exists(actual_path) or os.path.isdir(actual_path):
+            logger.warning(f"AdvancedProcessTab: No se encontró el archivo descargado para recodificar ({title}).")
+            return
+
+        preset_name = request_data.get("recode_preset_name")
+        prefix = request_data.get("recode_filename_prefix") or ""
+        suffix = request_data.get("recode_filename_suffix") or ""
+        settings, out_file = build_recode_output_path(
+            actual_path, "video_tools/avanzado", preset_name, prefix=prefix, suffix=suffix
+        )
+        if not settings:
+            logger.warning(f"AdvancedProcessTab: Preset de recodificación '{preset_name}' no encontrado, se omite ({title}).")
+            return
+
+        try:
+            backup_path = quarantine_for_recode(actual_path)
+        except Exception as e:
+            logger.error(f"AdvancedProcessTab: No se pudo poner en cuarentena '{actual_path}': {e}")
+            return
+
+        duration_sec = (video_data or {}).get("duration") or 0.0
+
+        recode_job_id = self.queue_mgr.add_job({
+            "input_path": backup_path,
+            "output_path": out_file,
+            "settings": settings,
+            "duration_sec": duration_sec,
+            "title": f"Recode: {title}",
+        }, "RECODE")
+
+        self._recode_by_download[recode_job_id] = download_key
+        self._recode_state[recode_job_id] = {
+            "backup_path": backup_path,
+            "keep_original": request_data.get("recode_keep_original", True),
+            "request_data": dict(request_data),
+            "title": title,
+        }
+
+        if download_key == _SOLO_RECODE_KEY:
+            self.tab.output_options.set_progress(0, self.tab.tr("Recodificando..."), "downloading")
+        else:
+            card = self.tab.queue_panel.cards.get(download_key)
+            if card:
+                # speed_text="" (no None) para limpiar la línea de detalle de inmediato -
+                # si no, se queda mostrando lo último que dejó la descarga (ej.
+                # "Descargado" o la velocidad final) hasta el primer tick de ffmpeg.
+                card.update_progress(0, speed_text="", status_text=self.tab.tr("Recodificando..."))
+
+    def _on_recode_job_progress(self, job_id, percent, speed, eta):
+        target = self._recode_by_download.get(job_id)
+        if target is None:
+            return
+        if target == _SOLO_RECODE_KEY:
+            self.tab.output_options.set_progress(
+                int(percent), self.tab.tr("Recodificando... {0}%").format(int(percent)), "downloading"
+            )
+        else:
+            card = self.tab.queue_panel.cards.get(target)
+            if card:
+                speed_text = f"{speed} | {eta}" if speed and eta else (speed or eta or "")
+                card.update_progress(percent, speed_text=speed_text, status_text=self.tab.tr("Recodificando..."))
+
+    def _on_recode_job_status(self, job_id, status):
+        if job_id not in self._recode_by_download:
+            return
+        if status not in ("COMPLETED", "FAILED", "CANCELLED"):
+            return  # estado intermedio (RUNNING, etc.) - nada que resolver todavía
+
+        target = self._recode_by_download.pop(job_id)
+        state = self._recode_state.pop(job_id, {})
+        backup_path = state.get("backup_path")
+        keep_original = state.get("keep_original", True)
+        request_data = state.get("request_data") or {}
+        title = state.get("title", "")
+        recode_job = self.queue_mgr.get_job(job_id)
+
+        final_path = None
+        if status == "COMPLETED":
+            # Éxito: la casilla decide qué pasa con el original.
+            if keep_original:
+                rollback_backup(backup_path)  # restaura el original junto al recodificado
+            else:
+                commit_backup(backup_path)  # confirma (borra) el original
+            final_path = recode_job.final_filepath if recode_job else None
+            if target != _SOLO_RECODE_KEY:
+                download_job = self.queue_mgr.get_job(target)
+                if download_job and final_path:
+                    download_job.final_filepath = final_path
+            logger.info(f"AdvancedProcessTab: Recodificación post-descarga completada ({title}).")
+        else:
+            # Fallo o cancelación: SIEMPRE se restaura, sin importar "mantener originales"
+            # (la casilla nunca causa pérdida de datos ante un error de ffmpeg).
+            rollback_backup(backup_path)
+            from core.utils.file_conflict_manager import BACKUP_SUFFIX
+            if backup_path and backup_path.endswith(BACKUP_SUFFIX):
+                final_path = backup_path[: -len(BACKUP_SUFFIX)]
+            if status == "FAILED":
+                err = recode_job.error_message if recode_job else "desconocido"
+                logger.error(f"AdvancedProcessTab: Falló la recodificación post-descarga de '{title}': {err}")
+
+        if target == _SOLO_RECODE_KEY:
+            if final_path:
+                self.last_downloaded_filepath = final_path
+            if status == "COMPLETED":
+                self.tab.output_options.set_progress(100, self.tab.tr("Descarga completada con éxito"), "done")
+            else:
+                text = self.tab.tr("Recodificación cancelada (original conservado)") if status == "CANCELLED" \
+                    else self.tab.tr("Error al recodificar (original conservado)")
+                self.tab.output_options.set_progress(0, text, "wait")
+            self._send_to_editor_if_enabled(final_path, request_data)
+        else:
+            card = self.tab.queue_panel.cards.get(target)
+            if card:
+                text = self.tab.tr("Completado") if status == "COMPLETED" else (
+                    self.tab.tr("Recodificación cancelada") if status == "CANCELLED" else self.tab.tr("Error al recodificar")
+                )
+                card.update_progress(100, speed_text="", status_text=text)
+
+        # El job RECODE interno ya cumplió su propósito - no debe quedar visible ni
+        # reintentable en la cola compartida (no es algo que el usuario haya encolado
+        # directamente, ver conversación).
+        self.queue_mgr.remove_job(job_id)
 
     def on_open_output_path_clicked(self):
         path = self.tab.output_options.output_path_input.text().strip()
@@ -397,6 +617,33 @@ class DownloadController(QObject):
                 from PySide6.QtGui import QDesktopServices
                 from PySide6.QtCore import QUrl
                 QDesktopServices.openUrl(QUrl.fromLocalFile(path))
+
+    def _resolve_final_download_path(self, request_data, fallback_filepath):
+        """
+        job.final_filepath / last_downloaded_filepath (puestos por el hook de progreso de
+        yt-dlp, ver _execute_download) apuntan, en descargas video+audio que requieren
+        fusión (ej. HLS), al archivo INTERMEDIO de un solo stream (ej. ".fhls-628.mp4")
+        que yt-dlp borra apenas termina de fusionar — nunca al .mp4 final ya fusionado.
+        Se reconstruye la ruta final esperada con el mismo cálculo que ya usa
+        DownloaderMaster para nombrarlo (predict_final_extension, ver
+        downloader_master.py::_resolve_output_conflict), y solo se cae al hint crudo de
+        yt-dlp si esa reconstrucción no encuentra nada (ej. hubo un rename por conflicto
+        que request_data no ve, porque DownloaderMaster lo aplica sobre una copia)."""
+        request_data = request_data or {}
+        title = request_data.get("title")
+        output_path = request_data.get("output_path")
+        if title and output_path:
+            predicted_ext = predict_final_extension(
+                request_data.get("video_ext"),
+                request_data.get("audio_ext"),
+                request_data.get("mode", "video+audio"),
+                bool(request_data.get("video_is_combined")),
+            )
+            predicted_path = os.path.join(output_path, f"{title}{predicted_ext}")
+            actual = self._find_actual_downloaded_file(predicted_path)
+            if actual and os.path.isfile(actual):
+                return actual
+        return self._find_actual_downloaded_file(fallback_filepath)
 
     def _find_actual_downloaded_file(self, filepath):
         if not filepath:

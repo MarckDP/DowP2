@@ -105,31 +105,50 @@ class QuickModeTab(QWidget):
         monitor.register(self.url_input)
         monitor.url_detected.connect(self._on_clipboard_url_detected)
 
-        # ComboBox de Etiquetas (a la derecha de la URL y antes del botón de cortar fragmentos)
+        # ComboBox de Etiquetas (a la derecha de la URL)
         self.combo_tags = AutoPopupComboBox()
         self.combo_tags.setObjectName("tagsComboBox")
         self.combo_tags.setPlaceholderText(self.tr("Etiqueta"))
         self.combo_tags.currentIndexChanged.connect(self._on_label_changed)
 
-        # Botón conmutable para activar el recorte de fragmentos, inline junto a la URL
-        # y "Descargar" — forma cuadrada estándar para integrarse con esos controles.
+        # ComboBox de Modo (a la derecha de etiqueta y antes de corte de fragmentos)
+        self.mode_combo = AutoPopupComboBox()
+        self.mode_combo.addItem(self.tr("Video + Audio"), "video+audio")
+        self.mode_combo.addItem(self.tr("Solo Audio"), "audio_only")
+        self.mode_combo.addItem(self.tr("Solo Video"), "video_only")
+        self.mode_combo.setCurrentIndex(0)
+        self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
+
+        # ComboBox de Calidad (a la derecha de modo y antes de corte de fragmentos)
+        self.quality_combo = RichComboBox()
+        self.quality_combo.setItemDelegate(RichTextDelegate(self.quality_combo))
+
+        # Botón conmutable para activar el recorte de fragmentos
         self.btn_cut = QPushButton()
         self.btn_cut.setCheckable(True)
         self.btn_cut.setFixedSize(32, 32)
         self.btn_cut.setToolTip(self.tr("Activar recorte de fragmento"))
-
         self.btn_cut.setIconSize(QSize(18, 18))
         self.btn_cut.toggled.connect(self._on_cut_toggled)
         apply_cut_button_style(self.btn_cut, "normal", icon_size=18, shape="square")
 
-        self.btn_download = AnimatedButton(self.tr("Descargar"))
+        # Botón de Descarga compacto con icono SVG (mismo tamaño 32x32 que el de corte)
+        self.btn_download = AnimatedButton("")
         self.btn_download.setObjectName("analyzeButton")
-        self.btn_download.setFixedWidth(120)
+        self.btn_download.setFixedSize(32, 32)
+        self.btn_download.setToolTip(self.tr("Descargar"))
+        _icon_color = get_theme_token("boton_texto", "#000000")
+        _icon = get_colored_svg_icon("download.svg", _icon_color, size=18)
+        self.btn_download.setIcon(_icon)
+        self.btn_download.setIconSize(QSize(18, 18))
+        self.btn_download.setStyleSheet("padding: 0px;")
         self.btn_download.clicked.connect(self._on_download_clicked)
 
         layout.addWidget(QLabel(self.tr("URL:")))
         layout.addWidget(self.url_input, 1)
         layout.addWidget(self.combo_tags)
+        layout.addWidget(self.mode_combo)
+        layout.addWidget(self.quality_combo)
         layout.addWidget(self.btn_cut)
         layout.addWidget(self.btn_download)
         return panel
@@ -141,20 +160,7 @@ class QuickModeTab(QWidget):
         layout.setContentsMargins(15, 6, 15, 6)
         layout.setSpacing(12)
 
-        layout.addWidget(QLabel(self.tr("Modo:")))
-        self.mode_combo = AutoPopupComboBox()
-        self.mode_combo.addItem(self.tr("Video + Audio"), "video+audio")
-        self.mode_combo.addItem(self.tr("Solo Audio"), "audio_only")
-        self.mode_combo.addItem(self.tr("Solo Video"), "video_only")
-        self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
-        layout.addWidget(self.mode_combo)
-
-        layout.addWidget(QLabel(self.tr("Calidad:")))
-        self.quality_combo = RichComboBox()
-        self.quality_combo.setItemDelegate(RichTextDelegate(self.quality_combo))
-        layout.addWidget(self.quality_combo)
-
-        self.chk_playlist_selector = QCheckBox(self.tr("Seleccionar playlist"))
+        self.chk_playlist_selector = QCheckBox(self.tr("Playlist"))
         self.chk_playlist_selector.toggled.connect(self._on_playlist_selector_toggled)
         layout.addWidget(self.chk_playlist_selector)
 
@@ -184,6 +190,7 @@ class QuickModeTab(QWidget):
     def _on_mode_changed(self, index):
         mode = self.mode_combo.itemData(index) or "video+audio"
         current = self.quality_combo.currentData()
+        self.quality_combo.blockSignals(True)
         self.quality_combo.clear()
 
         self.quality_combo.addItem(self.tr("Mejor compatible") + " ✨", "best_compatible")
@@ -204,6 +211,11 @@ class QuickModeTab(QWidget):
             idx = self.quality_combo.findData(current)
             if idx >= 0:
                 self.quality_combo.setCurrentIndex(idx)
+            else:
+                self.quality_combo.setCurrentIndex(0)
+        else:
+            self.quality_combo.setCurrentIndex(0)
+        self.quality_combo.blockSignals(False)
 
     def _on_thumbnail_only_toggled(self, checked):
         self.mode_combo.setEnabled(not checked)
@@ -296,8 +308,11 @@ class QuickModeTab(QWidget):
         self.url_input.setEnabled(True)
         self.btn_download.setEnabled(enabled or self.controller.is_downloading)
         self.options_panel.setEnabled(enabled)
-        self.output_options.output_path_input.setEnabled(enabled)
-        self.output_options.btn_select_output_path.setEnabled(enabled)
+        self.mode_combo.setEnabled(enabled and not self.chk_thumb_only.isChecked())
+        self.quality_combo.setEnabled(enabled and not self.chk_thumb_only.isChecked())
+        self.combo_tags.setEnabled(enabled)
+        self.output_options.output_path_input.setEnabled(enabled and self.combo_tags.currentIndex() <= 0)
+        self.output_options.btn_select_output_path.setEnabled(enabled and self.combo_tags.currentIndex() <= 0)
         self.output_options.speed_limit_input.setEnabled(enabled)
         
         # btn_cut: solo habilitar si playlist_selector no está activo
@@ -307,7 +322,7 @@ class QuickModeTab(QWidget):
             self.btn_cut.setEnabled(False)
 
     def _set_download_text(self, text):
-        self.btn_download.setText(text)
+        self.btn_download.setToolTip(text)
 
     def _on_clipboard_url_detected(self, url):
         """Llamado cuando el monitor de portapapeles pega una URL en nuestro campo."""
@@ -395,10 +410,8 @@ class QuickModeTab(QWidget):
         self._update_combo_style()
         if index <= 0:
             # Ninguna etiqueta seleccionada: restaurar ruta por defecto
-            from core.utils.paths import get_default_download_dir
-            from core.utils.config_manager import get_config
-            config = get_config()
-            default_path = config.get("default_download_dir", get_default_download_dir())
+            from core.tabs.advanced_process.output_logic import get_default_download_path
+            default_path = get_default_download_path()
             self.output_options.output_path_input.setText(default_path)
             self.output_options.output_path_input.setEnabled(True)
             self.output_options.btn_select_output_path.setEnabled(True)

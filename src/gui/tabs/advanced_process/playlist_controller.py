@@ -253,3 +253,7 @@ class PlaylistController(QObject):
             "wait"
         )
         self.tab.output_options.btn_start_download.setEnabled(True)
+
+        # Recodificación: config única para toda la playlist, vive en job.config (no en
+        # request_data - ver advanced_process_view.py::_save_current_job_options).
+        self.tab.recode_controller.restore_recode_to_ui(job.config)

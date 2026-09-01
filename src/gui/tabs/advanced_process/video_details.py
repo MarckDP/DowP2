@@ -139,21 +139,14 @@ class VideoDetailsWidget(QFrame):
         audio_layout.setContentsMargins(0, 0, 0, 0)
         audio_layout.setSpacing(5)
         
-        audio_cols_layout = QHBoxLayout()
-        audio_cols_layout.setContentsMargins(0, 0, 0, 0)
-        audio_cols_layout.setSpacing(10)
-        
-        col_audio = QVBoxLayout()
-        col_audio.setContentsMargins(0, 0, 0, 0)
-        col_audio.setSpacing(5)
         self.lbl_audio_quality = QLabel(self.tr("Calidad de Audio:"))
         self.lbl_audio_quality.setObjectName("menuLabel")
         self.combo_audio = RichComboBox()
         self.combo_audio.setItemDelegate(RichTextDelegate(self.combo_audio))
         self.combo_audio.setSizeAdjustPolicy(QComboBox.AdjustToContents)
         self.combo_audio.addItem(self.tr("Seleccionar audio..."))
-        col_audio.addWidget(self.lbl_audio_quality)
-        col_audio.addWidget(self.combo_audio)
+        audio_layout.addWidget(self.lbl_audio_quality)
+        audio_layout.addWidget(self.combo_audio)
         
         self.col_audio_source = QWidget()
         self.col_audio_source.setObjectName("audioSourceContainer")
@@ -168,10 +161,8 @@ class VideoDetailsWidget(QFrame):
         col_source_layout.addWidget(self.lbl_audio_source)
         col_source_layout.addWidget(self.combo_audio_source)
 
-        audio_cols_layout.addLayout(col_audio, 2)
-        audio_cols_layout.addWidget(self.col_audio_source, 1)
         self.col_audio_source.hide()
-        audio_layout.addLayout(audio_cols_layout)
+        audio_layout.addWidget(self.col_audio_source)
 
         menus_layout.addWidget(self.video_container)
         menus_layout.addWidget(self.audio_container)

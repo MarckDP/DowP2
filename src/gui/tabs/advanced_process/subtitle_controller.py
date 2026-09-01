@@ -149,6 +149,7 @@ class SubtitleController(QObject):
         # Habilitar solo si hay algo seleccionado que no sea el placeholder
         is_valid = lang_idx > 0 and format_idx >= 0 and bool(format_data)
         self.tab.subtitle_options.btn_download_subtitles.setEnabled(is_valid)
+        self.tab.subtitle_options.set_header_active(is_valid)
         
         # Opciones generales de subtítulos requieren un idioma seleccionado
         self.tab.subtitle_options.chk_download_with_media["container"].setEnabled(is_valid)

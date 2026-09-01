@@ -76,7 +76,7 @@ class QuickModeTab(QWidget):
         self.options_row = QWidget()
         options_row_layout = QHBoxLayout(self.options_row)
         options_row_layout.setContentsMargins(0, 0, 0, 0)
-        options_row_layout.setSpacing(12)
+        options_row_layout.setSpacing(8)
         options_row_layout.addWidget(self.options_panel, 1)
         options_row_layout.addWidget(self.recode_bar)
 
@@ -249,6 +249,14 @@ class QuickModeTab(QWidget):
         self.chk_playlist_selector = QCheckBox(self.tr("Playlist"))
         self.chk_playlist_selector.toggled.connect(self._on_playlist_selector_toggled)
         layout.addWidget(self.chk_playlist_selector)
+
+        # Divisor vertical para separar Playlist de las opciones de miniatura - mismo
+        # estilo que advanced_process_view.py::_build_analysis_options_bar (self.divider).
+        divider = QFrame()
+        divider.setFixedWidth(1)
+        borde_color = get_theme_token('borde_normal', '#2d2d2d')
+        divider.setStyleSheet(f"background-color: {borde_color}; border: none; border-radius: 0px;")
+        layout.addWidget(divider)
 
         self.chk_thumb_file = QCheckBox(self.tr("Guardar miniatura"))
         layout.addWidget(self.chk_thumb_file)

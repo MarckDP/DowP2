@@ -210,12 +210,22 @@ class MediaQueueWidget(QFrame):
             }}
         """)
 
-        # Configurar cabeceras
+        # Configurar cabeceras - Interactive en las 4 columnas (igual que el Gestor de
+        # Medios, editing_media_view.py::media_table, que no fija Stretch/
+        # ResizeToContents y deja que el usuario arrastre cada columna a gusto). Antes
+        # Nombre estaba en Stretch y el resto en ResizeToContents, así que ninguna se
+        # podía redimensionar a mano (ver conversación) - stretchLastSection en False
+        # para que Estado tampoco quede forzada a ocupar el resto.
         header = self.tree.header()
-        header.setSectionResizeMode(0, QHeaderView.Stretch)
-        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        header.setStretchLastSection(False)
+        header.setSectionResizeMode(0, QHeaderView.Interactive)
+        header.setSectionResizeMode(1, QHeaderView.Interactive)
+        header.setSectionResizeMode(2, QHeaderView.Interactive)
+        header.setSectionResizeMode(3, QHeaderView.Interactive)
+        self.tree.setColumnWidth(0, 220)  # Nombre
+        self.tree.setColumnWidth(1, 70)   # Tipo
+        self.tree.setColumnWidth(2, 90)   # Tamaño
+        self.tree.setColumnWidth(3, 150)  # Estado
 
         layout.addWidget(self.tree, 1)
 

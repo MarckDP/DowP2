@@ -15,6 +15,8 @@ from PySide6.QtWidgets import (
 from gui.widgets.combo_box import AutoPopupComboBox
 from gui.styles import get_theme_token
 
+_TITLE_STYLE_BASE = "font-weight: bold; font-size: 13px;"
+
 
 class SubtitleOptionsWidget(QFrame):
     COMPACT_WIDTH = 350
@@ -57,7 +59,7 @@ class SubtitleOptionsWidget(QFrame):
         self.title_label = QLabel(self.tr("Subtítulos"))
         self.title_label.setObjectName("sectionTitle")
         self.title_label.setAlignment(Qt.AlignCenter)
-        self.title_label.setStyleSheet("font-weight: bold; font-size: 13px;")
+        self.title_label.setStyleSheet(_TITLE_STYLE_BASE)
 
         header_layout.addWidget(self.title_label)
 
@@ -145,6 +147,17 @@ class SubtitleOptionsWidget(QFrame):
 
     def toggle_collapse(self):
         self.set_expanded(not self._is_expanded, animate=True)
+
+    def set_header_active(self, active: bool):
+        """Ilumina el título "Subtítulos" en el verde de acento cuando hay un
+        subtítulo realmente seleccionado (no el placeholder "Seleccionar idioma...")
+        - mismo patrón que RecodeOptionsWidget._update_header_highlight, disparado
+        desde subtitle_controller.py::on_subtitle_selection_changed."""
+        if active:
+            accent = get_theme_token('acento_primario', '#B9E640')
+            self.title_label.setStyleSheet(f"{_TITLE_STYLE_BASE} color: {accent};")
+        else:
+            self.title_label.setStyleSheet(_TITLE_STYLE_BASE)
 
     def _expanded_height(self) -> int:
         """Alto real necesario para el cuerpo actual, calculado en vivo (con el tema/

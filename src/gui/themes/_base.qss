@@ -760,25 +760,29 @@ QFrame#videoContainer {
 QFrame#additionalOptionsContainer {
     background-color: {{fondo_secundario}};
     border: 1px solid {{borde_normal}};
-    border-radius: 8px;
+    border-radius: 6px;
 }
 
 QWidget#subtitleHeaderWidget {
     background: transparent;
+    border: 1px solid transparent;
     border-radius: 6px;
 }
 
 QWidget#subtitleHeaderWidget:hover {
     background-color: rgba(255, 255, 255, 0.05);
+    border: 1px solid {{borde_sutil}};
 }
 
 QWidget#recodeHeaderWidget {
     background: transparent;
+    border: 1px solid transparent;
     border-radius: 6px;
 }
 
 QWidget#recodeHeaderWidget:hover {
     background-color: rgba(255, 255, 255, 0.05);
+    border: 1px solid {{borde_sutil}};
 }
 
 QFrame#quickRecodeBar {

@@ -190,13 +190,13 @@ class QuickModeTab(QWidget):
         monitor.register(self.url_input)
         monitor.url_detected.connect(self._on_clipboard_url_detected)
 
-        # ComboBox de Etiquetas (a la derecha de la URL)
+        # ComboBox de Etiquetas (a la derecha de corte de fragmentos)
         self.combo_tags = AutoPopupComboBox()
         self.combo_tags.setObjectName("tagsComboBox")
         self.combo_tags.setPlaceholderText(self.tr("Etiqueta"))
         self.combo_tags.currentIndexChanged.connect(self._on_label_changed)
 
-        # ComboBox de Modo (a la derecha de etiqueta y antes de corte de fragmentos)
+        # ComboBox de Modo (a la derecha de etiqueta)
         self.mode_combo = AutoPopupComboBox()
         self.mode_combo.addItem(self.tr("Video + Audio"), "video+audio")
         self.mode_combo.addItem(self.tr("Solo Audio"), "audio_only")
@@ -204,11 +204,12 @@ class QuickModeTab(QWidget):
         self.mode_combo.setCurrentIndex(0)
         self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
 
-        # ComboBox de Calidad (a la derecha de modo y antes de corte de fragmentos)
+        # ComboBox de Calidad (a la derecha de modo)
         self.quality_combo = RichComboBox()
         self.quality_combo.setItemDelegate(RichTextDelegate(self.quality_combo))
 
-        # Botón conmutable para activar el recorte de fragmentos
+        # Botón conmutable para activar el recorte de fragmentos - pegado a la URL (ver
+        # conversación: antes vivía junto al de Descargar, muy lejos del campo de URL)
         self.btn_cut = QPushButton()
         self.btn_cut.setCheckable(True)
         self.btn_cut.setFixedSize(32, 32)
@@ -231,10 +232,10 @@ class QuickModeTab(QWidget):
 
         layout.addWidget(QLabel(self.tr("URL:")))
         layout.addWidget(self.url_input, 1)
+        layout.addWidget(self.btn_cut)
         layout.addWidget(self.combo_tags)
         layout.addWidget(self.mode_combo)
         layout.addWidget(self.quality_combo)
-        layout.addWidget(self.btn_cut)
         layout.addWidget(self.btn_download)
         return panel
 

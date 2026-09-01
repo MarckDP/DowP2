@@ -73,7 +73,7 @@ class FreesoundPreviewRunnable(QRunnable):
 
 
 class FreesoundPreviewCacheManager(QObject):
-    """Gestor de caché LRU para vistas previas de audio de Freesound (máximo 10 archivos)."""
+    """Gestor de caché LRU para vistas previas de audio de Freesound (máximo 50 archivos)."""
 
     preview_ready = Signal(str, str)  # (url, local_path)
     waveform_peaks_ready = Signal(str, list) # (url, peaks)

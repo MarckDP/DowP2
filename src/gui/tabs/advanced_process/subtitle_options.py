@@ -115,7 +115,7 @@ class SubtitleOptionsWidget(QFrame):
         # Switches
         self.chk_download_with_media = self._build_switch_row(self.tr("Descargar con el medio"))
         self.chk_standardize_srt = self._build_switch_row(self.tr("Convertir y estandarizar a SRT"))
-        self.chk_cut_to_fragment = self._build_switch_row(self.tr("Recortar subtítulo al fragmento"))
+        self.chk_cut_to_fragment = self._build_switch_row(self.tr("Recortar al fragmento"))
         
         # Deshabilitados por defecto hasta que se seleccione un subtítulo válido
         self.chk_download_with_media["container"].setEnabled(False)

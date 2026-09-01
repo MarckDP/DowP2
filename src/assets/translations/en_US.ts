@@ -3121,9 +3121,9 @@ Se eliminaron {res.get(&apos;files_removed&apos;, 0)} archivos y se liberaron {r
         <translation>Convert and standardize to SRT</translation>
     </message>
     <message>
-        <location filename="../../gui/tabs/advanced_process/subtitle_options.py" line="89"/>
-        <source>Recortar subtítulo al fragmento</source>
-        <translation>Trim subtitle to fragment</translation>
+        <location filename="../../gui/tabs/advanced_process/subtitle_options.py" line="118"/>
+        <source>Recortar al fragmento</source>
+        <translation>Trim to fragment</translation>
     </message>
     <message>
         <location filename="../../gui/tabs/advanced_process/subtitle_options.py" line="97"/>

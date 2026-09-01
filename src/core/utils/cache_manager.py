@@ -187,7 +187,8 @@ class FreesoundPreviewCacheProvider(BaseCacheProvider):
 
     @property
     def description(self) -> str:
-        return "Audios en caché local para preescucha instantánea al explorar Freesound (máx 10 archivos)."
+        from core.tabs.editing_media.freesound_preview_cache import MAX_FREESOUND_CACHE_FILES
+        return f"Audios en caché local para preescucha instantánea al explorar Freesound (máx {MAX_FREESOUND_CACHE_FILES} archivos)."
 
     def get_stats(self) -> Dict[str, Any]:
         from core.utils.paths import get_freesound_cache_dir

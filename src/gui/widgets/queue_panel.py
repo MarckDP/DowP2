@@ -2,7 +2,7 @@
 import os
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea, QProgressBar, QFrame, QPushButton,
-    QGraphicsOpacityEffect
+    QGraphicsOpacityEffect, QSizePolicy
 )
 from PySide6.QtCore import Qt, QVariantAnimation, QEasingCurve, Signal, QTimer
 from PySide6.QtGui import QColor, QIcon, QPixmap, QPainter, QCursor
@@ -62,6 +62,8 @@ class QueueItemCard(QFrame):
         self._current_border = get_theme_token('borde', '#2d2d2d')
         self._press_pos = None
         self._dragging = False
+        self._raw_title = title
+        self._raw_speed_text = ""
         self.setObjectName("queueItemCard")
         self.init_ui(title)
 
@@ -71,12 +73,12 @@ class QueueItemCard(QFrame):
 
     def _apply_style(self):
         bg_color = get_theme_token('fondo_principal', '#121212')
+        acento = get_theme_token('acento_primario', '#B9E640')
         if self._is_selected:
             new_style = f"""
                 QFrame#queueItemCard {{
                     background-color: {get_theme_token('fondo_hover', '#1a1a1a')};
-                    border: 1px solid {self._current_border};
-                    border-left: 4px solid {get_theme_token('acento_primario', '#B9E640')};
+                    border: 1px solid {acento};
                     border-radius: 6px;
                 }}
             """
@@ -145,6 +147,7 @@ class QueueItemCard(QFrame):
         self.set_drag_opacity(False)
         
     def init_ui(self, title):
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(6)
@@ -155,12 +158,15 @@ class QueueItemCard(QFrame):
         self.title_lbl = QLabel(title)
         self.title_lbl.setStyleSheet(f"color: {get_theme_token('texto_principal', '#ffffff')}; font-weight: bold;")
         self.title_lbl.setWordWrap(False)
-        self.title_lbl.setMinimumWidth(50)
+        self.title_lbl.setMinimumWidth(0)
+        self.title_lbl.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self.update_title(title)
         
         self.status_lbl = QLabel(self.tr("En espera"))
         self.status_lbl.setStyleSheet(f"color: {get_theme_token('texto_secundario', '#aaaaaa')}; font-size: 10px;")
         self.status_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.status_lbl.setMinimumWidth(0)
+        self.status_lbl.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Preferred)
         
         # Botones de control
         self.btn_up = QPushButton()
@@ -219,8 +225,8 @@ class QueueItemCard(QFrame):
         controls_layout.addWidget(self.btn_down)
         controls_layout.addWidget(self.btn_close)
 
-        top_layout.addWidget(self.title_lbl, 3)
-        top_layout.addWidget(self.status_lbl, 1)
+        top_layout.addWidget(self.title_lbl, 1)
+        top_layout.addWidget(self.status_lbl, 0)
         top_layout.addLayout(controls_layout)
         layout.addLayout(top_layout)
         
@@ -250,12 +256,14 @@ class QueueItemCard(QFrame):
         
         self.info_lbl = QLabel("")
         self.info_lbl.setStyleSheet(f"color: {get_theme_token('texto_secundario', '#888888')}; font-size: 10px;")
+        self.info_lbl.setMinimumWidth(0)
+        self.info_lbl.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         
         self.percent_lbl = QLabel("0%")
         self.percent_lbl.setStyleSheet(f"color: {get_theme_token('acento_primario', '#B9E640')}; font-size: 10px; font-weight: bold;")
-        self.percent_lbl.setAlignment(Qt.AlignRight)
+        self.percent_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         
-        info_layout.addWidget(self.info_lbl)
+        info_layout.addWidget(self.info_lbl, 1)
         info_layout.addWidget(self.percent_lbl)
         layout.addLayout(info_layout)
         
@@ -268,17 +276,62 @@ class QueueItemCard(QFrame):
             }}
         """)
 
+    def _update_elided_title(self):
+        if not hasattr(self, '_raw_title') or not self._raw_title:
+            return
+        if not hasattr(self, 'title_lbl'):
+            return
+        ctrl_w = 0
+        for btn in (getattr(self, 'btn_configure', None),
+                    getattr(self, 'btn_reset', None),
+                    getattr(self, 'btn_folder', None),
+                    getattr(self, 'btn_up', None),
+                    getattr(self, 'btn_down', None),
+                    getattr(self, 'btn_close', None)):
+            if btn and btn.isVisible():
+                ctrl_w += btn.width() + 2
+        
+        status_w = self.status_lbl.fontMetrics().boundingRect(self.status_lbl.text()).width() if (hasattr(self, 'status_lbl') and self.status_lbl.text()) else 0
+        if status_w > 0:
+            status_w += 6
+        
+        card_w = self.width() if self.width() > 30 else (self.parentWidget().width() if (self.parentWidget() and self.parentWidget().width() > 30) else 240)
+        avail_w = max(20, card_w - ctrl_w - status_w - 26)
+        metrics = self.title_lbl.fontMetrics()
+        elided = metrics.elidedText(self._raw_title, Qt.ElideRight, avail_w)
+        self.title_lbl.setText(elided)
+
+    def _update_elided_info(self):
+        if not hasattr(self, 'info_lbl'):
+            return
+        if not hasattr(self, '_raw_speed_text') or not self._raw_speed_text:
+            self.info_lbl.setText("")
+            return
+        percent_w = self.percent_lbl.fontMetrics().boundingRect(self.percent_lbl.text()).width() if (hasattr(self, 'percent_lbl') and self.percent_lbl.text()) else 0
+        if percent_w > 0:
+            percent_w += 6
+        card_w = self.width() if self.width() > 30 else (self.parentWidget().width() if (self.parentWidget() and self.parentWidget().width() > 30) else 240)
+        avail_w = max(20, card_w - percent_w - 26)
+        metrics = self.info_lbl.fontMetrics()
+        elided = metrics.elidedText(self._raw_speed_text, Qt.ElideRight, avail_w)
+        self.info_lbl.setText(elided)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_elided_title()
+        self._update_elided_info()
+
     def update_progress(self, percent, speed_text=None, status_text=None):
         """Actualiza el progreso y la información de la descarga."""
         self.progress_bar.setValue(int(percent))
         self.percent_lbl.setText(f"{int(percent)}%")
         if speed_text is not None:
-            metrics = self.info_lbl.fontMetrics()
-            elided = metrics.elidedText(speed_text, Qt.ElideRight, 160)
-            self.info_lbl.setText(elided)
-            self.info_lbl.setToolTip(speed_text if elided != speed_text else "")
+            self._raw_speed_text = speed_text
+            self.info_lbl.setToolTip(speed_text)
+            self._update_elided_info()
         if status_text:
             self.status_lbl.setText(status_text)
+            self._update_elided_title()
             
             # Cambiar colores según estado
             border_color = get_theme_token('borde', '#2d2d2d')
@@ -317,6 +370,7 @@ class QueueItemCard(QFrame):
                 self.progress_bar.setRange(0, 100)
                 self.progress_bar.setValue(0)
                 self.percent_lbl.setText("0%")
+                self._raw_speed_text = ""
                 self.info_lbl.setText("")
                 self.info_lbl.setToolTip("")
                 self.status_lbl.setToolTip("")
@@ -340,11 +394,10 @@ class QueueItemCard(QFrame):
             self._apply_style()
 
     def update_title(self, title):
-        """Actualiza el título con elipsis si es muy largo."""
-        metrics = self.title_lbl.fontMetrics()
-        elided = metrics.elidedText(title, Qt.ElideRight, 180)
-        self.title_lbl.setText(elided)
+        """Actualiza el título con elipsis dinámica."""
+        self._raw_title = title
         self.title_lbl.setToolTip(title)
+        self._update_elided_title()
 
 
 class QueuePanel(QWidget):
@@ -419,6 +472,7 @@ class QueuePanel(QWidget):
         # Scroll Area para el listado de tarjetas
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.scroll.setStyleSheet("background: transparent; border: none;")
         
         # Contenedor interno del Scroll
@@ -498,7 +552,7 @@ class QueuePanel(QWidget):
 
     def toggle_expanded(self, parent_width):
         """Alterna el estado de expansión usando animaciones."""
-        target_width = int(parent_width * 0.3)
+        target_width = max(280, int(parent_width * 0.3))
         self._anim.stop()
         
         if self.is_expanded:
@@ -519,8 +573,10 @@ class QueuePanel(QWidget):
     def adjust_width(self, parent_width):
         """Ajusta instantáneamente el tamaño al redimensionar la ventana."""
         if self.is_expanded and self._anim.state() != QVariantAnimation.Running:
-            target_width = int(parent_width * 0.3)
+            target_width = max(280, int(parent_width * 0.3))
             self.setFixedWidth(target_width)
+            if hasattr(self, 'content_widget'):
+                self.content_widget.setFixedWidth(target_width)
 
     def add_download(self, title) -> QueueItemCard:
         """Añade una nueva descarga a la cola (obsoleto, usar QueueManager)."""
@@ -668,8 +724,8 @@ class QueuePanel(QWidget):
             fragment_text = speed if speed else self.tr("Cortando fragmentos...")
             card.update_progress(
                 percent=0,
-                speed_text=self.tr("Por favor espere..."),
-                status_text=fragment_text
+                speed_text=fragment_text,
+                status_text=self.tr("Descargando")
             )
         else:
             card.progress_bar.setRange(0, 100)
@@ -682,6 +738,8 @@ class QueuePanel(QWidget):
 
     def _on_width_changed(self, width):
         self.setFixedWidth(width)
+        if hasattr(self, 'content_widget'):
+            self.content_widget.setFixedWidth(width)
 
     def _on_animation_finished(self):
         if not self.is_expanded:

@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
     QSizePolicy, QLineEdit, QAbstractItemView, QFrame,
     QRadioButton, QButtonGroup, QGraphicsView, QGraphicsScene
 )
-from PySide6.QtCore import Qt, QUrl, QPoint, QSize, QSizeF, QRegularExpression, QEvent, QTimer
+from PySide6.QtCore import Qt, QUrl, QPoint, QSize, QSizeF, QRegularExpression, QEvent, QTimer, Signal
 from PySide6.QtGui import QPixmap, QIcon, QRegularExpressionValidator, QPainter, QColor
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PySide6.QtMultimediaWidgets import QGraphicsVideoItem
@@ -56,66 +56,6 @@ class DeSelectableRadioButton(QRadioButton):
                 self.setAutoExclusive(True)
         else:
             super().mousePressEvent(event)
-
-class _PlayOverlayButton(QPushButton):
-    """Botón circular semi-transparente para la vista previa con renderizado limpio
-    mediante QPainter y antialiasing."""
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setAttribute(Qt.WA_TranslucentBackground, True)
-        self.setFixedSize(58, 58)
-        self.setCursor(Qt.PointingHandCursor)
-        self._is_playing = False
-        self._is_hovered = False
-
-    def set_playing(self, playing: bool):
-        self._is_playing = playing
-        self.update()
-
-    def enterEvent(self, event):
-        super().enterEvent(event)
-        self._is_hovered = True
-        self.update()
-
-    def leaveEvent(self, event):
-        super().leaveEvent(event)
-        self._is_hovered = False
-        self.update()
-
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-        rect = self.rect().adjusted(2, 2, -2, -2)
-
-        # Fondo circular semi-transparente y borde suave
-        if self._is_hovered:
-            bg_color = QColor(185, 230, 64, 215)
-            border_color = QColor(185, 230, 64, 255)
-            icon_color = "#000000"
-        else:
-            bg_color = QColor(0, 0, 0, 160)
-            border_color = QColor(185, 230, 64, 160)
-            icon_color = "#ffffff"
-
-        painter.setBrush(bg_color)
-        pen = painter.pen()
-        pen.setColor(border_color)
-        pen.setWidth(2)
-        painter.setPen(pen)
-        painter.drawEllipse(rect)
-
-        # Dibujar icono SVG centrado y visible
-        icon_name = "pause.svg" if self._is_playing else "play_arrow.svg"
-        icon = _icon(icon_name, icon_color, 28)
-        pix = icon.pixmap(QSize(28, 28))
-        if not pix.isNull():
-            ox = (self.width() - pix.width()) // 2 + (2 if not self._is_playing else 0)
-            oy = (self.height() - pix.height()) // 2
-            painter.drawPixmap(ox, oy, pix)
-
-        painter.end()
-
 
 class _FragmentItem(QWidget):
     """Fila personalizada para cada fragmento en la lista con sufijo editable."""
@@ -177,15 +117,9 @@ class _FragmentItem(QWidget):
 
 class _SimpleVideoView(QGraphicsView):
     """QGraphicsView de fondo transparente que aloja un único QGraphicsVideoItem,
-    ajustado y centrado (letterbox/pillarbox) al redimensionar - versión mínima, sin
-    zoom/paneo/recorte, de _TransparentVideoView (gui/widgets/media_trim_player_widget.py).
+    ajustado y centrado (letterbox/pillarbox) al redimensionar."""
 
-    Reemplaza a QVideoWidget: éste renderiza en una superficie NATIVA de Windows
-    (OpenGL/DirectX) por debajo del widget Qt, lo que en un diálogo sin bordes que hace
-    su propio hit-testing manual de resize (ver MainWindow.nativeEvent) puede dejar a la
-    ventana principal sin poder redimensionarse después de abrir y cerrar este diálogo -
-    QGraphicsVideoItem en cambio se pinta como cualquier otro ítem de una QGraphicsScene,
-    sin ventana nativa propia (ver conversación)."""
+    clicked = Signal()
 
     def __init__(self, scene: QGraphicsScene, video_item: QGraphicsVideoItem, parent=None):
         super().__init__(scene, parent)
@@ -196,6 +130,14 @@ class _SimpleVideoView(QGraphicsView):
         self.setRenderHint(QPainter.SmoothPixmapTransform)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setCursor(Qt.PointingHandCursor)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit()
+            event.accept()
+            return
+        super().mousePressEvent(event)
 
     def refit(self):
         """Centra y escala el ítem de video dentro del viewport, preservando su
@@ -404,10 +346,10 @@ class FragmentDialog(QDialog):
         c_layout.addWidget(self.video_widget)
         c_layout.addWidget(self.fallback_label)
 
-        # Overlay play button (centered, always visible, changes icon)
-        self.btn_play_overlay = _PlayOverlayButton(self.preview_container)
-        self.btn_play_overlay.setObjectName("overlayPlay")
-        self.btn_play_overlay.clicked.connect(self.toggle_play)
+        self.video_widget.clicked.connect(self.toggle_play)
+        self.preview_container.setCursor(Qt.PointingHandCursor)
+        self.fallback_label.setCursor(Qt.PointingHandCursor)
+        self.fallback_label.mousePressEvent = lambda e: self.toggle_play() if e.button() == Qt.LeftButton else None
         self.preview_container.resizeEvent = self.on_preview_resize
 
         left_layout.addWidget(self.preview_container, 1)
@@ -662,10 +604,6 @@ class FragmentDialog(QDialog):
     def on_preview_resize(self, event):
         from core.logger.logger_manager import logger
         logger.debug(f"[Preview] on_preview_resize fired — container: {self.preview_container.width()}x{self.preview_container.height()}")
-        # Center overlay play button
-        cx = (self.preview_container.width()  - self.btn_play_overlay.width())  // 2
-        cy = (self.preview_container.height() - self.btn_play_overlay.height()) // 2
-        self.btn_play_overlay.move(cx, cy)
         # Center loading label
         self.loading_label.adjustSize()
         lw, lh = self.loading_label.width(), self.loading_label.height()
@@ -833,7 +771,6 @@ class FragmentDialog(QDialog):
         playing = (state == QMediaPlayer.PlayingState)
         tooltip = self.tr("Pausar") if playing else self.tr("Reproducir")
         
-        self.btn_play_overlay.set_playing(playing)
         from gui.styles import apply_player_play_button_style
         apply_player_play_button_style(self.btn_play_ctrl, is_playing=playing, icon_size=18)
         self.btn_play_ctrl.setToolTip(tooltip)
@@ -870,7 +807,6 @@ class FragmentDialog(QDialog):
             self.loading_label.hide()
             self.video_widget.show()
             self.fallback_label.hide()
-            self.btn_play_overlay.show()
         else:
             # InvalidMedia, EndOfMedia, etc.
             self.loading_label.hide()
@@ -1018,7 +954,6 @@ class FragmentDialog(QDialog):
             # muestra sobre fallback_label mientras tanto.
             self.video_widget.hide()
             self.fallback_label.show()
-            self.btn_play_overlay.hide()
             self.loading_label.show()
             self.loading_label.raise_()
             logger.debug(f"[Preview] loading_label.show() — isVisible={self.loading_label.isVisible()} pos={self.loading_label.pos()} size={self.loading_label.size()}")
@@ -1038,7 +973,6 @@ class FragmentDialog(QDialog):
         else:
             self.video_widget.hide()
             self.fallback_label.show()
-            self.btn_play_overlay.hide()
             self.loading_label.hide()
             if self.thumbnail_pixmap and not self.thumbnail_pixmap.isNull():
                 self.fallback_label.setPixmap(self.thumbnail_pixmap.scaled(

@@ -111,6 +111,7 @@ class DownloaderMaster:
                     # Log de validación de itags en el outtmpl si es posible
                     logger.debug(f"DownloaderMaster: ydl_opts['outtmpl'] = {ydl_opts.get('outtmpl')}")
                     
+                    gpu_encoder_used = self._last_gpu_encoder_used
                     try:
                         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                             ydl.download([url])
@@ -123,6 +124,22 @@ class DownloaderMaster:
                             fallback_opts = make_fallback_ydl_opts(ydl_opts)
                             with yt_dlp.YoutubeDL(fallback_opts) as ydl_fallback:
                                 ydl_fallback.download([url])
+                        elif gpu_encoder_used:
+                            # El encoder de GPU (NVENC/QSV) puede fallar en ciertos casos -
+                            # resoluciones muy bajas, drivers desactualizados, límite de
+                            # sesiones NVENC concurrentes, etc. (reproducido con un video de
+                            # ~240p: "Preprocessing: Conversion failed!") - en vez de perder
+                            # todo el corte, reintentar UNA vez forzando CPU (libx264) para
+                            # ESTE fragmento puntual. No desactiva la aceleración por GPU en
+                            # general: el resto de fragmentos/descargas la siguen intentando
+                            # primero, como corresponde.
+                            logger.warning(
+                                f"DownloaderMaster: El encoder de GPU ({gpu_encoder_used}) falló en el "
+                                f"corte preciso del fragmento {i+1} ({frag_err}). Reintentando con CPU (libx264)..."
+                            )
+                            cpu_opts = self._prepare_opts(frag_data, progress_callback, force_cpu_encoder=True)
+                            with yt_dlp.YoutubeDL(cpu_opts) as ydl_cpu:
+                                ydl_cpu.download([url])
                         else:
                             raise frag_err
                         
@@ -175,37 +192,46 @@ class DownloaderMaster:
                             info = ydl_fallback.extract_info(url, download=True)
                     else:
                         raise dl_err
-                    
-                    if ydl_opts.get('skip_download') and progress_callback:
-                        if 'entries' in info:
-                            for entry in info['entries']:
-                                if entry:
-                                    filename = ydl.prepare_filename(entry)
-                                    progress_callback({'status': 'finished', 'filename': filename, 'info_dict': entry})
-                        else:
-                            filename = ydl.prepare_filename(info)
-                            progress_callback({'status': 'finished', 'filename': filename, 'info_dict': info})
-                    
-                    if needs_local_cut:
-                        filename = ydl.prepare_filename(info)
-                        self._handle_local_cuts(
-                            filename, fragments,
-                            keep_original=(fragment_mode == FragmentState.KEEP_FULL),
-                            progress_callback=progress_callback
-                        )
-                        
-                        if request_data.get("cut_subtitles") and request_data.get("subtitle_lang"):
-                            self._handle_subtitle_cuts_local(filename, fragments, request_data.get("subtitle_lang"), request_data)
 
-                    # Procesamiento de Subtítulos (Estandarización y Recorte)
-                    if request_data.get("subtitle_lang"):
-                        if request_data.get("mode") == "subtitle_only":
-                            # Maneja tanto estandarización como recorte para solo subtítulos
-                            self._handle_subtitle_processing_only_sub(request_data, fragments)
-                        elif not needs_local_cut and request_data.get("standardize_srt"):
-                            # Descarga de video normal sin recorte pero con estandarización
-                            filename = ydl.prepare_filename(info)
-                            self._handle_subtitle_standardization(filename, request_data)
+                # Bug preexistente: este bloque vivía indentado DENTRO del except de
+                # arriba, así que solo corría cuando el primer intento fallaba Y el
+                # reintento con cliente alternativo tenía éxito - en el camino normal
+                # (primer intento exitoso, el caso común) nunca se ejecutaba: ni el
+                # corte local de fragmentos (needs_local_cut/_handle_local_cuts, los
+                # modos "Descargar para cortar"/"Conservar completo") ni el
+                # procesamiento de subtítulos corrían jamás. Se saca del except para
+                # que corra siempre que 'info' haya quedado definido con éxito (ver
+                # conversación).
+                if ydl_opts.get('skip_download') and progress_callback:
+                    if 'entries' in info:
+                        for entry in info['entries']:
+                            if entry:
+                                filename = ydl.prepare_filename(entry)
+                                progress_callback({'status': 'finished', 'filename': filename, 'info_dict': entry})
+                    else:
+                        filename = ydl.prepare_filename(info)
+                        progress_callback({'status': 'finished', 'filename': filename, 'info_dict': info})
+
+                if needs_local_cut:
+                    filename = ydl.prepare_filename(info)
+                    self._handle_local_cuts(
+                        filename, fragments,
+                        keep_original=(fragment_mode == FragmentState.KEEP_FULL),
+                        progress_callback=progress_callback
+                    )
+
+                    if request_data.get("cut_subtitles") and request_data.get("subtitle_lang"):
+                        self._handle_subtitle_cuts_local(filename, fragments, request_data.get("subtitle_lang"), request_data)
+
+                # Procesamiento de Subtítulos (Estandarización y Recorte)
+                if request_data.get("subtitle_lang"):
+                    if request_data.get("mode") == "subtitle_only":
+                        # Maneja tanto estandarización como recorte para solo subtítulos
+                        self._handle_subtitle_processing_only_sub(request_data, fragments)
+                    elif not needs_local_cut and request_data.get("standardize_srt"):
+                        # Descarga de video normal sin recorte pero con estandarización
+                        filename = ydl.prepare_filename(info)
+                        self._handle_subtitle_standardization(filename, request_data)
 
                 file_conflict_manager.commit_backup(self._pending_backup)
 
@@ -343,10 +369,21 @@ class DownloaderMaster:
 
         return True
 
-    def _prepare_opts(self, data, progress_callback):
+    def _prepare_opts(self, data, progress_callback, force_cpu_encoder=False):
         """
         Traduce los datos de la UI a un diccionario ydl_opts heredando de la base.
+
+        force_cpu_encoder=True fuerza el corte preciso a libx264 (CPU) sin intentar
+        ningún encoder de GPU - lo usa download() para reintentar un fragmento puntual
+        cuyo primer intento con GPU falló (ver ese método), sin tocar la detección de
+        hardware para el resto de descargas.
+
+        self._last_gpu_encoder_used queda en el encoder de GPU efectivamente inyectado
+        (o None si se usó CPU) - el llamador lo consulta para decidir si vale la pena
+        reintentar con CPU ante un fallo.
         """
+        self._last_gpu_encoder_used = None
+
         # Obtener opciones base (cookies, impersonate, etc.)
         ydl_opts = get_base_ydl_opts()
         
@@ -430,9 +467,11 @@ class DownloaderMaster:
                         if fragment_mode == FragmentState.PRECISE:
                             ydl_opts['force_keyframes_at_cuts'] = True
                             try:
-                                from core.utils.hardware_detector import detect_hardware
-                                hw_info = detect_hardware()
-                                pref_enc = hw_info.get("preferred_encoder")
+                                pref_enc = None
+                                if not force_cpu_encoder:
+                                    from core.utils.hardware_detector import detect_hardware
+                                    hw_info = detect_hardware()
+                                    pref_enc = hw_info.get("preferred_encoder")
                                 if pref_enc and pref_enc != "libx264":
                                     gpu_args = ["-c:v", pref_enc]
                                     if pref_enc == "h264_nvenc":
@@ -456,7 +495,10 @@ class DownloaderMaster:
                                         post_args = {"ffmpeg": list(gpu_args)}
                                     ydl_opts["postprocessor_args"] = post_args
 
+                                    self._last_gpu_encoder_used = pref_enc
                                     logger.info(f"DownloaderMaster: Corte Preciso acelerado por GPU ({pref_enc}): {gpu_args}")
+                                elif force_cpu_encoder:
+                                    logger.info(f"DownloaderMaster: Fragmento INDIVIDUAL PRECISO (CPU libx264, reintento tras fallo de GPU): {ranges}")
                                 else:
                                     logger.info(f"DownloaderMaster: Fragmento INDIVIDUAL PRECISO (CPU libx264): {ranges}")
                             except Exception as hw_err:
@@ -475,13 +517,16 @@ class DownloaderMaster:
                     ydl_opts['download_ranges'] = download_range_func(None, ranges)
                     ydl_opts['force_keyframes_at_cuts'] = True
                     try:
-                        from core.utils.hardware_detector import detect_hardware
-                        hw_info = detect_hardware()
-                        pref_enc = hw_info.get("preferred_encoder")
+                        pref_enc = None
+                        if not force_cpu_encoder:
+                            from core.utils.hardware_detector import detect_hardware
+                            hw_info = detect_hardware()
+                            pref_enc = hw_info.get("preferred_encoder")
                         if pref_enc and pref_enc != "libx264":
                             gpu_args = ["-c:v", pref_enc]
                             ydl_opts["external_downloader_args"] = {"ffmpeg": list(gpu_args)}
                             ydl_opts["postprocessor_args"] = {"ffmpeg": list(gpu_args)}
+                            self._last_gpu_encoder_used = pref_enc
                     except Exception:
                         pass
                     logger.info(f"DownloaderMaster: Unión de {len(fragments)} fragmentos (Modo PRECISE forzado)")
@@ -902,6 +947,12 @@ class DownloaderMaster:
                 # Usamos utf-8 con reemplazo de errores para evitar fallos si ffmpeg imprime caracteres especiales/emojis
                 subprocess.run(cmd, check=True, capture_output=True, text=True, encoding='utf-8', errors='replace')
                 logger.info(f"DownloaderMaster: Corte {i+1} completado exitosamente.")
+                if progress_callback:
+                    # Sin este aviso, el resto de la app (row.downloaded_filepath en
+                    # Modo Rápido, last_downloaded_filepath en SOLO) nunca se entera de
+                    # cuál es el archivo cortado - "Recodificar" no tenía ningún
+                    # archivo real que recodificar en estos dos modos (ver conversación).
+                    progress_callback({"status": "finished", "filename": output_file})
             except subprocess.CalledProcessError as e:
                 logger.error(f"DownloaderMaster: Error en corte local {i+1}: {e.stderr}")
             except Exception as e:

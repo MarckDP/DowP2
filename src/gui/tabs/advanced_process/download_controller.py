@@ -164,15 +164,28 @@ class DownloadController(QObject):
                 if self.solo_request_data.get("recode_enabled"):
                     # No se marca "Descarga completada" todavía: la misma barra sigue
                     # con "Recodificando..." (ver _on_recode_job_progress/_status) hasta
-                    # que el job RECODE encolado resuelva.
-                    actual_path = self._resolve_final_download_path(resolved_request_data, self.last_downloaded_filepath)
-                    self._start_post_download_recode(
-                        actual_path=actual_path,
-                        request_data=self.solo_request_data,
-                        video_data=self.tab._current_video_data,
-                        title=title or self.tab.tr("Descarga"),
-                        download_key=_SOLO_RECODE_KEY,
-                    )
+                    # que el/los job(s) RECODE encolados resuelvan.
+                    fragment_paths = self._resolve_fragment_download_paths(resolved_request_data)
+                    if fragment_paths:
+                        # Un job RECODE por fragmento - cada uno se pone en cuarentena y
+                        # se recodifica por separado (ver _resolve_fragment_download_paths).
+                        for actual_path, suffix in fragment_paths:
+                            self._start_post_download_recode(
+                                actual_path=actual_path,
+                                request_data=self.solo_request_data,
+                                video_data=self.tab._current_video_data,
+                                title=f"{title} - {suffix}" if title else suffix,
+                                download_key=_SOLO_RECODE_KEY,
+                            )
+                    else:
+                        actual_path = self._resolve_final_download_path(resolved_request_data, self.last_downloaded_filepath)
+                        self._start_post_download_recode(
+                            actual_path=actual_path,
+                            request_data=self.solo_request_data,
+                            video_data=self.tab._current_video_data,
+                            title=title or self.tab.tr("Descarga"),
+                            download_key=_SOLO_RECODE_KEY,
+                        )
                 else:
                     self.tab.output_options.set_progress(100, self.tab.tr("Descarga completada con éxito"), "done")
                     actual_path = self._resolve_final_download_path(resolved_request_data, self.last_downloaded_filepath)
@@ -393,13 +406,27 @@ class DownloadController(QObject):
                     # QueueWorker._execute_download en queue_manager.py, que lo reconstruye
                     # con el título REAL post-conflicto — job.request_data en cambio nunca
                     # se actualiza con ese título, así que NO sirve para reconstruir la ruta).
-                    self._start_post_download_recode(
-                        actual_path=self._find_actual_downloaded_file(job.final_filepath),
-                        request_data=job.request_data,
-                        video_data=job.video_data or job.analysis_data,
-                        title=job.title,
-                        download_key=job_id,
-                    )
+                    fragment_paths = self._resolve_fragment_download_paths(job.request_data)
+                    if fragment_paths:
+                        # Un job RECODE por fragmento (ver _resolve_fragment_download_paths) -
+                        # sin esto solo se recodificaba job.final_filepath, que con varios
+                        # fragmentos apunta a uno solo (normalmente el último).
+                        for actual_path, suffix in fragment_paths:
+                            self._start_post_download_recode(
+                                actual_path=actual_path,
+                                request_data=job.request_data,
+                                video_data=job.video_data or job.analysis_data,
+                                title=f"{job.title} - {suffix}",
+                                download_key=job_id,
+                            )
+                    else:
+                        self._start_post_download_recode(
+                            actual_path=self._find_actual_downloaded_file(job.final_filepath),
+                            request_data=job.request_data,
+                            video_data=job.video_data or job.analysis_data,
+                            title=job.title,
+                            download_key=job_id,
+                        )
         elif status in ("FAILED", "CANCELLED"):
             job = self.queue_mgr.get_job(job_id)
             err_msg = job.error_message if job else ""
@@ -505,6 +532,16 @@ class DownloadController(QObject):
 
         if download_key == _SOLO_RECODE_KEY:
             self.tab.output_options.set_progress(0, self.tab.tr("Recodificando..."), "downloading")
+            # La cola global nace pausada (ver QueueManager.__init__) y en modo SOLO
+            # nada más la despausa (a diferencia de LOTES, cuyo start_download() ya la
+            # arranca antes de que un job pueda siquiera completarse y llegar hasta
+            # acá) - sin esto, un job RECODE encolado desde SOLO se quedaba esperando su
+            # turno indefinidamente si el usuario nunca había tocado LOTES o
+            # Herramientas Multimedia en la misma sesión (ver conversación: quedaba en
+            # cuarentena ".dbak" para siempre, sin recodificar). No se llama para LOTES:
+            # ahí la cola ya está corriendo por definición, y reanudarla de nuevo acá
+            # podría reactivar otros jobs que el usuario haya pausado a propósito.
+            self.queue_mgr.start_queue()
         else:
             card = self.tab.queue_panel.cards.get(download_key)
             if card:
@@ -644,6 +681,59 @@ class DownloadController(QObject):
             if actual and os.path.isfile(actual):
                 return actual
         return self._find_actual_downloaded_file(fallback_filepath)
+
+    def _resolve_fragment_download_paths(self, request_data):
+        """
+        Con corte de fragmentos, cada uno termina en su propio archivo
+        "..._{sufijo}{ext}" (ver downloader_master.py: individual_download y
+        _handle_local_cuts nombran así cada fragmento) - a diferencia de una descarga
+        normal, acá NO alcanza con una sola ruta reconstruida (_resolve_final_download_path
+        solo arma "{título}{ext}", que no matchea ningún fragmento). Se busca cada
+        fragmento por PATRÓN de nombre en vez de reconstruir "{título}_{sufijo}{ext}" a
+        mano: en modo LOTES, request_data["title"] puede no estar sanitizado (
+        QueueWorker._execute_download le pasa una COPIA a DownloaderMaster.download(),
+        ver queue_manager.py - la sanitización que hace ahí NUNCA vuelve a
+        job.request_data), así que reconstruir con ese título roto ante cualquier
+        carácter que la sanitización cambie (emojis, "://", etc. - ver conversación,
+        reproducido con un título con emoji y URL) hacía fallar la búsqueda para todos
+        los fragmentos menos el que coincidía por casualidad vía job.final_filepath.
+
+        Devuelve una lista de (ruta_real, sufijo) - vacía si no hay fragmentos o no se
+        encontró ninguno en disco (deja al llamador caer a _resolve_final_download_path
+        como antes).
+        """
+        fragments = request_data.get("selected_fragments") or []
+        output_path = request_data.get("output_path")
+        if not fragments or not output_path:
+            return []
+
+        predicted_ext = predict_final_extension(
+            request_data.get("video_ext"),
+            request_data.get("audio_ext"),
+            request_data.get("mode", "video+audio"),
+            bool(request_data.get("video_is_combined")),
+        )
+
+        import glob
+        skip_exts = (".jpg", ".jpeg", ".png", ".webp", ".dbak", ".part", ".ytdl", ".temp")
+        results = []
+        for i, frag in enumerate(fragments):
+            suffix = frag[2] if len(frag) > 2 else f"fragment{i+1:02d}"
+            pattern = os.path.join(glob.escape(output_path), f"*_{suffix}{predicted_ext}")
+            candidates = [p for p in glob.glob(pattern) if os.path.isfile(p)]
+            if not candidates:
+                # Contenedor final distinto al previsto (ej. remux) - se amplía la
+                # búsqueda a cualquier extensión con ese sufijo, evitando igual
+                # miniaturas/backups/temporales que puedan compartir el mismo sufijo.
+                pattern_any = os.path.join(glob.escape(output_path), f"*_{suffix}.*")
+                candidates = [
+                    p for p in glob.glob(pattern_any)
+                    if os.path.isfile(p) and not p.lower().endswith(skip_exts)
+                ]
+            if candidates:
+                candidates.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+                results.append((candidates[0], suffix))
+        return results
 
     def _find_actual_downloaded_file(self, filepath):
         if not filepath:

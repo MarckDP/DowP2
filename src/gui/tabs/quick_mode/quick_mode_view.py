@@ -17,6 +17,8 @@ from PySide6.QtGui import QIcon
 from gui.styles import get_theme_token, apply_cut_button_style
 from gui.tabs.advanced_process.output_options import OutputOptionsWidget
 from gui.tabs.advanced_process.video_details_components import RichComboBox, RichTextDelegate
+from gui.tabs.advanced_process.recode_options import RecodeOptionsWidget
+from gui.tabs.advanced_process.recode_controller import RecodeController
 from gui.widgets.animated_button import AnimatedButton
 from gui.widgets.combo_box import AutoPopupComboBox
 
@@ -31,6 +33,7 @@ class QuickModeTab(QWidget):
     def __init__(self):
         super().__init__()
         self.taskbar_manager = None
+        self.recode_controller = RecodeController(self)
         self.init_ui()
 
         # Inicializar el controlador
@@ -59,13 +62,33 @@ class QuickModeTab(QWidget):
 
         self.output_options = OutputOptionsWidget()
 
+        # Cabecera clicable "Recodificar" (misma tarjeta de Proceso Avanzado, ver
+        # recode_options.py): vive en el MISMO renglón que options_panel (a su derecha,
+        # fuera de esas opciones, en su propio recuadro), no en uno debajo - una fila
+        # contenedora con QHBoxLayout reparte ambos QFrame lado a lado y Qt los estira
+        # a la misma altura automáticamente (sin alignment explícito, cada widget toma
+        # el alto máximo de la fila). El CUERPO (switch, preajustes, prefijo/sufijo)
+        # flota sin agregarse a ningún layout, así que al expandir se dibuja por encima
+        # de activity_panel/output_options en vez de empujarlos (ver conversación).
+        self.recode_bar = self._build_recode_bar()
+
+        self.options_row = QWidget()
+        options_row_layout = QHBoxLayout(self.options_row)
+        options_row_layout.setContentsMargins(0, 0, 0, 0)
+        options_row_layout.setSpacing(12)
+        options_row_layout.addWidget(self.options_panel, 1)
+        options_row_layout.addWidget(self.recode_bar)
+
         self.main_layout.addWidget(self.url_panel)
-        self.main_layout.addWidget(self.options_panel)
+        self.main_layout.addWidget(self.options_row)
         self.main_layout.addWidget(self.activity_panel, 1)
         self.main_layout.addWidget(self.output_options)
 
         self.options_panel.setAttribute(Qt.WA_StyledBackground, True)
-        
+        self.recode_bar.setAttribute(Qt.WA_StyledBackground, True)
+        self.recode_bar.setObjectName("quickRecodeBar")
+        self.recode_bar.setMinimumWidth(200)
+
         borde_color = get_theme_token('borde_normal', '#2d2d2d')
         fondo_color = get_theme_token('fondo_secundario', '#1e1e1e')
         box_style = f"""
@@ -84,8 +107,39 @@ class QuickModeTab(QWidget):
         self.output_options.btn_open_output_path.clicked.disconnect()
         self.output_options.btn_open_output_path.clicked.connect(self._on_open_output_path_clicked)
 
+        self.recode_options = RecodeOptionsWidget(start_expanded=False, show_header=False)
+        self.recode_options.setParent(self)
+        self.recode_options.hide()
+        self.recode_options.toggled_collapse.connect(self._on_recode_toggled)
+        self._reposition_recode_popover()
+
         self._on_mode_changed(self.mode_combo.currentIndex())
         self.load_labels()
+
+    def _build_recode_bar(self):
+        """Recuadro clicable "Recodificar", del mismo alto que options_panel (Qt los
+        estira parejo al compartir fila en options_row, ver init_ui) - hace de
+        cabecera del cuerpo flotante de recode_options (que vive sin su propia
+        cabecera, ver show_header=False)."""
+        bar = QFrame()
+        bar.setObjectName("quickRecodeBar")
+        bar.setCursor(Qt.PointingHandCursor)
+        bar.setMinimumWidth(200)
+        layout = QHBoxLayout(bar)
+        layout.setContentsMargins(15, 6, 15, 6)
+        layout.setSpacing(6)
+
+        self.lbl_recode_toggle = QLabel(self.tr("Recodificar"))
+        self.lbl_recode_toggle.setStyleSheet("font-weight: bold;")
+        self.lbl_recode_toggle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.lbl_recode_toggle)
+
+        bar.mousePressEvent = lambda event: self.recode_options.toggle_collapse()
+        return bar
+
+    def _on_recode_toggled(self, expanded):
+        if expanded:
+            self.recode_options.raise_()
 
     def _build_url_panel(self):
         panel = QWidget()
@@ -186,6 +240,39 @@ class QuickModeTab(QWidget):
                 logger.info(f"QuickModeTab: TaskbarProgressManager vinculado a HWND {hwnd}")
             except Exception as e:
                 logger.error(f"QuickModeTab: No se pudo inicializar TaskbarProgressManager: {e}")
+        self._reposition_recode_popover()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._reposition_recode_popover()
+
+    def _reposition_recode_popover(self):
+        """Iguala el alto de recode_bar al de options_panel (comparten fila en
+        options_row, pero por las dudas se fuerza igual - piden que se vean como
+        recuadros pares) y ancla el cuerpo flotante de recode_options justo debajo,
+        con su borde derecho alineado al de recode_bar (que al ser compacto y vivir
+        pegado a la derecha de la fila, un cuerpo más ancho que él se iría fuera de
+        la ventana si se alineara por la izquierda). Se reposiciona (no se re-crea)
+        en cada resize, y siempre se re-eleva por si algo la tapó."""
+        if not hasattr(self, "recode_options") or not hasattr(self, "recode_bar"):
+            return
+        panel_h = self.options_panel.height()
+        if panel_h > 0 and self.recode_bar.height() != panel_h:
+            self.recode_bar.setFixedHeight(panel_h)
+
+        # recode_bar es hijo de options_row, no de self directamente - mapear su
+        # posición a coordenadas de self (el padre real del cuerpo flotante).
+        top_left = self.recode_bar.mapTo(self, self.recode_bar.rect().topLeft())
+        bar_w = self.recode_bar.width()
+        bar_h = self.recode_bar.height()
+
+        width = max(260, min(RecodeOptionsWidget.COMPACT_WIDTH, self.width() - 20))
+        x = max(10, top_left.x() + bar_w - width)
+        y = top_left.y() + bar_h + 3
+        self.recode_options.setFixedWidth(width)
+        self.recode_options.move(x, y)
+        if self.recode_options.isVisible():
+            self.recode_options.raise_()
 
     def _on_mode_changed(self, index):
         mode = self.mode_combo.itemData(index) or "video+audio"
@@ -221,6 +308,11 @@ class QuickModeTab(QWidget):
         self.mode_combo.setEnabled(not checked)
         self.quality_combo.setEnabled(not checked)
         self.chk_thumb_file.setEnabled(not checked)
+        # "Solo miniatura" descarga una imagen, no un medio recodificable.
+        self.recode_bar.setEnabled(not checked)
+        self.recode_options.setEnabled(not checked)
+        if checked:
+            self.recode_options.switch_recode.setChecked(False)
 
     def _on_playlist_selector_toggled(self, checked):
         """Cuando playlist está activa, deshabilitar y desactivar el corte de fragmento."""
@@ -245,7 +337,8 @@ class QuickModeTab(QWidget):
             chk_thumb_file_checked=self.chk_thumb_file.isChecked(),
             chk_thumb_only_checked=self.chk_thumb_only.isChecked(),
             btn_cut_checked=self.btn_cut.isChecked(),
-            chk_playlist_selector_checked=self.chk_playlist_selector.isChecked()
+            chk_playlist_selector_checked=self.chk_playlist_selector.isChecked(),
+            recode_data=self.recode_controller.collect_recode_data(),
         )
         self.url_input.clear()
 
@@ -311,6 +404,8 @@ class QuickModeTab(QWidget):
         self.mode_combo.setEnabled(enabled and not self.chk_thumb_only.isChecked())
         self.quality_combo.setEnabled(enabled and not self.chk_thumb_only.isChecked())
         self.combo_tags.setEnabled(enabled)
+        self.recode_bar.setEnabled(enabled and not self.chk_thumb_only.isChecked())
+        self.recode_options.setEnabled(enabled and not self.chk_thumb_only.isChecked())
         self.output_options.output_path_input.setEnabled(enabled and self.combo_tags.currentIndex() <= 0)
         self.output_options.btn_select_output_path.setEnabled(enabled and self.combo_tags.currentIndex() <= 0)
         self.output_options.speed_limit_input.setEnabled(enabled)

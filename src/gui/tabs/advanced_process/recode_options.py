@@ -38,19 +38,22 @@ class RecodeOptionsWidget(QFrame):
     COLLAPSED_HEIGHT = 38
     toggled_collapse = Signal(bool)
 
-    def __init__(self, start_expanded: bool = False):
+    def __init__(self, start_expanded: bool = False, show_header: bool = True):
         super().__init__()
         self.setObjectName("additionalOptionsContainer")
         self.setAttribute(Qt.WA_StyledBackground, True)
-        # Ver mismo comentario en subtitle_options.py: sin ancho fijo NI mínimo propio,
-        # para que se achique junto con la ventana (texto recortado y todo) en vez de
-        # desbordar al llegar a un piso que video_details no tiene.
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
+        self._show_header = show_header
         self._is_expanded = start_expanded
         self._anim_group = None
 
         self.init_ui()
+
+        if not self._show_header:
+            self.header_widget.setVisible(False)
+        self._collapsed_height = self.COLLAPSED_HEIGHT if self._show_header else 0
+
         self.set_expanded(self._is_expanded, animate=False)
 
     def init_ui(self):
@@ -168,12 +171,11 @@ class RecodeOptionsWidget(QFrame):
         self.set_expanded(not self._is_expanded, animate=True)
 
     def _expanded_height(self) -> int:
-        """Ver mismo método en subtitle_options.py: alto calculado en vivo en vez de
-        un número fijo, para que no se desalinee cada vez que cambia el contenido del
-        cuerpo (prefijo/sufijo, switches->checkboxes, etc.)."""
         margins = self.main_layout.contentsMargins()
+        header_h = self.header_widget.sizeHint().height() if self._show_header else 0
+        spacing = self.main_layout.spacing() if self._show_header else 0
         return (
-            self.header_widget.height() + self.main_layout.spacing()
+            header_h + spacing
             + self.body_container.sizeHint().height()
             + margins.top() + margins.bottom()
         )
@@ -182,14 +184,21 @@ class RecodeOptionsWidget(QFrame):
         self._is_expanded = expanded
 
         expanded_h = self._expanded_height()
-        start_h = self.height() if self.height() > 0 else (expanded_h if not expanded else self.COLLAPSED_HEIGHT)
-        target_h = expanded_h if expanded else self.COLLAPSED_HEIGHT
+        start_h = self.height() if self.height() > 0 else (expanded_h if not expanded else self._collapsed_height)
+        target_h = expanded_h if expanded else self._collapsed_height
+
+        if not self._show_header:
+            if expanded:
+                self.setVisible(True)
+                self.raise_()
 
         if not animate:
             if self._anim_group and self._anim_group.state() == QPropertyAnimation.Running:
                 self._anim_group.stop()
             self.body_container.setVisible(expanded)
             self.setFixedHeight(target_h)
+            if not self._show_header and not expanded:
+                self.setVisible(False)
             self.toggled_collapse.emit(expanded)
             return
 
@@ -218,6 +227,8 @@ class RecodeOptionsWidget(QFrame):
         def on_finished():
             if not self._is_expanded:
                 self.body_container.hide()
+                if not self._show_header:
+                    self.setVisible(False)
             self.setFixedHeight(target_h)
             self.toggled_collapse.emit(self._is_expanded)
 

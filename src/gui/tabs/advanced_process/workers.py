@@ -61,11 +61,18 @@ class DownloadWorker(QThread):
         return bridge.ask(filename)
 
     def _on_progress(self, d):
-        # Limitamos la emisión de señales para no saturar el hilo principal
+        # Limitamos la emisión de señales para no saturar el hilo principal, pero solo
+        # para el % de "downloading" (ahí sí da igual perderse valores intermedios, se
+        # ve el último). "finished" y "fragment_progress" son transiciones de estado
+        # discretas, no ruido a suavizar - con un fragmento corto (unos pocos segundos)
+        # el "fragment_progress" del fragmento N+1 podía llegar a <100ms del "finished"
+        # del fragmento N y quedaba descartado acá, dejando a Modo Rápido sin forma de
+        # saber a qué fragmento pertenecía cada archivo (ver
+        # QuickDownloadController._resolve_target_rows) - "Recodificar" terminaba
+        # aplicándose a un fragmento cualquiera y dejando el resto sin recodificar.
         current_time = time.time()
-        # Emitimos si han pasado > 100ms o si es el mensaje final
-        if current_time - self._last_emit_time < 0.1 and d.get('status') != 'finished':
+        if current_time - self._last_emit_time < 0.1 and d.get('status') not in ('finished', 'fragment_progress'):
             return
-            
+
         self._last_emit_time = current_time
         self.progress.emit(d)

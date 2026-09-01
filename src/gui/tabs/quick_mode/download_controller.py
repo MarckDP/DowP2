@@ -8,6 +8,7 @@ from PySide6.QtWidgets import QDialog
 from core.logger.logger_manager import logger
 from core.utils.cleanup_manager import CleanupManager
 from core.utils.config_manager import get_config
+from core.utils.queue_manager import get_queue_manager
 from core.tabs.quick_mode.quick_mode_logic import build_quick_request_data, reveal_in_file_manager
 from gui.tabs.advanced_process.workers import AnalysisWorker, DownloadWorker
 from gui.dialogs.playlist_selection_dialog import PlaylistSelectionDialog
@@ -47,9 +48,23 @@ class QuickDownloadController(QObject):
         self._batch_total = 0
         self._batch_completed = 0
 
+        # Recodificación post-descarga (misma tarjeta "Recodificar" de Proceso
+        # Avanzado, ver quick_mode_view.py::recode_options y AdvancedProcessTab
+        # DownloadController._start_post_download_recode, del que este bloque es
+        # contraparte simplificada para Modo Rápido: solo tareas de UNA fila -
+        # descarga directa o con recorte de fragmento - se recodifican; una
+        # selección de playlist con más de un ítem se ignora (ver
+        # _on_task_finished) porque no hay forma de saber qué archivo final
+        # corresponde a cada fila dentro de la misma tarea/worker.
+        self.queue_mgr = get_queue_manager()
+        self.queue_mgr.job_progress_changed.connect(self._on_recode_job_progress)
+        self.queue_mgr.job_status_changed.connect(self._on_recode_job_status)
+        self._recode_by_download = {}
+        self._recode_state = {}
+
     def start_download_flow(self, url, mode, quality, output_path, speed_limit_val,
                             chk_thumb_file_checked, chk_thumb_only_checked,
-                            btn_cut_checked, chk_playlist_selector_checked):
+                            btn_cut_checked, chk_playlist_selector_checked, recode_data=None):
         """Inicia el flujo de descargas dependiendo de la configuración actual."""
         if not url:
             self.progress_updated.emit(0, self.tr("Pega una URL primero") if hasattr(self, "tr") else "Pega una URL primero", "error")
@@ -57,16 +72,16 @@ class QuickDownloadController(QObject):
 
         if btn_cut_checked:
             self.start_cut_analysis(url, mode, quality, output_path, speed_limit_val,
-                                    chk_thumb_file_checked, chk_thumb_only_checked)
+                                    chk_thumb_file_checked, chk_thumb_only_checked, recode_data)
         elif chk_playlist_selector_checked:
             self.start_playlist_selection(url, mode, quality, output_path, speed_limit_val,
-                                         chk_thumb_file_checked, chk_thumb_only_checked)
+                                         chk_thumb_file_checked, chk_thumb_only_checked, recode_data)
         else:
             self.start_direct_download(url, mode, quality, output_path, speed_limit_val,
-                                       chk_thumb_file_checked, chk_thumb_only_checked)
+                                       chk_thumb_file_checked, chk_thumb_only_checked, recode_data)
 
     def start_direct_download(self, url, mode, quality, output_path, speed_limit_val,
-                              chk_thumb_file_checked, chk_thumb_only_checked):
+                              chk_thumb_file_checked, chk_thumb_only_checked, recode_data=None):
         """Descarga directa sin análisis previo."""
         req = build_quick_request_data(
             url=url,
@@ -80,10 +95,12 @@ class QuickDownloadController(QObject):
             is_playlist=False,
             conflict_policy=self.tab.output_options.conflict_policy_combo.currentData(),
         )
+        if recode_data:
+            req.update(recode_data)
         self.start_worker(req, selected_entries=[{"title": self.tr("Descarga directa") if hasattr(self, "tr") else "Descarga directa"}], selected_indices=[0])
 
     def start_playlist_selection(self, url, mode, quality, output_path, speed_limit_val,
-                                 chk_thumb_file_checked, chk_thumb_only_checked):
+                                 chk_thumb_file_checked, chk_thumb_only_checked, recode_data=None):
         """Inicia el análisis de la lista de reproducción para posterior selección."""
         self.busy_state_changed.emit(True, self.tr("Analizando playlist...") if hasattr(self, "tr") else "Analizando playlist...")
         self.analysis_worker = AnalysisWorker(url, analyze_playlist=True, fast_mode=True)
@@ -102,7 +119,7 @@ class QuickDownloadController(QObject):
             if len(entries) <= 1:
                 self.busy_state_changed.emit(False, "")
                 self.start_direct_download(url, mode, quality, output_path, speed_limit_val,
-                                           chk_thumb_file_checked, chk_thumb_only_checked)
+                                           chk_thumb_file_checked, chk_thumb_only_checked, recode_data)
                 return
 
             dialog = PlaylistSelectionDialog(data, self.tab)
@@ -134,6 +151,8 @@ class QuickDownloadController(QObject):
             req["mode"] = dialog.result_data.get("playlist_mode") or req["mode"]
             from core.ytdlp_logic.format_selectors import quick_format_selector
             req["format_selector"] = quick_format_selector(req["mode"], dialog.result_data.get("playlist_quality") or quality, url=req.get("url", ""))
+            if recode_data:
+                req.update(recode_data)
 
             selected_entries = [entries[i] for i in selected if 0 <= i < len(entries)]
             self.start_worker(req, selected_entries=selected_entries, selected_indices=selected)
@@ -142,11 +161,11 @@ class QuickDownloadController(QObject):
         self.analysis_worker.start()
 
     def start_cut_analysis(self, url, mode, quality, output_path, speed_limit_val,
-                           chk_thumb_file_checked, chk_thumb_only_checked):
+                           chk_thumb_file_checked, chk_thumb_only_checked, recode_data=None):
         """Inicia el análisis para corte de fragmento."""
         self.busy_state_changed.emit(True, self.tr("Analizando video para recorte...") if hasattr(self, "tr") else "Analizando video para recorte...")
         self.analysis_worker = AnalysisWorker(url, analyze_playlist=False, fast_mode=True)
-        
+
         def on_finished(data, error):
             if self.analysis_worker:
                 self.analysis_worker.deleteLater()
@@ -158,13 +177,13 @@ class QuickDownloadController(QObject):
                 return
                 
             self.open_cut_dialog_and_download(url, data, mode, quality, output_path, speed_limit_val,
-                                              chk_thumb_file_checked, chk_thumb_only_checked)
-            
+                                              chk_thumb_file_checked, chk_thumb_only_checked, recode_data)
+
         self.analysis_worker.finished.connect(on_finished)
         self.analysis_worker.start()
 
     def open_cut_dialog_and_download(self, url, data, mode, quality, output_path, speed_limit_val,
-                                     chk_thumb_file_checked, chk_thumb_only_checked):
+                                     chk_thumb_file_checked, chk_thumb_only_checked, recode_data=None):
         """Abre el diálogo de fragmento de corte."""
         thumb_url = None
         thumbs = data.get("thumbnails") or []
@@ -254,11 +273,33 @@ class QuickDownloadController(QObject):
             )
             req["selected_fragments"] = selected_fragments
             req["fragment_mode"] = fragment_mode
-            
+            if recode_data:
+                req.update(recode_data)
+
             self.busy_state_changed.emit(False, "")
             self.download_text_changed.emit(self.tr("Descargar") if hasattr(self, "tr") else "Descargar")
-            
-            self.start_worker(req, selected_entries=[data], selected_indices=[0])
+
+            if len(selected_fragments) > 1:
+                # Una fila por fragmento (en vez de una sola fila para todo el corte):
+                # sin esto, con más de un fragmento seleccionado todas las filas
+                # terminaban compartiendo el archivo del ÚLTIMO fragmento en terminar
+                # (ver _resolve_target_rows) - "Recodificar" solo llegaba a aplicarse a
+                # ese, dejando el resto de los fragmentos sin recodificar (ver
+                # conversación). El índice 0-based de cada fragmento (selected_indices)
+                # se vuelve su "playlist_idx" 1-based en item_keys (ver
+                # ActivityPanel.add_activity_rows), que coincide con el fragment_index
+                # 1-based que ya manda fragment_progress.
+                base_title = (data.get("title") or "").strip()
+                entries = []
+                for i, frag in enumerate(selected_fragments):
+                    suffix = frag[2] if len(frag) > 2 else f"fragment{i+1:02d}"
+                    entry = dict(data)
+                    entry.pop("playlist_index", None)
+                    entry["title"] = f"{base_title} - {suffix}" if base_title else suffix
+                    entries.append(entry)
+                self.start_worker(req, selected_entries=entries, selected_indices=list(range(len(selected_fragments))))
+            else:
+                self.start_worker(req, selected_entries=[data], selected_indices=[0])
         else:
             self.busy_state_changed.emit(False, "")
             self.progress_updated.emit(0, self.tr("Recorte cancelado") if hasattr(self, "tr") else "Recorte cancelado", "wait")
@@ -392,19 +433,32 @@ class QuickDownloadController(QObject):
             idx = data.get("fragment_index")
             total = data.get("fragment_count")
             phase = data.get("phase", "downloading")
-            for row in task_data["item_rows"]:
+            # Recuerda qué fragmento está en curso - los eventos "downloading"/"finished"
+            # que vengan justo después (hasta el próximo fragment_progress) pertenecen a
+            # ESTE fragmento (ver _resolve_target_rows). Necesario para un corte con más
+            # de un fragmento: ahí hay una fila por fragmento (ver
+            # open_cut_dialog_and_download) y sin esto todas las filas terminaban
+            # compartiendo el archivo del ÚLTIMO fragmento que terminara - "Recodificar"
+            # solo terminaba aplicándose a ese, el resto quedaba sin recodificar (ver
+            # conversación).
+            task_data["_frag_idx"] = idx
+            for row in self._resolve_target_rows(data, task_data):
                 row.set_fragment_progress(idx, total, phase)
             if self.tab.taskbar_manager:
                 self.tab.taskbar_manager.set_state("indeterminate")
             return
 
-        # Mientras el ítem tenga fragmentos, el progreso numérico crudo de
-        # yt-dlp no representa el avance real (se dispara una vez por
-        # fragmento) — la barra de la fila queda a cargo de fragment_progress.
-        if has_fragments:
-            return
-
         if data.get("status") == "downloading":
+            # Mientras el ítem tenga fragmentos, el % numérico crudo de yt-dlp no
+            # representa el avance real (se dispara una vez por fragmento) - la barra
+            # de la fila queda a cargo de fragment_progress en ese caso. Esto NO debe
+            # aplicarse también a "finished" (ver más abajo): antes se descartaba con
+            # el mismo guard, y como consecuencia row.downloaded_filepath/
+            # last_downloaded_filepath nunca se llenaban para un corte de fragmento -
+            # "Recodificar" no tenía ningún archivo real que recodificar y no hacía
+            # nada después de descargar (ver conversación).
+            if has_fragments:
+                return
             from core.ytdlp_logic.analyzer import strip_ansi_codes
             p_str = strip_ansi_codes(data.get("_percent_str", "0%")).replace("%", "").strip()
             try:
@@ -414,7 +468,7 @@ class QuickDownloadController(QObject):
             speed = strip_ansi_codes(data.get("_speed_str", "")).strip() or "..."
             eta = strip_ansi_codes(data.get("_eta_str", "")).strip() or "..."
 
-            for row in task_data["item_rows"]:
+            for row in self._resolve_target_rows(data, task_data):
                 row.update_progress(
                     val,
                     info=f"{speed} - ETA: {eta}",
@@ -425,16 +479,58 @@ class QuickDownloadController(QObject):
                     row.update_metadata_from_dict(info)
 
         elif data.get("status") == "finished":
+            # A diferencia de "downloading", este evento SÍ hay que procesarlo aunque
+            # haya fragmentos - es la única fuente del nombre real del archivo de
+            # salida (yt-dlp lo reporta igual con el corte, un evento por fragmento).
             filepath = data.get("filename")
             if filepath:
                 self.last_downloaded_filepath = filepath
-            for row in task_data["item_rows"]:
-                row.update_progress(100, status=self.tr("Procesando") if hasattr(self, "tr") else "Procesando")
+            for row in self._resolve_target_rows(data, task_data):
+                if not has_fragments:
+                    row.update_progress(100, status=self.tr("Procesando") if hasattr(self, "tr") else "Procesando")
                 if filepath:
                     row.downloaded_filepath = filepath
                 info = data.get("info_dict")
                 if info:
                     row.update_metadata_from_dict(info)
+
+    def _resolve_target_rows(self, data, task_data):
+        """
+        Devuelve las filas de item_rows a las que corresponde este evento de progreso.
+        Dos casos comparten una misma tarea/worker con más de una fila:
+
+        - Playlist: yt-dlp reporta el 'playlist_index' de CADA entrada en su propio
+          info_dict.
+        - Corte con más de un fragmento (ver open_cut_dialog_and_download, que crea una
+          fila por fragmento): los eventos "downloading"/"finished" de un fragmento no
+          traen ningún índice propio en info_dict - se usa el último fragment_index visto
+          en fragment_progress (guardado en task_data['_frag_idx'], ver más arriba en
+          este método).
+
+        En ambos casos, item_keys guarda ese mismo índice por fila (ver
+        ActivityPanel.add_activity_rows) para poder enrutar el evento a la fila correcta,
+        en vez de aplicarlo ciegamente a todas, que pisaba el archivo/estado de cada fila
+        con los de la última entrada/fragmento visto (y por eso antes no se podía
+        recodificar cada ítem de playlist, ni cada fragmento de un corte múltiple, por
+        separado - ver conversación). Con una sola fila (descarga directa, corte de UN
+        fragmento, o playlist de 1 ítem) no hace falta desambiguar.
+        """
+        rows = task_data["item_rows"]
+        if len(rows) <= 1:
+            return rows
+        info = data.get("info_dict") or {}
+        key = info.get("playlist_index")
+        if key is None:
+            key = info.get("playlist_autonumber")
+        if key is None:
+            key = task_data.get("_frag_idx")
+        if key is None:
+            return rows
+        keys = task_data.get("item_keys") or []
+        for row, row_key in zip(rows, keys):
+            if row_key == key:
+                return [row]
+        return rows
 
     def _on_task_finished(self, success, message, task_data):
         self._batch_completed += 1
@@ -448,19 +544,46 @@ class QuickDownloadController(QObject):
         from core.services.editor_integration_manager import EditorIntegrationManager
         editor_mgr = EditorIntegrationManager.get_instance()
 
+        request_data = task_data["request_data"]
+        recode_requested = bool(request_data.get("recode_enabled"))
+        is_single_row = len(task_data["item_rows"]) == 1
+
         for row in task_data["item_rows"]:
             if success:
-                row.update_progress(100, status=self.tr("Completado") if hasattr(self, "tr") else "Completado")
                 actual_path = None
                 if hasattr(row, 'downloaded_filepath') and row.downloaded_filepath:
                     actual_path = self._find_actual_downloaded_file(row.downloaded_filepath)
-                if not actual_path and self.last_downloaded_filepath:
+                # self.last_downloaded_filepath es un rastro GLOBAL (última descarga de
+                # cualquier tarea/fila) - solo sirve de respaldo cuando la tarea tiene una
+                # sola fila. Con una playlist (varias filas por tarea, ver
+                # _resolve_target_rows) usarlo acá terminaría recodificando o marcando
+                # "Completado" con el archivo de OTRA fila si esta nunca recibió su
+                # propio evento "finished" (p. ej. un ítem fallido con
+                # ignoreerrors='only_download', ver downloader_master.py).
+                if not actual_path and is_single_row and self.last_downloaded_filepath:
                     actual_path = self._find_actual_downloaded_file(self.last_downloaded_filepath)
-                    
+
+                if not actual_path and not is_single_row:
+                    # Ítem de playlist que nunca recibió su propio evento "finished" (p.
+                    # ej. falló individualmente con ignoreerrors='only_download' - la
+                    # tarea completa igual reporta éxito, pero ESTA fila no tiene un
+                    # archivo real que recodificar ni marcar como completado).
+                    row.update_progress(0, status=self.tr("Error") if hasattr(self, "tr") else "Error")
+                    row.mark_error()
+                    continue
+
+                if recode_requested and self._start_post_download_recode(
+                    actual_path, request_data, row, row.original_title or request_data.get("title")
+                ):
+                    # El estado "Completado"/envío al editor lo resuelve
+                    # _on_recode_job_status una vez termine la recodificación.
+                    continue
+
+                row.update_progress(100, status=self.tr("Completado") if hasattr(self, "tr") else "Completado")
                 row.mark_completed(filepath=actual_path or getattr(row, 'downloaded_filepath', None))
-                
+
                 if editor_mgr and editor_mgr.is_auto_send_enabled and hasattr(row, 'downloaded_filepath') and row.downloaded_filepath:
-                    editor_mgr.process_raw_download(actual_path or row.downloaded_filepath, task_data["request_data"])
+                    editor_mgr.process_raw_download(actual_path or row.downloaded_filepath, request_data)
             elif message == "SKIPPED_CONFLICT":
                 # No es un error: la política de conflicto elegida fue "Omitir"
                 # y el archivo ya existía.
@@ -495,3 +618,123 @@ class QuickDownloadController(QObject):
             self._emit_batch_progress()
 
         self.download_finished_signal.emit(success, message)
+
+    def _start_post_download_recode(self, actual_path, request_data, row, title):
+        """
+        Encola un job RECODE async para el archivo que acaba de bajar esta fila.
+        Contraparte de AdvancedProcessTab.DownloadController._start_post_download_recode
+        (modo SOLO) pero reflejando el progreso en la fila de activity_panel en vez de
+        en output_options. Devuelve True si el job quedó encolado (la fila queda a
+        cargo de _on_recode_job_progress/_status), False si no se pudo iniciar - en
+        ese caso el llamador debe resolver el estado "Completado" normalmente.
+        """
+        if not actual_path or not os.path.exists(actual_path) or os.path.isdir(actual_path):
+            logger.warning(f"QuickModeTab: No se encontró el archivo descargado para recodificar ({title}).")
+            return False
+
+        from core.utils.preset_manager import build_recode_output_path
+        from core.utils.file_conflict_manager import quarantine_for_recode
+
+        preset_name = request_data.get("recode_preset_name")
+        prefix = request_data.get("recode_filename_prefix") or ""
+        suffix = request_data.get("recode_filename_suffix") or ""
+        settings, out_file = build_recode_output_path(
+            actual_path, "video_tools/avanzado", preset_name, prefix=prefix, suffix=suffix
+        )
+        if not settings:
+            logger.warning(f"QuickModeTab: Preset de recodificación '{preset_name}' no encontrado, se omite ({title}).")
+            return False
+
+        try:
+            backup_path = quarantine_for_recode(actual_path)
+        except Exception as e:
+            logger.error(f"QuickModeTab: No se pudo poner en cuarentena '{actual_path}': {e}")
+            return False
+
+        recode_job_id = self.queue_mgr.add_job({
+            "input_path": backup_path,
+            "output_path": out_file,
+            "settings": settings,
+            "duration_sec": 0.0,
+            "title": f"Recode: {title}",
+        }, "RECODE")
+
+        self._recode_by_download[recode_job_id] = row
+        self._recode_state[recode_job_id] = {
+            "backup_path": backup_path,
+            "keep_original": request_data.get("recode_keep_original", True),
+            "request_data": dict(request_data),
+            "title": title,
+        }
+
+        row.update_progress(0, info="", status=self.tr("Recodificando..."))
+        # La cola global nace pausada y solo se reanuda desde Proceso Avanzado (modo
+        # LOTES) o Herramientas Multimedia (ver video_tools_view.py) - sin esto, un job
+        # RECODE encolado desde Modo Rápido se queda esperando indefinidamente si el
+        # usuario nunca tocó esas otras pestañas.
+        self.queue_mgr.start_queue()
+        return True
+
+    def _on_recode_job_progress(self, job_id, percent, speed, eta):
+        row = self._recode_by_download.get(job_id)
+        if row is None:
+            return
+        info = f"{speed} | {eta}" if speed and eta else (speed or eta or "")
+        row.update_progress(percent, info=info, status=self.tr("Recodificando..."))
+
+    def _on_recode_job_status(self, job_id, status):
+        if job_id not in self._recode_by_download:
+            return
+        if status not in ("COMPLETED", "FAILED", "CANCELLED"):
+            return  # estado intermedio (RUNNING, etc.) - nada que resolver todavía
+
+        row = self._recode_by_download.pop(job_id)
+        state = self._recode_state.pop(job_id, {})
+        backup_path = state.get("backup_path")
+        keep_original = state.get("keep_original", True)
+        request_data = state.get("request_data") or {}
+        title = state.get("title", "")
+        recode_job = self.queue_mgr.get_job(job_id)
+
+        from core.utils.file_conflict_manager import commit_backup, rollback_backup, BACKUP_SUFFIX
+
+        final_path = None
+        if status == "COMPLETED":
+            # Éxito: la casilla "Mantener medios originales" decide qué pasa con el
+            # archivo bajado antes de recodificar.
+            if keep_original:
+                rollback_backup(backup_path)
+            else:
+                commit_backup(backup_path)
+            final_path = recode_job.final_filepath if recode_job else None
+            row.update_progress(100, status=self.tr("Completado"))
+            row.mark_completed(filepath=final_path)
+            logger.info(f"QuickModeTab: Recodificación post-descarga completada ({title}).")
+        else:
+            # Fallo o cancelación: SIEMPRE se restaura, sin importar "mantener
+            # originales" (la casilla nunca causa pérdida de datos ante un error).
+            rollback_backup(backup_path)
+            if backup_path and backup_path.endswith(BACKUP_SUFFIX):
+                final_path = backup_path[: -len(BACKUP_SUFFIX)]
+            if status == "FAILED":
+                err = recode_job.error_message if recode_job else "desconocido"
+                logger.error(f"QuickModeTab: Falló la recodificación post-descarga de '{title}': {err}")
+                row.update_progress(0, status=self.tr("Error al recodificar"))
+                row.mark_error()
+            else:
+                row.update_progress(0, status=self.tr("Recodificación cancelada"))
+            if final_path:
+                row.downloaded_filepath = final_path
+                row.mark_completed(filepath=final_path)
+
+        if final_path:
+            from core.services.editor_integration_manager import EditorIntegrationManager
+            editor_mgr = EditorIntegrationManager.get_instance()
+            if editor_mgr and editor_mgr.is_auto_send_enabled:
+                actual = self._find_actual_downloaded_file(final_path)
+                editor_mgr.process_raw_download(actual or final_path, request_data)
+
+        # El job RECODE interno ya cumplió su propósito - no debe quedar visible ni
+        # reintentable en la cola compartida con Proceso Avanzado / Herramientas
+        # Multimedia (no es algo que el usuario haya encolado directamente).
+        self.queue_mgr.remove_job(job_id)

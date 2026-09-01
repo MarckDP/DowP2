@@ -224,6 +224,15 @@ class FFprobeMetadataManager(QObject):
                 except Exception:
                     pass
 
+            elif ext == ".psd":
+                meta["video_codec"] = "PSD"
+                try:
+                    from PIL import Image
+                    with Image.open(path) as im:
+                        meta["resolución"] = f"{im.width}x{im.height}"
+                except Exception:
+                    pass
+
             if not meta.get("resolución") or meta.get("resolución") == "-":
                 from PySide6.QtGui import QImageReader
                 try:

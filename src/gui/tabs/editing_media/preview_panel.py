@@ -412,14 +412,45 @@ class PreviewContainerWidget(QFrame):
             except Exception as e:
                 logger.error(f"PreviewPanel: Error renderizando PDF/AI {path}: {e}")
 
-        # 4. Preview binario incrustado para EPS / PS
+        # 4. Renderizado para Photoshop (.psd)
+        if ext == ".psd":
+            try:
+                pixmap = QPixmap(path)
+                if not pixmap.isNull():
+                    scaled = pixmap.scaled(avail_w, avail_h, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                    bg = create_checkerboard_pixmap(scaled.width(), scaled.height(), square_size=10)
+                    painter = QPainter(bg)
+                    painter.drawPixmap(0, 0, scaled)
+                    painter.end()
+                    self.placeholder_label.setPixmap(bg)
+                    return
+                # Intentar con Pillow si está disponible
+                from PIL import Image
+                with Image.open(path) as im:
+                    rgb_im = im.convert("RGBA")
+                    data = rgb_im.tobytes("raw", "RGBA")
+                    qimg = QImage(data, rgb_im.width, rgb_im.height, QImage.Format.Format_RGBA8888)
+                    pix = QPixmap.fromImage(qimg)
+                    if not pix.isNull():
+                        scaled = pix.scaled(avail_w, avail_h, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                        bg = create_checkerboard_pixmap(scaled.width(), scaled.height(), square_size=10)
+                        painter = QPainter(bg)
+                        painter.drawPixmap(0, 0, scaled)
+                        painter.end()
+                        self.placeholder_label.setPixmap(bg)
+                        return
+            except Exception as e:
+                logger.error(f"PreviewPanel: Error renderizando PSD {path}: {e}")
+
+        # 5. Preview para EPS / PS (PostScript)
         if ext in (".eps", ".ps"):
             try:
                 import struct
+                # A. Cabecera binaria DOS EPS con TIFF
                 with open(path, "rb") as f:
-                    header = f.read(32)
-                    if len(header) >= 28 and header[:4] in (b'\xC5\xD0\xD3\xC6', b'\xC6\xD3\xD0\xC5'):
-                        tiff_start, tiff_len = struct.unpack("<II", header[20:28])
+                    raw_head = f.read(4096)
+                    if len(raw_head) >= 28 and raw_head[:4] in (b'\xC5\xD0\xD3\xC6', b'\xC6\xD3\xD0\xC5'):
+                        tiff_start, tiff_len = struct.unpack("<II", raw_head[20:28])
                         if tiff_len > 0:
                             f.seek(tiff_start)
                             tiff_bytes = f.read(tiff_len)
@@ -433,6 +464,78 @@ class PreviewContainerWidget(QFrame):
                                     painter.end()
                                     self.placeholder_label.setPixmap(bg)
                                     return
+
+                # B. QPdfDocument (si el EPS contiene datos PDF/AI)
+                try:
+                    from PySide6.QtPdf import QPdfDocument
+                    doc = QPdfDocument(self)
+                    doc.load(path)
+                    if doc.pageCount() > 0:
+                        sz = doc.pageSize(0)
+                        if sz.isValid() and sz.width() > 0:
+                            scale = min(avail_w / sz.width(), avail_h / sz.height())
+                            render_w = max(1, int(sz.width() * scale))
+                            render_h = max(1, int(sz.height() * scale))
+                            page_img = doc.render(0, QSize(render_w, render_h))
+                            if not page_img.isNull():
+                                pixmap = QPixmap.fromImage(page_img)
+                                bg = create_checkerboard_pixmap(pixmap.width(), pixmap.height(), square_size=10)
+                                painter = QPainter(bg)
+                                painter.drawPixmap(0, 0, pixmap)
+                                painter.end()
+                                self.placeholder_label.setPixmap(bg)
+                                return
+                except Exception:
+                    pass
+
+                # C. Tarjeta visual informativa estilizada con dimensiones
+                import re
+                dim_str = ""
+                with open(path, "rb") as f:
+                    header_text = f.read(4096).decode("latin-1", errors="ignore")
+                    match = re.search(r"%%(?:HiRes)?BoundingBox:\s*([-\d\.]+)\s+([-\d\.]+)\s+([-\d\.]+)\s+([-\d\.]+)", header_text)
+                    if match:
+                        x1, y1, x2, y2 = map(float, match.groups())
+                        w = int(round(abs(x2 - x1)))
+                        h = int(round(abs(y2 - y1)))
+                        if w > 0 and h > 0:
+                            dim_str = f"{w}x{h} px"
+
+                card_w = min(avail_w, 320)
+                card_h = min(avail_h, 180)
+                out_pix = QPixmap(card_w, card_h)
+                out_pix.fill(QColor("#18181a"))
+                painter = QPainter(out_pix)
+                painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+                painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+
+                from PySide6.QtGui import QPen, QBrush, QFont
+                pen = QPen(QColor("#2d2d30"), 1.5)
+                painter.setPen(pen)
+                painter.setBrush(QBrush(QColor("#202024")))
+                painter.drawRoundedRect(8, 8, card_w - 16, card_h - 16, 8, 8)
+
+                ext_name = "EPS" if ext == ".eps" else "PS"
+                font_badge = QFont("Segoe UI", 18, QFont.Weight.Bold)
+                painter.setFont(font_badge)
+                painter.setPen(QColor("#e67e22"))
+                painter.drawText(QRectF(8, 20, card_w - 16, 32), Qt.AlignmentFlag.AlignCenter, f"Vector {ext_name}")
+
+                font_name = QFont("Segoe UI", 10)
+                painter.setFont(font_name)
+                painter.setPen(QColor("#cccccc"))
+                painter.drawText(QRectF(16, 60, card_w - 32, 40), Qt.AlignmentFlag.AlignCenter, os.path.basename(path))
+
+                if dim_str:
+                    font_dim = QFont("Segoe UI", 11, QFont.Weight.DemiBold)
+                    painter.setFont(font_dim)
+                    painter.setPen(QColor(get_theme_token("acento_primario", "#B9E640")))
+                    painter.drawText(QRectF(8, 110, card_w - 16, 25), Qt.AlignmentFlag.AlignCenter, f"Lienzo: {dim_str}")
+
+                painter.end()
+                self.placeholder_label.setPixmap(out_pix)
+                return
+
             except Exception as e:
                 logger.error(f"PreviewPanel: Error leyendo preview EPS {path}: {e}")
 

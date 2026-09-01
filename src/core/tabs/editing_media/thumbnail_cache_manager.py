@@ -262,6 +262,8 @@ class ThumbnailCacheManager(QObject):
             return self._generate_pdf_thumbnail(file_path, target_path)
         elif ext in (".eps", ".ps"):
             return self._generate_eps_thumbnail(file_path, target_path)
+        elif ext == ".psd":
+            return self._generate_psd_thumbnail(file_path, target_path)
         elif media_type == "imagen":
             return self._generate_image_thumbnail(file_path, target_path)
         elif media_type == "video":
@@ -304,7 +306,8 @@ class ThumbnailCacheManager(QObject):
         try:
             from PySide6.QtPdf import QPdfDocument
             from PySide6.QtCore import QSize
-            doc = QPdfDocument(self)
+            # Sin parent porque corre en hilo de trabajo secundario
+            doc = QPdfDocument()
             doc.load(src_path)
             if doc.pageCount() > 0:
                 page_size = doc.pageSize(0)
@@ -324,20 +327,84 @@ class ThumbnailCacheManager(QObject):
                         y = (256 - render_h) // 2
                         painter.drawImage(x, y, page_img)
                         painter.end()
+                        doc.close()
                         if out_img.save(target_path, "JPG", 85):
                             return target_path
+            doc.close()
         except Exception as e:
             logger.error(f"ThumbnailCacheManager: Error en miniatura PDF/AI {src_path}: {e}")
+        return None
+
+    def _generate_psd_thumbnail(self, src_path: str, target_path: str) -> str | None:
+        try:
+            # 1. Intentar con QImageReader habitual
+            reader = QImageReader(src_path)
+            if reader.canRead():
+                img = reader.read()
+                if not img.isNull():
+                    scaled = img.scaled(256, 256, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                    out_img = QImage(256, 256, QImage.Format.Format_RGB32)
+                    out_img.fill(QColor("#1c1c1e"))
+                    painter = QPainter(out_img)
+                    x = (256 - scaled.width()) // 2
+                    y = (256 - scaled.height()) // 2
+                    painter.drawImage(x, y, scaled)
+                    painter.end()
+                    if out_img.save(target_path, "JPG", 85):
+                        return target_path
+
+            # 2. Intentar con FFmpeg (que decodifica PSD nativamente a máxima velocidad)
+            if check_ffmpeg():
+                info = get_platform_info()
+                ffmpeg_exe = os.path.join(get_ffmpeg_dir(), info["binary_name"])
+                startupinfo = None
+                if os.name == 'nt':
+                    startupinfo = subprocess.STARTUPINFO()
+                    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+
+                cmd = [
+                    ffmpeg_exe,
+                    "-i", src_path,
+                    "-vframes", "1",
+                    "-vf", "scale=256:256:force_original_aspect_ratio=decrease",
+                    "-y", target_path
+                ]
+                process = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    startupinfo=startupinfo,
+                    text=True,
+                    encoding='utf-8',
+                    errors='ignore'
+                )
+                process.communicate(timeout=6)
+                if os.path.exists(target_path) and os.path.getsize(target_path) > 0:
+                    return target_path
+
+            # 3. Intentar con PIL / Pillow si está disponible
+            try:
+                from PIL import Image
+                with Image.open(src_path) as im:
+                    im.thumbnail((256, 256))
+                    rgb_im = im.convert('RGB')
+                    rgb_im.save(target_path, "JPEG", quality=85)
+                    return target_path
+            except Exception:
+                pass
+        except Exception as e:
+            logger.error(f"ThumbnailCacheManager: Error en miniatura PSD {src_path}: {e}")
         return None
 
     def _generate_eps_thumbnail(self, src_path: str, target_path: str) -> str | None:
         try:
             import struct
+            import re
             # 1. Intentar extraer preview TIFF incrustado en cabecera binaria DOS EPS
             with open(src_path, "rb") as f:
-                header = f.read(32)
-                if len(header) >= 28 and header[:4] in (b'\xC5\xD0\xD3\xC6', b'\xC6\xD3\xD0\xC5'):
-                    tiff_start, tiff_len = struct.unpack("<II", header[20:28])
+                raw_head = f.read(4096)
+                if len(raw_head) >= 28 and raw_head[:4] in (b'\xC5\xD0\xD3\xC6', b'\xC6\xD3\xD0\xC5'):
+                    tiff_start, tiff_len = struct.unpack("<II", raw_head[20:28])
                     if tiff_len > 0:
                         f.seek(tiff_start)
                         tiff_bytes = f.read(tiff_len)
@@ -355,12 +422,116 @@ class ThumbnailCacheManager(QObject):
                                 if out_img.save(target_path, "JPG", 85):
                                     return target_path
 
-            # 2. Fallback con lector de imágenes habitual
-            fallback = self._generate_image_thumbnail(src_path, target_path)
-            if fallback:
-                return fallback
+            # 2. Intentar cargar como PDF/AI
+            try:
+                from PySide6.QtPdf import QPdfDocument
+                from PySide6.QtCore import QSize
+                doc = QPdfDocument()
+                doc.load(src_path)
+                if doc.pageCount() > 0:
+                    sz = doc.pageSize(0)
+                    if sz.isValid() and sz.width() > 0:
+                        scale = min(256.0 / sz.width(), 256.0 / sz.height())
+                        render_w = max(1, int(sz.width() * scale))
+                        render_h = max(1, int(sz.height() * scale))
+                        page_img = doc.render(0, QSize(render_w, render_h))
+                        if not page_img.isNull():
+                            out_img = QImage(256, 256, QImage.Format.Format_RGB32)
+                            out_img.fill(QColor("#1c1c1e"))
+                            painter = QPainter(out_img)
+                            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+                            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+                            x = (256 - render_w) // 2
+                            y = (256 - render_h) // 2
+                            painter.drawImage(x, y, page_img)
+                            painter.end()
+                            doc.close()
+                            if out_img.save(target_path, "JPG", 85):
+                                return target_path
+                    doc.close()
+            except Exception:
+                pass
+
+            # 3. Intentar con FFmpeg
+            if check_ffmpeg():
+                try:
+                    info = get_platform_info()
+                    ffmpeg_exe = os.path.join(get_ffmpeg_dir(), info["binary_name"])
+                    startupinfo = None
+                    if os.name == 'nt':
+                        startupinfo = subprocess.STARTUPINFO()
+                        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+
+                    cmd = [
+                        ffmpeg_exe,
+                        "-i", src_path,
+                        "-vframes", "1",
+                        "-vf", "scale=256:256:force_original_aspect_ratio=decrease",
+                        "-y", target_path
+                    ]
+                    proc = subprocess.Popen(
+                        cmd,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        startupinfo=startupinfo,
+                        text=True,
+                        encoding='utf-8',
+                        errors='ignore'
+                    )
+                    proc.communicate(timeout=4)
+                    if os.path.exists(target_path) and os.path.getsize(target_path) > 0:
+                        return target_path
+                except Exception:
+                    pass
+
+            # 4. Fallback visual: Crear miniatura estilizada tipo tarjeta vectorial con BoundingBox
+            dim_str = ""
+            with open(src_path, "rb") as f:
+                header_text = f.read(4096).decode("latin-1", errors="ignore")
+                match = re.search(r"%%(?:HiRes)?BoundingBox:\s*([-\d\.]+)\s+([-\d\.]+)\s+([-\d\.]+)\s+([-\d\.]+)", header_text)
+                if match:
+                    x1, y1, x2, y2 = map(float, match.groups())
+                    w = int(round(abs(x2 - x1)))
+                    h = int(round(abs(y2 - y1)))
+                    if w > 0 and h > 0:
+                        dim_str = f"{w}x{h}"
+
+            out_img = QImage(256, 256, QImage.Format.Format_RGB32)
+            out_img.fill(QColor("#18181a"))
+            painter = QPainter(out_img)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+
+            from PySide6.QtGui import QPen, QBrush, QFont
+            from PySide6.QtCore import QRectF
+            pen = QPen(QColor("#2d2d30"), 2)
+            painter.setPen(pen)
+            painter.setBrush(QBrush(QColor("#202024")))
+            painter.drawRoundedRect(16, 16, 224, 224, 12, 12)
+
+            ext_label = "EPS" if src_path.lower().endswith(".eps") else "PS"
+            font_badge = QFont("Segoe UI", 26, QFont.Weight.Bold)
+            painter.setFont(font_badge)
+            painter.setPen(QColor("#e67e22"))
+            painter.drawText(QRectF(16, 50, 224, 45), Qt.AlignmentFlag.AlignCenter, ext_label)
+
+            if dim_str:
+                font_dim = QFont("Segoe UI", 12)
+                painter.setFont(font_dim)
+                painter.setPen(QColor("#aaaaaa"))
+                painter.drawText(QRectF(16, 110, 224, 30), Qt.AlignmentFlag.AlignCenter, dim_str)
+
+            font_desc = QFont("Segoe UI", 10)
+            painter.setFont(font_desc)
+            painter.setPen(QColor("#666666"))
+            painter.drawText(QRectF(16, 155, 224, 24), Qt.AlignmentFlag.AlignCenter, "Vector PostScript")
+
+            painter.end()
+            if out_img.save(target_path, "JPG", 85):
+                return target_path
+
         except Exception as e:
-            logger.error(f"ThumbnailCacheManager: Error en miniatura EPS {src_path}: {e}")
+            logger.error(f"ThumbnailCacheManager: Error en miniatura EPS/PS {src_path}: {e}")
         return None
 
     def _generate_image_thumbnail(self, src_path: str, target_path: str) -> str | None:

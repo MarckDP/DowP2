@@ -15,7 +15,7 @@ except ImportError:
     WATCHDOG_AVAILABLE = False
     logger.warning("EditingMediaLogic: Watchdog no está disponible. El monitoreo en tiempo real estará deshabilitado.")
 
-VALID_IMAGE_EXTS = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.ico', '.tiff', '.tif', '.avif'}
+VALID_IMAGE_EXTS = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.ico', '.tiff', '.tif', '.avif', '.psd'}
 VALID_VECTOR_EXTS = {'.svg', '.ai', '.eps', '.ps', '.pdf'}
 VALID_VIDEO_EXTS = {'.mp4', '.mkv', '.avi', '.mov', '.webm', '.m4v', '.wmv', '.flv'}
 VALID_AUDIO_EXTS = {'.mp3', '.wav', '.flac', '.m4a', '.aac', '.ogg', '.opus', '.wma'}

@@ -273,7 +273,7 @@ class MemoryCachePage(QWidget):
         dl_layout.addWidget(lbl_dl_title_row)
 
         lbl_dl_desc = QLabel(self.tr(
-            "Carpeta donde se guardan las descargas de medios web (p. ej. Freesound) cuando no "
+            "Carpeta donde se guardan las descargas de medios web (p. ej. Freesound, Wikimedia) cuando no "
             "seleccionaste ninguna etiqueta. Por defecto se usa la carpeta Downloads del sistema."
         ))
         lbl_dl_desc.setWordWrap(True)

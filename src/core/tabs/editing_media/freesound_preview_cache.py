@@ -11,6 +11,12 @@ from core.utils.paths import get_freesound_cache_dir
 MAX_FREESOUND_CACHE_FILES = 50
 MAX_WAVEFORM_CACHE_ITEMS = 500
 
+# Esta caché ahora también baja previews de video/audio de Wikimedia (además de Freesound), y
+# el CDN de Wikimedia (upload.wikimedia.org) devuelve 403 a peticiones sin un User-Agent
+# descriptivo (aplican de verdad su política de etiqueta, no es solo documentación). Freesound
+# no lo exige, pero mandarlo igual no tiene contra.
+_DOWNLOAD_HEADERS = {"User-Agent": "DowP/2.0 (https://github.com/dowp-project; gestor de medios de escritorio)"}
+
 
 class FreesoundPreviewWorkerSignals(QObject):
     """Señales para la descarga de previas de Freesound en segundo plano."""
@@ -31,7 +37,7 @@ class FreesoundPreviewRunnable(QRunnable):
     def run(self):
         temp_path = self.target_path + ".tmp"
         try:
-            response = requests.get(self.url, stream=True, timeout=15)
+            response = requests.get(self.url, stream=True, timeout=15, headers=_DOWNLOAD_HEADERS)
             response.raise_for_status()
 
             with open(temp_path, "wb") as f:
@@ -106,12 +112,15 @@ class FreesoundPreviewCacheManager(QObject):
             self._evict_oldest_files()
 
     def _get_filename_for_url(self, url: str) -> str:
-        """Genera un nombre de archivo único basado en el hash SHA256 de la URL del audio."""
+        """Genera un nombre de archivo único basado en el hash SHA256 de la URL del medio.
+        Reconoce también contenedores de video/audio de Wikimedia (derivatives .webm/.mov,
+        originales .flac/.opus/.m4a) además de los de Freesound (.ogg/.wav/.mp3 por defecto)."""
+        url_lower = url.lower()
         ext = ".mp3"
-        if ".ogg" in url.lower():
-            ext = ".ogg"
-        elif ".wav" in url.lower():
-            ext = ".wav"
+        for candidate in (".webm", ".mp4", ".mov", ".ogg", ".oga", ".wav", ".flac", ".opus", ".m4a"):
+            if candidate in url_lower:
+                ext = candidate
+                break
         hash_str = hashlib.sha256(url.encode('utf-8')).hexdigest()[:16]
         return f"preview_{hash_str}{ext}"
 

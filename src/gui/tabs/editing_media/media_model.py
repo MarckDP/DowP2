@@ -32,7 +32,11 @@ class MediaTableModel(QAbstractTableModel):
         from core.tabs.editing_media.freesound_preview_cache import FreesoundPreviewCacheManager
         fs_mgr = FreesoundPreviewCacheManager.get_instance()
         fs_mgr.waveform_peaks_ready.connect(self._on_freesound_waveform_loaded)
-        
+
+        from core.tabs.editing_media.remote_thumbnail_cache_manager import RemoteThumbnailCacheManager
+        remote_thumb_mgr = RemoteThumbnailCacheManager.get_instance()
+        remote_thumb_mgr.thumbnail_ready.connect(self._on_remote_thumbnail_loaded)
+
         # Para caché rápido de íconos base y colores
         self._icon_cache = {}
         
@@ -198,7 +202,7 @@ class MediaTableModel(QAbstractTableModel):
                 elif col == 5: 
                     if not is_web:
                         return str(item.get("ruta", "-")).strip() or "-"
-                    return str(item.get("library", "Freesound" if is_web else "Local")).strip()
+                    return str(item.get("library", "Web" if is_web else "Local")).strip()
                 elif col == 6: 
                     file_type = item.get("file_type") or item.get("type", "")
                     if not file_type and "." in item.get("nombre", ""):
@@ -267,6 +271,25 @@ class MediaTableModel(QAbstractTableModel):
                         from core.tabs.editing_media.waveform_cache_manager import render_waveform_icon
                         icon_size = QSize(80, 80) if self._view_mode == "grid" else QSize(18, 18)
                         return render_waveform_icon(peaks, icon_size)
+
+                # Miniatura ya renderizada por el origen web (ej. thumburl de Wikimedia, tanto
+                # para imagen como para video) — se cachea localmente sin descargar el archivo
+                # original completo. El audio no tiene una miniatura real, cae al placeholder.
+                if tipo in ("imagen", "video") and item.get("thumb_url"):
+                    thumb_url = item["thumb_url"]
+                    from core.tabs.editing_media.remote_thumbnail_cache_manager import RemoteThumbnailCacheManager
+                    remote_thumb_mgr = RemoteThumbnailCacheManager.get_instance()
+                    icon_size = 256 if self._view_mode == "grid" else 18
+                    cached_icon = remote_thumb_mgr.get_cached_qicon(thumb_url, icon_size)
+                    if cached_icon:
+                        return cached_icon
+                    remote_thumb_mgr.request_thumbnail(thumb_url)
+                    placeholder_name = "movie.svg" if tipo == "video" else "image.svg"
+                    placeholder_color = "#9b59b6" if tipo == "video" else "#2ecc71"
+                    if self._view_mode == "grid":
+                        return self.get_cached_icon(f"{placeholder_name}_placeholder", placeholder_color)
+                    else:
+                        return self.get_cached_icon(placeholder_name, placeholder_color, size=18)
 
                 if self._view_mode == "grid":
                     return self.get_cached_icon("travel_explore.svg_placeholder", "#3498db")
@@ -343,6 +366,14 @@ class MediaTableModel(QAbstractTableModel):
         for i, item in enumerate(self._media_items):
             is_web = item.get("source") == "Freesound" or item.get("is_web", False)
             if is_web and "images" in item and item["images"].get("waveform_m") == waveform_url:
+                idx = self.index(i, 0)
+                self.dataChanged.emit(idx, idx, [Qt.DecorationRole])
+
+    def _on_remote_thumbnail_loaded(self, thumb_url: str, local_path: str):
+        """Se llama cuando una miniatura de un origen web (ej. thumburl de Wikimedia) termina
+        de descargarse y cachearse localmente."""
+        for i, item in enumerate(self._media_items):
+            if item.get("thumb_url") == thumb_url:
                 idx = self.index(i, 0)
                 self.dataChanged.emit(idx, idx, [Qt.DecorationRole])
 

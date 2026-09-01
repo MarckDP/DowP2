@@ -67,6 +67,13 @@ def get_waveform_cache_dir() -> str:
     os.makedirs(wf_dir, exist_ok=True)
     return wf_dir
 
+def get_remote_thumbnail_cache_dir() -> str:
+    """Retorna el directorio de caché para miniaturas ya renderizadas por un origen web
+    (ej. thumburl de Wikimedia) — imágenes chicas descargadas tal cual, sin ffmpeg."""
+    rt_dir = os.path.join(get_cache_dir(), "remote_thumbnails")
+    os.makedirs(rt_dir, exist_ok=True)
+    return rt_dir
+
 def get_local_app_data_dir() -> str:
     r"""
     Retorna un directorio de datos NO itinerante (no roaming) para archivos grandes que no

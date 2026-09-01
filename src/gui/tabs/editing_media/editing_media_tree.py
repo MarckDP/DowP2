@@ -41,11 +41,16 @@ class TreeListMixin:
 
         self.tree_folders.clear()
         
-        # 1. Nodo Raíz de Freesound (Online)
-        self.online_root = QTreeWidgetItem(self.tree_folders, [self.tr("Freesound")])
-        self.online_root.setIcon(0, get_svg_icon("travel_explore.svg"))
-        self.online_root.setData(0, Qt.UserRole, {"tipo": "root_online"})
-        self.online_root.setExpanded(True)
+        # 1. Nodo Raíz de Medios Web (agrupa los orígenes remotos: Freesound, Wikimedia, ...)
+        self.web_root = QTreeWidgetItem(self.tree_folders, [self.tr("Medios Web")])
+        self.web_root.setIcon(0, get_svg_icon("travel_explore.svg"))
+        self.web_root.setData(0, Qt.UserRole, {"tipo": "root_web"})
+        self.web_root.setExpanded(True)
+
+        for source_id, provider in getattr(self, "web_providers", {}).items():
+            source_item = QTreeWidgetItem(self.web_root, [provider.display_name])
+            source_item.setIcon(0, get_svg_icon("travel_explore.svg"))
+            source_item.setData(0, Qt.UserRole, {"tipo": "web_source", "source_id": source_id})
 
         # 2. Nodo Raíz de Directorios Físicos
         self.physical_root = QTreeWidgetItem(self.tree_folders, [self.tr("Directorios")])
@@ -115,7 +120,9 @@ class TreeListMixin:
                         match = True
                     elif tipo == "collection" and child_data.get("nombre") == target_data.get("nombre"):
                         match = True
-                    elif tipo in ["root_physical", "root_virtual", "root_online"]:
+                    elif tipo == "web_source" and child_data.get("source_id") == target_data.get("source_id"):
+                        match = True
+                    elif tipo in ["root_physical", "root_virtual", "root_web"]:
                         match = True
                 
                 if match:
@@ -183,23 +190,41 @@ class TreeListMixin:
     def _update_button_states(self):
         selected = self.tree_folders.currentItem()
         is_online = False
+        is_freesound_source = False
+        source_id = None
+        provider = None
         if selected:
             data = selected.data(0, Qt.UserRole)
             if data:
                 tipo = data.get("tipo")
-                if tipo == "root_online":
+                if tipo == "web_source":
                     is_online = True
-        
+                    source_id = data.get("source_id")
+                    provider = getattr(self, "web_providers", {}).get(source_id)
+                    is_freesound_source = (source_id == "freesound")
+
         # Deshabilitar botón de indexar carpeta en modo online
         if hasattr(self, "btn_add_folder"):
             self.btn_add_folder.setEnabled(not is_online)
-        
-        # Mostrar engranaje de configuración en modo online
+
+        # El login es un control propio de Freesound (único origen con auth por ahora); el
+        # filtro de licencia en cambio aparece para cualquier origen que declare
+        # license_filter_options (hoy Freesound y Wikimedia).
         if hasattr(self, "btn_freesound_login"):
-            self.btn_freesound_login.setVisible(is_online)
+            self.btn_freesound_login.setVisible(is_freesound_source)
+
+        license_options = list(getattr(provider, "license_filter_options", []) or []) if provider else []
         if hasattr(self, "license_container"):
-            self.license_container.setVisible(is_online)
-            
+            self.license_container.setVisible(bool(license_options))
+        if hasattr(self, "web_license_combo") and source_id != getattr(self, "_license_combo_source_id", None):
+            self._license_combo_source_id = source_id
+            self.web_license_combo.blockSignals(True)
+            self.web_license_combo.clear()
+            self.web_license_combo.addItem(self.tr("Cualquiera"), "Cualquiera")
+            for value, label in license_options:
+                self.web_license_combo.addItem(self.tr(label), value)
+            self.web_license_combo.blockSignals(False)
+
         # Ocultar columnas innecesarias para medios locales y actualizar headers
         if hasattr(self, "media_model"):
             self.media_model.set_online_mode(is_online)
@@ -210,14 +235,22 @@ class TreeListMixin:
             self.media_table.setColumnHidden(5, False) # Ruta (Local) / Origen (Web)
             self.media_table.setColumnHidden(6, not is_online) # Tipo de Archivo (Web)
             self.media_table.setColumnHidden(7, not is_online) # Detalles (Web)
-            
-        # Si es online, forzar el filtro "Audios" y deshabilitar los otros
-        if is_online:
+
+        # Si el origen web activo solo soporta un tipo de medio (ej. Freesound = solo audio),
+        # forzar ese filtro y deshabilitar los demás, igual que antes. Si soporta varios tipos
+        # (ej. Wikimedia = imagen/audio/video), dejar los 4 filtros habilitados.
+        was_forced = getattr(self, "_filter_forced_by_online", False)
+        forced_type = None
+        if is_online and provider and len(provider.supported_media_types) == 1:
+            forced_type = next(iter(provider.supported_media_types))
+
+        if forced_type:
+            forced_label = {"audio": self.tr("Audios"), "video": self.tr("Videos"), "imagen": self.tr("Imágenes")}.get(forced_type, self.tr("Audios"))
             for btn in self.filter_buttons:
-                if btn.text() == self.tr("Audios"):
+                if btn.text() == forced_label:
                     btn.setChecked(True)
                     btn.setEnabled(True)
-                    self.active_filter = "Audios"
+                    self.active_filter = forced_label
                 else:
                     btn.setChecked(False)
                     btn.setEnabled(False)
@@ -225,9 +258,10 @@ class TreeListMixin:
         else:
             for btn in self.filter_buttons:
                 btn.setEnabled(True)
-            # Si el filtro "Audios" quedó forzado por haber estado en Freesound, al volver
-            # a medios locales se restablece a "Todos" (dejarlo en Audios sería confuso).
-            if getattr(self, "_filter_forced_by_online", False):
+            # Si un filtro único quedó forzado por haber estado en un origen de un solo tipo
+            # (ej. Freesound), al salir de ahí se restablece a "Todos" (dejarlo forzado sería
+            # confuso tanto en medios locales como en un origen web multi-tipo como Wikimedia).
+            if was_forced:
                 self._filter_forced_by_online = False
                 for btn in self.filter_buttons:
                     btn.setChecked(btn.text() == self.tr("Todos"))
@@ -308,8 +342,9 @@ class TreeListMixin:
                 if data:
                     tipo = data.get("tipo")
 
-            # Por defecto mostramos la tabla/cuadrícula normal; la rama "root_online" sin
-            # sesión iniciada la reemplaza más abajo por la página de inicio de sesión.
+            # Por defecto mostramos la tabla/cuadrícula normal; la rama "web_source" sin
+            # sesión iniciada (cuando el origen la requiere) la reemplaza más abajo por la
+            # página de inicio de sesión.
             if hasattr(self, "_restore_media_stack_widget"):
                 self._restore_media_stack_widget()
 
@@ -325,9 +360,17 @@ class TreeListMixin:
                 media_items = self.controller.get_all_media_files()
             elif tipo == "root_virtual":
                 media_items = []
-            elif tipo == "root_online":
-                # Renderizar resultados de Freesound
-                if not self.controller.is_freesound_authenticated:
+            elif tipo == "root_web":
+                media_items = []
+            elif tipo == "web_source":
+                # Renderizar resultados del origen web seleccionado (Freesound, Wikimedia, ...)
+                source_id = data.get("source_id")
+                provider = getattr(self, "web_providers", {}).get(source_id)
+                if provider is None:
+                    self.media_model.set_data([{"nombre": self.tr("Origen web no disponible."), "tipo": "empty"}])
+                    return
+
+                if provider.requires_auth and not provider.is_authenticated():
                     if hasattr(self, "media_stack") and hasattr(self, "freesound_login_page"):
                         self.media_stack.setCurrentWidget(self.freesound_login_page)
                     self.media_model.set_data([])
@@ -335,7 +378,7 @@ class TreeListMixin:
 
                 if not self.online_results:
                     is_searching = self.online_search_thread and self.online_search_thread.isRunning()
-                    msg = self.tr("Buscando en Freesound...") if is_searching else self.tr("No se encontraron resultados o la búsqueda falló. Intente de nuevo.")
+                    msg = self.tr(f"Buscando en {provider.display_name}...") if is_searching else self.tr("No se encontraron resultados o la búsqueda falló. Intente de nuevo.")
                     self.media_model.set_data([{"nombre": msg, "tipo": "empty"}])
                     return
 
@@ -376,6 +419,17 @@ class TreeListMixin:
                     if is_downloaded and found_path:
                         item["dest_path"] = found_path
 
+                # Filtrar por tipo solo tiene sentido para orígenes que devuelven varios tipos
+                # de medio (ej. Wikimedia). Freesound siempre es audio, así que aunque el
+                # filtro esté forzado a "Audios" no hace falta filtrar (todo ya es audio).
+                active_filter = getattr(self, "active_filter", "Todos")
+                if active_filter == "Todos" or len(provider.supported_media_types) <= 1:
+                    display_results = self.online_results
+                else:
+                    type_map = {"Imágenes": "imagen", "Videos": "video", "Audios": "audio"}
+                    wanted = type_map.get(active_filter)
+                    display_results = [it for it in self.online_results if it.get("tipo") == wanted] if wanted else self.online_results
+
                 if getattr(self, "_pending_scroll_restore", None) is None:
                     scroll_widget = self.media_table if getattr(self, "view_mode", "grid") == "list" and hasattr(self, "media_table") else self.media_list
                     if scroll_widget and hasattr(scroll_widget, "verticalScrollBar"):
@@ -384,7 +438,7 @@ class TreeListMixin:
                             self._pending_scroll_restore = val
 
                 self._refreshing_media_list = True
-                self.media_model.set_data(self.online_results)
+                self.media_model.set_data(display_results)
                 from PySide6.QtCore import QTimer
                 QTimer.singleShot(0, restore_selection)
                 return
@@ -426,6 +480,8 @@ class TreeListMixin:
                     msg = self.tr("Esta carpeta no contiene archivos multimedia.")
                 elif tipo == "root_virtual":
                     msg = self.tr("Selecciona o crea una colección a la izquierda para ver sus archivos.")
+                elif tipo == "root_web":
+                    msg = self.tr("Selecciona un origen de medios web a la izquierda (Freesound, Wikimedia, ...).")
                 elif search_query:
                     msg = self.tr(f"No se encontraron medios que coincidan con '{search_query}'.")
                 elif active_filter != "Todos":
@@ -641,11 +697,17 @@ class TreeListMixin:
             self.controller.last_selected_tree_node = data
             self.controller.save_data()
 
-        if data and data.get("tipo") == "root_online":
-            self.current_page = 1
+        if data and data.get("tipo") == "web_source":
+            source_id = data.get("source_id")
+            if getattr(self, "active_web_source_id", None) != source_id:
+                # Cambiamos de origen web (ej. Freesound -> Wikimedia): los resultados
+                # cacheados del origen anterior ya no aplican.
+                self.active_web_source_id = source_id
+                self.current_page = 1
+                self.online_results = []
             if not self.online_results:
                 self._exec_online_search()
-                
+
         self._update_media_list()
 
     def _sort_media_list_items(self):
@@ -676,6 +738,22 @@ class TreeListMixin:
         if hasattr(self, "_build_sort_menu"):
             self._build_sort_menu()
 
+        # En un origen web con varios tipos de medio (ej. Wikimedia: imagen/audio/video),
+        # filtrar por tipo tiene que repetir la búsqueda pidiéndole al origen que filtre
+        # server-side (ver WikimediaProvider.search, filemime:) — recortar client-side la
+        # página ya traída se ve "siempre vacía" apenas el tipo elegido es minoritario en esa
+        # página (en Commons casi cualquier búsqueda está dominada por imágenes).
+        selected = self.tree_folders.currentItem()
+        if selected:
+            data = selected.data(0, Qt.UserRole)
+            if data and data.get("tipo") == "web_source":
+                provider = getattr(self, "web_providers", {}).get(data.get("source_id"))
+                if provider and len(provider.supported_media_types) > 1:
+                    self.current_page = 1
+                    self.online_results = []
+                    self._exec_online_search()
+                    return
+
         self._update_media_list()
 
     def _refresh_current_view(self):
@@ -689,7 +767,7 @@ class TreeListMixin:
         if selected:
             try:
                 data = selected.data(0, Qt.UserRole)
-                if data and data.get("tipo") == "root_online":
+                if data and data.get("tipo") == "web_source":
                     self.current_page = 1
                     self.online_results = []
                     self._exec_online_search()
@@ -971,7 +1049,7 @@ class TreeListMixin:
         is_online_mode = False
         if selected_tree:
             t_data = selected_tree.data(0, Qt.UserRole)
-            if t_data and t_data.get("tipo") == "root_online":
+            if t_data and t_data.get("tipo") == "web_source":
                 is_online_mode = True
 
         sort_sub = menu.addMenu(self.tr("Ordenar por"))

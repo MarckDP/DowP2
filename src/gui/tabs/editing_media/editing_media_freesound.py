@@ -5,55 +5,44 @@ from PySide6.QtWidgets import QMessageBox
 from core.logger.logger_manager import logger
 from gui.tabs.editing_media.editing_media_icons import get_svg_icon
 
-class FreesoundSearchThread(QThread):
-    """Hilo secundario para realizar búsquedas en Freesound sin congelar la interfaz."""
+class WebSourceSearchThread(QThread):
+    """Hilo secundario para buscar en cualquier origen web (Freesound, Wikimedia, ...) sin
+    congelar la interfaz. Delega el mapeo de resultados al WebSourceProvider correspondiente."""
     finished_search = Signal(dict)
     error_search = Signal(str)
 
-    def __init__(self, client, query, token, page=1, sort_order=None, duration_min=None, duration_max=None, license_type=None, parent=None):
+    def __init__(self, provider, query, page=1, filters=None, parent=None):
         super().__init__(parent)
-        self.client = client
+        self.provider = provider
         self.query = query
-        self.token = token
         self.page = page
-        self.sort_order = sort_order
-        self.duration_min = duration_min
-        self.duration_max = duration_max
-        self.license_type = license_type
+        self.filters = filters or {}
 
     def run(self):
         try:
-            results = self.client.search(
-                self.query,
-                self.token,
-                duration_min=self.duration_min,
-                duration_max=self.duration_max,
-                license_type=self.license_type,
-                sort_order=self.sort_order,
-                page=self.page
-            )
+            results = self.provider.search(self.query, page=self.page, **self.filters)
             self.finished_search.emit(results)
         except Exception as e:
             self.error_search.emit(str(e))
 
-class FreesoundOriginalDownloadThread(QThread):
-    """Hilo secundario para descargar el archivo ORIGINAL (no la preview comprimida) de un sonido de Freesound. Requiere OAuth2."""
+class WebSourceDownloadThread(QThread):
+    """Hilo secundario para descargar el archivo ORIGINAL/en alta calidad de un medio web,
+    delegando en el WebSourceProvider correspondiente (Freesound requiere OAuth2, Wikimedia no)."""
     progress = Signal(int)
     finished = Signal(bool, str)  # (success, ruta_final_resuelta)
     error = Signal(str)
 
-    def __init__(self, client, sound_id, dest_dir, fallback_name, token, parent=None):
+    def __init__(self, provider, item_data, dest_dir, fallback_name, parent=None):
         super().__init__(parent)
-        self.client = client
-        self.sound_id = sound_id
+        self.provider = provider
+        self.item_data = item_data
         self.dest_dir = dest_dir
         self.fallback_name = fallback_name
-        self.token = token
 
     def run(self):
         try:
-            resolved_path = self.client.download_original(
-                self.sound_id, self.dest_dir, self.fallback_name, self.token,
+            resolved_path = self.provider.download(
+                self.item_data, self.dest_dir, self.fallback_name,
                 progress_callback=self.progress.emit
             )
             self.finished.emit(True, resolved_path)
@@ -64,9 +53,10 @@ class FreesoundOriginalDownloadThread(QThread):
 class FreesoundMixin:
     """Mixin que maneja la búsqueda y descarga remota de Freesound, así como la autenticación OAuth2."""
 
-    def _resolve_freesound_dest_path(self, item_data: dict) -> str:
+    def _resolve_web_dest_path(self, item_data: dict) -> str:
         """Calcula la ruta local destino (carpeta de etiqueta seleccionada, o la carpeta de
-        descargas por defecto configurada en Ajustes, o ~/Downloads) para un sonido de Freesound."""
+        descargas por defecto configurada en Ajustes, o ~/Downloads) para un medio web,
+        sin importar el origen (Freesound, Wikimedia, ...)."""
         name = item_data["nombre"]
         selected_label_name = item_data.get("selected_label")
         from core.utils.config_manager import get_config
@@ -86,31 +76,31 @@ class FreesoundMixin:
 
     def _start_high_quality_download(self, item_data: dict, on_success, on_error):
         """
-        Descarga silenciosamente (sin diálogo modal) el archivo ORIGINAL en alta calidad de un
-        sonido remoto de Freesound (vía OAuth2, no la preview comprimida). Llama
-        on_success(dest_path) o on_error(mensaje).
+        Descarga silenciosamente (sin diálogo modal) el archivo ORIGINAL/en alta calidad de un
+        medio remoto, delegando en el WebSourceProvider del origen del ítem (Freesound requiere
+        OAuth2; Wikimedia no). Llama on_success(dest_path) o on_error(mensaje).
         """
-        token = getattr(self.controller, "freesound_auth", {}).get("access_token", "")
-        if not token:
-            msg = "Debes iniciar sesión con Freesound para descargar el archivo original en alta calidad."
+        source_id = item_data.get("source_id")
+        provider = getattr(self, "web_providers", {}).get(source_id) if source_id else None
+        if provider is None:
+            msg = "No se pudo determinar el origen del medio web."
             logger.error(f"[EditingMedia] {msg} ('{item_data.get('nombre')}')")
             on_error(msg)
             return
 
-        sound_id = item_data.get("id")
-        if not sound_id:
-            msg = "No se pudo determinar el ID del sonido de Freesound."
+        if provider.requires_auth and not provider.is_authenticated():
+            msg = f"Debes iniciar sesión con {provider.display_name} para descargar el archivo original en alta calidad."
             logger.error(f"[EditingMedia] {msg} ('{item_data.get('nombre')}')")
             on_error(msg)
             return
 
-        fallback_path = self._resolve_freesound_dest_path(item_data)
+        fallback_path = self._resolve_web_dest_path(item_data)
         dest_dir = os.path.dirname(fallback_path)
         fallback_name = os.path.basename(fallback_path)
 
-        logger.info(f"[EditingMedia] Descargando archivo original en alta calidad de Freesound (id={sound_id}) '{item_data.get('nombre')}' -> {dest_dir}")
+        logger.info(f"[EditingMedia] Descargando archivo original de {provider.display_name} '{item_data.get('nombre')}' -> {dest_dir}")
 
-        thread = FreesoundOriginalDownloadThread(self.freesound_client, sound_id, dest_dir, fallback_name, token, parent=self)
+        thread = WebSourceDownloadThread(provider, item_data, dest_dir, fallback_name, parent=self)
         if not hasattr(self, "_hq_download_threads"):
             self._hq_download_threads = []
         self._hq_download_threads.append(thread)
@@ -164,13 +154,18 @@ class FreesoundMixin:
         self._in_hq_drag_download = True
 
         try:
-            token = getattr(self.controller, "freesound_auth", {}).get("access_token", "")
-            if not token:
-                from core.tabs.editing_media.freesound_preview_cache import FreesoundPreviewCacheManager
-                cached = FreesoundPreviewCacheManager.get_instance().get_cached_path(item_data.get("ruta", ""))
-                if cached and os.path.exists(cached):
-                    item_data["dest_path"] = cached
-                    return cached
+            source_id = item_data.get("source_id")
+            provider = getattr(self, "web_providers", {}).get(source_id) if source_id else None
+
+            if provider is not None and provider.requires_auth and not provider.is_authenticated():
+                # Sin sesión no hay forma de bajar el original (ej. Freesound sin login): como
+                # último recurso, usar la previsualización ya cacheada en disco si existe.
+                if provider.id == "freesound":
+                    from core.tabs.editing_media.freesound_preview_cache import FreesoundPreviewCacheManager
+                    cached = FreesoundPreviewCacheManager.get_instance().get_cached_path(item_data.get("ruta", ""))
+                    if cached and os.path.exists(cached):
+                        item_data["dest_path"] = cached
+                        return cached
                 return None
 
             from PySide6.QtCore import QEventLoop, QTimer, Qt
@@ -204,11 +199,12 @@ class FreesoundMixin:
             if res_path and os.path.exists(res_path):
                 return res_path
 
-            from core.tabs.editing_media.freesound_preview_cache import FreesoundPreviewCacheManager
-            cached = FreesoundPreviewCacheManager.get_instance().get_cached_path(item_data.get("ruta", ""))
-            if cached and os.path.exists(cached):
-                item_data["dest_path"] = cached
-                return cached
+            if provider is not None and provider.id == "freesound":
+                from core.tabs.editing_media.freesound_preview_cache import FreesoundPreviewCacheManager
+                cached = FreesoundPreviewCacheManager.get_instance().get_cached_path(item_data.get("ruta", ""))
+                if cached and os.path.exists(cached):
+                    item_data["dest_path"] = cached
+                    return cached
 
             return None
         finally:
@@ -222,9 +218,9 @@ class FreesoundMixin:
         is_online = False
         if selected:
             data = selected.data(0, Qt.UserRole)
-            if data and data.get("tipo") == "root_online":
+            if data and data.get("tipo") == "web_source":
                 is_online = True
-        
+
         if is_online:
             self.current_page = 1
             self.online_results = []
@@ -310,20 +306,27 @@ class FreesoundMixin:
 
     def _prompt_freesound_login_if_needed(self, item_data: dict) -> bool:
         """
-        Si item_data representa un medio web no descargado aún y el usuario NO ha iniciado sesión,
-        muestra un diálogo interactivo ofreciendo iniciar sesión en Freesound.
+        Si item_data representa un medio de un origen web que requiere sesión (hoy, Freesound)
+        y todavía no está descargado ni el usuario ha iniciado sesión, muestra un diálogo
+        interactivo ofreciendo iniciar sesión. Orígenes que no requieren auth (ej. Wikimedia)
+        nunca disparan este diálogo.
         Retorna True si el usuario NO está autenticado (y la acción debe detenerse).
         """
         if not item_data or not isinstance(item_data, dict):
             return False
+
+        source_id = item_data.get("source_id")
+        provider = getattr(self, "web_providers", {}).get(source_id) if source_id else None
+        if provider is None or not provider.requires_auth:
+            return False
+
         path = item_data.get("ruta", "")
         is_remote = item_data.get("es_remoto", False) or (isinstance(path, str) and (path.startswith("http://") or path.startswith("https://")))
         dest = item_data.get("dest_path")
         already_downloaded = bool(dest and os.path.exists(dest))
 
         if is_remote and not already_downloaded:
-            token = getattr(self.controller, "freesound_auth", {}).get("access_token", "")
-            if not token:
+            if not provider.is_authenticated():
                 msg_box = QMessageBox(self)
                 msg_box.setIcon(QMessageBox.Information)
                 msg_box.setWindowTitle(self.tr("Sesión de Freesound requerida"))
@@ -339,24 +342,41 @@ class FreesoundMixin:
         return False
 
     def _exec_online_search(self):
-        token = self.controller.freesound_token
+        provider = getattr(self, "web_providers", {}).get(getattr(self, "active_web_source_id", None))
+        if provider is None:
+            return
+
         query = self.search_input.text().strip()
-        
-        sort_order = None
-        duration_max = None
-        license_type = None
+        filters = {}
 
-        if hasattr(self, "freesound_license_combo"):
-            license_type = self.freesound_license_combo.currentData()
+        if getattr(provider, "license_filter_options", None):
+            license_type = self.web_license_combo.currentData() if hasattr(self, "web_license_combo") else None
+            filters["license_type"] = license_type
 
-        if not query:
-            # Si el cuadro de búsqueda está vacío, cargar automáticamente sonidos recientes ("Más nuevos")
-            # y limitar a audios menores a 5 minutos (300 segundos) para mostrar solo efectos/audios cortos
-            sort_order = "Más nuevos"
-            duration_max = 300
-            
-        if not hasattr(self, "_active_freesound_threads"):
-            self._active_freesound_threads = set()
+        # En orígenes con varios tipos de medio (ej. Wikimedia), el filtro de tipo (botones
+        # Imágenes/Videos/Audios) se pasa al provider para que lo aplique server-side — ver
+        # nota en _on_filter_button_clicked sobre por qué no alcanza con filtrar la página ya
+        # traída client-side.
+        if len(getattr(provider, "supported_media_types", set())) > 1:
+            type_map = {"Imágenes": "imagen", "Videos": "video", "Audios": "audio"}
+            media_type = type_map.get(getattr(self, "active_filter", "Todos"))
+            if media_type:
+                filters["media_type"] = media_type
+
+        if provider.id == "freesound":
+            sort_order = None
+            duration_max = None
+            if not query:
+                # Si el cuadro de búsqueda está vacío, cargar automáticamente sonidos recientes
+                # ("Más nuevos") y limitar a audios menores a 5 minutos (300s) para mostrar solo
+                # efectos/audios cortos.
+                sort_order = "Más nuevos"
+                duration_max = 300
+            filters["sort_order"] = sort_order
+            filters["duration_max"] = duration_max
+
+        if not hasattr(self, "_active_web_search_threads"):
+            self._active_web_search_threads = set()
 
         if hasattr(self, "online_search_thread") and self.online_search_thread and self.online_search_thread.isRunning():
             old_thread = self.online_search_thread
@@ -368,115 +388,40 @@ class FreesoundMixin:
                 old_thread.error_search.disconnect()
             except Exception:
                 pass
-            self._active_freesound_threads.add(old_thread)
-            old_thread.finished.connect(lambda t=old_thread: self._active_freesound_threads.discard(t))
-            
+            self._active_web_search_threads.add(old_thread)
+            old_thread.finished.connect(lambda t=old_thread: self._active_web_search_threads.discard(t))
+
         if hasattr(self, "search_spinner"):
             self.search_spinner.start()
 
-        self.online_search_thread = FreesoundSearchThread(
-            self.freesound_client,
+        self.online_search_thread = WebSourceSearchThread(
+            provider,
             query,
-            token,
             page=self.current_page,
-            sort_order=sort_order,
-            duration_max=duration_max,
-            license_type=license_type,
+            filters=filters,
             parent=self
         )
         self.online_search_thread.finished_search.connect(self._on_online_search_success)
         self.online_search_thread.error_search.connect(self._on_online_search_error)
-        
+
         new_thread = self.online_search_thread
-        self._active_freesound_threads.add(new_thread)
-        new_thread.finished.connect(lambda t=new_thread: self._active_freesound_threads.discard(t))
+        self._active_web_search_threads.add(new_thread)
+        new_thread.finished.connect(lambda t=new_thread: self._active_web_search_threads.discard(t))
         new_thread.start()
 
     def _on_search_timer_timeout(self):
-        """Callback del temporizador de búsqueda diferida en Freesound."""
+        """Callback del temporizador de búsqueda diferida en el origen web activo."""
         self._exec_online_search()
 
     def _on_online_search_success(self, data):
         self.loading_next_page = False
         if hasattr(self, "search_spinner"):
             self.search_spinner.stop()
-        results = data.get("results", [])
-        
+
         if self.current_page == 1:
             self.online_results = []
-            
-        new_items = []
-        for r in results:
-            previews = r.get("previews", {})
-            preview_lq_url = previews.get("preview-lq-mp3", previews.get("preview-hq-mp3", previews.get("preview-lq-ogg", "")))
-            download_hq_url = previews.get("preview-hq-mp3", previews.get("preview-hq-ogg", preview_lq_url))
-            if not preview_lq_url:
-                continue
 
-            dur = r.get("duration", 0)
-            dur_m = int(dur // 60)
-            dur_s = int(dur % 60)
-            dur_str = f"{dur_m:02d}:{dur_s:02d}"
-
-            size_val = r.get("filesize", 0)
-            size_kb = size_val / 1024.0
-            if size_kb > 1024:
-                size_str = f"{size_kb / 1024.0:.1f} MB"
-            else:
-                size_str = f"{size_kb:.1f} KB"
-
-            sound_name = r.get("name", "Sonido sin nombre").strip()
-            sound_type = r.get("type", "").strip().lower()
-            if sound_type and not any(sound_name.lower().endswith(f".{ext}") for ext in ["wav", "mp3", "flac", "ogg", "aiff", "m4a", "aac"]):
-                sound_name = f"{sound_name}.{sound_type}"
-
-            raw_license = str(r.get("license", "")).lower()
-            if "zero" in raw_license or "cc0" in raw_license or "publicdomain" in raw_license:
-                license_clean = "CC0"
-            elif "by-nc" in raw_license or "noncommercial" in raw_license:
-                license_clean = "CC BY-NC"
-            elif "by" in raw_license or "attribution" in raw_license:
-                license_clean = "CC BY"
-            elif raw_license:
-                license_clean = r.get("license", "Freesound")
-            else:
-                license_clean = "CC0"
-
-            sr_val = r.get("samplerate")
-            if sr_val:
-                try:
-                    sr_num = int(sr_val)
-                    sample_rate_str = f"{sr_num / 1000.0:.1f} kHz" if sr_num >= 1000 else f"{sr_num} Hz"
-                except Exception:
-                    sample_rate_str = str(sr_val)
-            else:
-                sample_rate_str = "-"
-
-            new_items.append({
-                "nombre": sound_name,
-                "ruta": preview_lq_url,
-                "download_url": download_hq_url,
-                "tipo": "audio",
-                "file_type": sound_type.upper() if sound_type else "AUDIO",
-                "tamaño": size_str,
-                "duración": dur_str,
-                "duration": dur,
-                "es_remoto": True,
-                "username": r.get("username", "-"),
-                "license": license_clean,
-                "library": "Freesound",
-                "sample_rate": sample_rate_str,
-                "avg_rating": f"{r.get('avg_rating', 0):.1f}",
-                "num_downloads": str(r.get("num_downloads", 0)),
-                "description": r.get("description", "-"),
-                "images": r.get("images", {}),
-                "id": str(r.get("id", "")),
-                "url": r.get("url", "")
-            })
-
-
-        
-        self.online_results.extend(new_items)
+        self.online_results.extend(data.get("results", []))
         self._update_media_list()
 
     def _on_online_search_error(self, error_msg):
@@ -487,13 +432,15 @@ class FreesoundMixin:
         if self.current_page == 1:
             self.online_results = []
         self._update_media_list()
-        QMessageBox.warning(self, self.tr("Error de Búsqueda"), self.tr(f"No se pudo completar la búsqueda en Freesound:\n{error_msg}"))
+        provider = getattr(self, "web_providers", {}).get(getattr(self, "active_web_source_id", None))
+        source_name = provider.display_name if provider else self.tr("el origen web")
+        QMessageBox.warning(self, self.tr("Error de Búsqueda"), self.tr(f"No se pudo completar la búsqueda en {source_name}:\n{error_msg}"))
 
     def _on_list_scroll(self, value):
         selected = self.tree_folders.currentItem()
         if selected:
             data = selected.data(0, Qt.UserRole)
-            if data and data.get("tipo") == "root_online":
+            if data and data.get("tipo") == "web_source":
                 scroll_widget = self.media_table if getattr(self, "view_mode", "grid") == "list" and hasattr(self, "media_table") else self.media_list
                 max_scroll = scroll_widget.verticalScrollBar().maximum()
                 # Si llega casi al final y no hay búsqueda activa, cargar la siguiente página
@@ -519,22 +466,23 @@ class FreesoundMixin:
         if self._prompt_freesound_login_if_needed(item_data):
             return
 
-        sound_id = item_data.get("id")
-        if not sound_id:
-            QMessageBox.warning(self, self.tr("Error"), self.tr("No se pudo determinar el ID del sonido de Freesound."))
+        source_id = item_data.get("source_id")
+        provider = getattr(self, "web_providers", {}).get(source_id) if source_id else None
+        if provider is None:
+            QMessageBox.warning(self, self.tr("Error"), self.tr("No se pudo determinar el origen del medio web."))
             return
 
-        fallback_path = self._resolve_freesound_dest_path(item_data)
+        fallback_path = self._resolve_web_dest_path(item_data)
         dest_dir = os.path.dirname(fallback_path)
         fallback_name = os.path.basename(fallback_path)
 
         from PySide6.QtWidgets import QProgressDialog
-        progress_dialog = QProgressDialog(self.tr("Descargando sonido original de Freesound..."), self.tr("Cancelar"), 0, 100, self)
+        progress_dialog = QProgressDialog(self.tr(f"Descargando medio original de {provider.display_name}..."), self.tr("Cancelar"), 0, 100, self)
         progress_dialog.setWindowModality(Qt.WindowModal)
         progress_dialog.setValue(0)
         progress_dialog.show()
 
-        self.dl_thread = FreesoundOriginalDownloadThread(self.freesound_client, sound_id, dest_dir, fallback_name, token, parent=self)
+        self.dl_thread = WebSourceDownloadThread(provider, item_data, dest_dir, fallback_name, parent=self)
         self.dl_thread.progress.connect(progress_dialog.setValue)
 
         def on_finished(success, resolved_path):
@@ -560,7 +508,7 @@ class FreesoundMixin:
                 self.metadata_labels["ruta"].setText(resolved_path)
 
                 logger.info(f"[EditingMedia] Descarga manual del original en alta calidad completada: {resolved_path}")
-                QMessageBox.information(self, self.tr("Descarga Completada"), self.tr(f"El sonido original ha sido guardado exitosamente en:\n{resolved_path}"))
+                QMessageBox.information(self, self.tr("Descarga Completada"), self.tr(f"El medio original ha sido guardado exitosamente en:\n{resolved_path}"))
             else:
                 logger.error(f"[EditingMedia] La descarga manual del original de '{item_data.get('nombre')}' no tuvo éxito.")
 

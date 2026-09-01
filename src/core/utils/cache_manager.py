@@ -175,7 +175,8 @@ class IndexingMetadataCacheProvider(BaseCacheProvider):
 
 
 class FreesoundPreviewCacheProvider(BaseCacheProvider):
-    """Proveedor de caché para previsualizaciones de audio de Freesound (máximo 10 archivos LRU)."""
+    """Proveedor de caché para previsualizaciones de audio/video de medios web (Freesound,
+    Wikimedia, ...) — máximo MAX_FREESOUND_CACHE_FILES archivos LRU, compartido entre orígenes."""
 
     @property
     def key(self) -> str:
@@ -183,12 +184,12 @@ class FreesoundPreviewCacheProvider(BaseCacheProvider):
 
     @property
     def name(self) -> str:
-        return "Caché de Previsualización Freesound"
+        return "Caché de Previsualización Web"
 
     @property
     def description(self) -> str:
         from core.tabs.editing_media.freesound_preview_cache import MAX_FREESOUND_CACHE_FILES
-        return f"Audios en caché local para preescucha instantánea al explorar Freesound (máx {MAX_FREESOUND_CACHE_FILES} archivos)."
+        return f"Audios/videos en caché local para preescucha instantánea al explorar medios web (Freesound, Wikimedia, máx {MAX_FREESOUND_CACHE_FILES} archivos)."
 
     def get_stats(self) -> Dict[str, Any]:
         from core.utils.paths import get_freesound_cache_dir
@@ -314,6 +315,57 @@ class ProxyCacheProvider(BaseCacheProvider):
         }
 
 
+class RemoteThumbnailCacheProvider(BaseCacheProvider):
+    """Proveedor de caché para miniaturas ya renderizadas por un origen web (ej. thumburl de
+    Wikimedia) — separado del caché de previsualización de audio/video de arriba."""
+
+    @property
+    def key(self) -> str:
+        return "remote_thumbnails"
+
+    @property
+    def name(self) -> str:
+        return "Caché de Miniaturas Web"
+
+    @property
+    def description(self) -> str:
+        from core.tabs.editing_media.remote_thumbnail_cache_manager import MAX_REMOTE_THUMBNAIL_FILES
+        return f"Miniaturas de imagen/video de orígenes web (ej. Wikimedia) cacheadas localmente (máx {MAX_REMOTE_THUMBNAIL_FILES} archivos)."
+
+    def get_stats(self) -> Dict[str, Any]:
+        from core.utils.paths import get_remote_thumbnail_cache_dir
+        rt_dir = get_remote_thumbnail_cache_dir()
+        file_count = 0
+        total_size = 0
+
+        if os.path.exists(rt_dir):
+            for entry in os.scandir(rt_dir):
+                if entry.is_file() and not entry.name.endswith(".tmp"):
+                    file_count += 1
+                    try:
+                        total_size += entry.stat().st_size
+                    except Exception:
+                        pass
+
+        return {
+            "key": self.key,
+            "name": self.name,
+            "description": self.description,
+            "file_count": file_count,
+            "size_bytes": total_size,
+            "formatted_size": format_bytes(total_size)
+        }
+
+    def clear(self) -> Dict[str, Any]:
+        stats_before = self.get_stats()
+        from core.tabs.editing_media.remote_thumbnail_cache_manager import RemoteThumbnailCacheManager
+        deleted_count = RemoteThumbnailCacheManager.get_instance().clear_cache()
+        return {
+            "files_removed": deleted_count,
+            "bytes_freed": stats_before["size_bytes"]
+        }
+
+
 class CacheManager:
     """Servicio centralizado que administra todos los proveedores de caché de la aplicación."""
 
@@ -336,6 +388,7 @@ class CacheManager:
         self.register_provider(FreesoundPreviewCacheProvider())
         self.register_provider(WaveformCacheProvider())
         self.register_provider(ProxyCacheProvider())
+        self.register_provider(RemoteThumbnailCacheProvider())
 
 
     def register_provider(self, provider: BaseCacheProvider):

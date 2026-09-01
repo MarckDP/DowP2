@@ -4,12 +4,33 @@ import re
 import datetime
 import subprocess
 import platform
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import Qt, QUrl, QThread, Signal
 from PySide6.QtGui import QImageReader, QImage
 from PySide6.QtMultimedia import QMediaPlayer
 from core.logger.logger_manager import logger
 from gui.tabs.editing_media.editing_media_icons import get_svg_icon, get_colored_svg_icon
 from core.tabs.editing_media.editing_media_logic import WaveformExtractorThread
+
+
+class VideoDerivativeResolveThread(QThread):
+    """Hilo secundario para resolver la URL de la transcodificación liviana de un video remoto
+    (ej. 240p de Wikimedia) sin bloquear la interfaz — la llamada a la API de derivatives es
+    una petición de red bloqueante."""
+    resolved = Signal(str, object)  # (ruta original del ítem, url de la derivative o None)
+
+    def __init__(self, provider, item_data, parent=None):
+        super().__init__(parent)
+        self.provider = provider
+        self.item_data = item_data
+
+    def run(self):
+        try:
+            url = self.provider.get_video_derivative_url(self.item_data)
+        except Exception as e:
+            logger.error(f"VideoDerivativeResolveThread: Error resolviendo derivative: {e}")
+            url = None
+        self.resolved.emit(self.item_data.get("ruta", ""), url)
+
 
 class PlaybackMixin:
     """Mixin que maneja la reproducción de audio, extracción de metadata y waveform."""
@@ -261,8 +282,8 @@ class PlaybackMixin:
                     out_sec = out_ratio * dur_sec
 
                     # Resolver carpeta designada para guardar subclips
-                    if is_remote and hasattr(self, "_resolve_freesound_dest_path"):
-                        dest_dir = os.path.dirname(self._resolve_freesound_dest_path(item_data))
+                    if is_remote and hasattr(self, "_resolve_web_dest_path"):
+                        dest_dir = os.path.dirname(self._resolve_web_dest_path(item_data))
                     else:
                         dest_dir = None  # export_subclip usa get_subclips_dir() por defecto
 
@@ -682,32 +703,41 @@ class PlaybackMixin:
                     self.remote_waveform_thread.start()
 
             else:
-                # Obtener duración en segundos para el muestreo progresivo (usado solo si se extrae con Thread heredado)
-                dur_str = item_data.get("duración", "-")
-                if not is_remote:
-                    dur_str = self._metadata_cache[path].get("duración", "-")
-                if dur_str == "-":
-                    dur_str = self.controller.get_media_duration_for_file(path)
-                
-                # Iniciar extracción y renderizado mediante caché global
                 from core.tabs.editing_media.waveform_cache_manager import WaveformCacheManager
                 wf_mgr = WaveformCacheManager.get_instance()
-                
+
                 if not getattr(self, "_waveform_cache_connected", False):
                     wf_mgr.waveform_loaded.connect(self._on_local_waveform_loaded)
                     self._waveform_cache_connected = True
-                
-                cached_peaks = wf_mgr.get_cached_peaks(path)
-                if cached_peaks is not None:
-                    # HIT: Renderizado instantáneo
-                    self.waveform_widget.set_peaks(cached_peaks)
-                    if tipo == "video":
-                        self._on_video_waveform_ready(cached_peaks)
+
+                if is_remote:
+                    # Origen remoto sin waveform pre-generada por el proveedor (ej. audio/video
+                    # de Wikimedia): no se le pide la forma de onda directo a la URL remota
+                    # (ffmpeg tendría que streamear el archivo completo por red, y duplicaría la
+                    # descarga que ya dispara la reproducción). Se difiere hasta que exista una
+                    # copia local: _on_freesound_preview_ready (audio) o
+                    # _on_remote_video_preview_ready (video) piden la waveform ahí una vez que
+                    # esa copia local ya está en disco.
+                    pass
                 else:
-                    # MISS: Extracción asíncrona optimizada, con prioridad interactiva:
-                    # es el ítem que el usuario acaba de seleccionar/reproducir, no debe
-                    # esperar detrás de la generación de fondo de la lista.
-                    wf_mgr.request_waveform(path, num_peaks, interactive=True)
+                    # Obtener duración en segundos para el muestreo progresivo (usado solo si se extrae con Thread heredado)
+                    dur_str = item_data.get("duración", "-")
+                    dur_str = self._metadata_cache[path].get("duración", "-")
+                    if dur_str == "-":
+                        dur_str = self.controller.get_media_duration_for_file(path)
+
+                    # Iniciar extracción y renderizado mediante caché global
+                    cached_peaks = wf_mgr.get_cached_peaks(path)
+                    if cached_peaks is not None:
+                        # HIT: Renderizado instantáneo
+                        self.waveform_widget.set_peaks(cached_peaks)
+                        if tipo == "video":
+                            self._on_video_waveform_ready(cached_peaks)
+                    else:
+                        # MISS: Extracción asíncrona optimizada, con prioridad interactiva:
+                        # es el ítem que el usuario acaba de seleccionar/reproducir, no debe
+                        # esperar detrás de la generación de fondo de la lista.
+                        wf_mgr.request_waveform(path, num_peaks, interactive=True)
 
             # Controles de reproducción de audio solo para archivos de audio puros
             if tipo == "audio" and self.audio_player:
@@ -759,10 +789,16 @@ class PlaybackMixin:
         # 2. Actualizar Vista Previa (Columna Derecha - Superior)
         if tipo == "imagen":
             self.preview_box.setVisible(True)
-            self.preview_box.show_image_preview(path)
+            if is_remote:
+                self._show_remote_image_preview(item_data)
+            else:
+                self.preview_box.show_image_preview(path)
         elif tipo == "video":
             self.preview_box.setVisible(True)
-            self.preview_box.show_video_preview(path)
+            if is_remote:
+                self._show_remote_video_preview(item_data, path)
+            else:
+                self.preview_box.show_video_preview(path)
         elif tipo == "audio":
             # Para audios ocultamos el cuadro superior inútil de video
             self.preview_box.stop_media()
@@ -815,64 +851,72 @@ class PlaybackMixin:
 
 
         if is_remote:
-            license_url = item_data.get("license", "-")
-            url_lower = license_url.lower()
-            
+            source_id = item_data.get("source_id")
+            provider = getattr(self, "web_providers", {}).get(source_id) if source_id else None
+            raw_license = item_data.get("license", "-")
+            bucket = provider.normalize_license(raw_license) if provider else ""
+
             # Construir texto TASL
-            title = item_data.get("nombre", "Sonido")
+            title = item_data.get("nombre", "Medio")
             author = item_data.get("username", "Autor Desconocido")
             item_id = item_data.get("id", "")
             source_url = item_data.get("url") or (f"https://freesound.org/s/{item_id}/" if item_id else "https://freesound.org")
-            author_url = f"https://freesound.org/people/{author}/" if author != "Autor Desconocido" else ""
-            
-            if "zero" in url_lower or "cc0" in url_lower:
+            # El patrón de URL de perfil solo existe para Freesound; Commons no tiene un
+            # patrón de URL de autor uniforme y confiable, así que ahí no se arma link.
+            author_url = f"https://freesound.org/people/{author}/" if source_id == "freesound" and author != "Autor Desconocido" else ""
+
+            if bucket == "cc0":
                 lic_title = self.tr("Dominio Público (CC0)")
-                lic_desc = self.tr("Puedes usar este sonido para cualquier propósito (incluso comercial) sin necesidad de dar créditos.")
+                lic_desc = self.tr("Puedes usar este medio para cualquier propósito (incluso comercial) sin necesidad de dar créditos.")
                 lic_color = "#1DC038" # Green
                 tasl = ""
                 icon_name = "check_circle.svg"
-            elif "by-nc" in url_lower:
+            elif bucket == "attribution_nc":
                 lic_title = self.tr("Uso No Comercial (CC-BY-NC)")
-                lic_desc = self.tr("No puedes usar este sonido en videos monetizados o proyectos comerciales. Es obligatorio dar crédito al autor.")
+                lic_desc = self.tr("No puedes usar este medio en videos monetizados o proyectos comerciales. Es obligatorio dar crédito al autor.")
                 lic_color = "#E67E22" # Orange
                 cc_url = "https://creativecommons.org/licenses/by-nc/4.0/"
-                tasl = self.tr('"{title}" por {author} ({author_url}) obtenida de {source_url} está licenciada bajo CC-BY-NC ({cc_url})').format(
-                    title=title, author=author, author_url=author_url, source_url=source_url, cc_url=cc_url
+                tasl = self.tr('"{title}" por {author} ({author_url}) obtenida de {source_url} está licenciada bajo {lic} ({cc_url})').format(
+                    title=title, author=author, author_url=author_url, source_url=source_url, lic=raw_license, cc_url=cc_url
                 )
                 icon_name = "warning.svg"
-            elif "by" in url_lower:
-                lic_title = self.tr("Requiere Atribución (CC-BY)")
-                lic_desc = self.tr("Uso comercial permitido, pero es obligatorio dar crédito al autor copiando el texto TASL.")
+            elif bucket == "attribution":
+                lic_title = self.tr("Requiere Atribución")
+                lic_desc = self.tr("Uso comercial y modificaciones permitidas, pero es obligatorio dar crédito al autor copiando el texto TASL.")
                 lic_color = "#40A9E6" # Blue
-                cc_url = "https://creativecommons.org/licenses/by/4.0/"
-                tasl = self.tr('"{title}" por {author} ({author_url}) obtenida de {source_url} está licenciada bajo CC-BY ({cc_url})').format(
-                    title=title, author=author, author_url=author_url, source_url=source_url, cc_url=cc_url
+                # Freesound normaliza todas sus variantes de Atribución a CC-BY 4.0 exacto; en
+                # Wikimedia el bucket agrupa BY/BY-SA/GFDL/FAL de varias versiones, así que en
+                # vez de asumir una URL de licencia específica (podría ser incorrecta) se enlaza
+                # a la página del archivo en Commons, que es la fuente autoritativa real.
+                cc_url = "https://creativecommons.org/licenses/by/4.0/" if source_id == "freesound" else source_url
+                tasl = self.tr('"{title}" por {author} ({author_url}) obtenida de {source_url} está licenciada bajo {lic} ({cc_url})').format(
+                    title=title, author=author, author_url=author_url, source_url=source_url, lic=raw_license, cc_url=cc_url
                 )
                 icon_name = "attribution.svg"
             else:
                 lic_title = self.tr("Licencia Desconocida")
-                lic_desc = self.tr("Revisa la licencia original antes de usar este sonido.")
+                lic_desc = self.tr("Revisa la licencia original antes de usar este medio.")
                 lic_color = "#A6ADC8" # Gray
                 tasl = ""
                 icon_name = "error.svg"
-                
+
             self.set_license_info(lic_title, lic_desc, lic_color, tasl, icon_name)
-            
+
             self.metadata_header_labels["video_codec"].setText(self.tr("Usuario:"))
             self.metadata_header_labels["video_profile"].setText(self.tr("Licencia:"))
             self.metadata_header_labels["aspecto"].setText(self.tr("Estadísticas:"))
-            
+
             self.metadata_labels["creado"].setText("-")
             self.metadata_labels["modificado"].setText("-")
             self.metadata_labels["duración"].setText(item_data.get("duración", "-"))
-            self.metadata_labels["resolución"].setText("-")
+            self.metadata_labels["resolución"].setText(item_data.get("resolución", "-"))
             self.metadata_labels["video_codec"].setText(item_data.get("username", "-"))
             self.metadata_labels["video_profile"].setText(item_data.get("license", "-"))
             self.metadata_labels["fps"].setText("-")
             self.metadata_labels["aspecto"].setText(f"Rating: {item_data.get('avg_rating', '-')} | Descargas: {item_data.get('num_downloads', '-')}")
             self.metadata_labels["bitrate_video"].setText("-")
             self.metadata_labels["color"].setText("-")
-            self.metadata_labels["audio_codec"].setText("REMOTO (Freesound)")
+            self.metadata_labels["audio_codec"].setText(f"REMOTO ({item_data.get('library', 'Web')})")
             self.metadata_labels["samplerate"].setText("-")
             self.metadata_labels["canales"].setText("-")
             self.metadata_labels["bitrate_audio"].setText("-")
@@ -903,6 +947,117 @@ class PlaybackMixin:
             self.metadata_labels["samplerate"].setText(rich_meta.get("samplerate", "-"))
             self.metadata_labels["canales"].setText(rich_meta.get("canales", "-"))
             self.metadata_labels["bitrate_audio"].setText(rich_meta.get("bitrate_audio", "-"))
+
+    # ── Vista previa de imagen/video remotos (Wikimedia, sin descargar el original) ─────
+
+    def _ensure_remote_thumb_connected(self, remote_thumb_mgr):
+        if not getattr(self, "_remote_thumb_connected", False):
+            remote_thumb_mgr.thumbnail_ready.connect(self._on_remote_thumb_preview_ready)
+            self._remote_thumb_connected = True
+
+    def _show_remote_image_preview(self, item_data: dict):
+        """Muestra la vista previa de una imagen remota usando la miniatura ya cacheada
+        localmente (nunca la URL cruda: QPixmap no puede cargar directo desde una URL de red)."""
+        thumb_url = item_data.get("thumb_url")
+        if not thumb_url:
+            self.preview_box.show_default_state()
+            return
+
+        from core.tabs.editing_media.remote_thumbnail_cache_manager import RemoteThumbnailCacheManager
+        remote_thumb_mgr = RemoteThumbnailCacheManager.get_instance()
+
+        cached_path = remote_thumb_mgr.get_cached_path(thumb_url)
+        if cached_path:
+            self.preview_box.show_image_preview(cached_path)
+            return
+
+        self.preview_box.show_default_state()
+        self._ensure_remote_thumb_connected(remote_thumb_mgr)
+        remote_thumb_mgr.request_thumbnail(thumb_url)
+
+    def _on_remote_thumb_preview_ready(self, url: str, local_path: str):
+        """Se llama cuando una miniatura remota (imagen o poster de video) termina de
+        descargarse. Solo actualiza la vista previa si sigue siendo la del ítem activo."""
+        if not (local_path and os.path.exists(local_path)):
+            return
+        item_data = self._get_current_media_data() if hasattr(self, "_get_current_media_data") else None
+        if not item_data or item_data.get("thumb_url") != url:
+            return
+
+        tipo = item_data.get("tipo")
+        if tipo == "imagen":
+            self.preview_box.show_image_preview(local_path)
+        elif tipo == "video" and getattr(self, "active_remote_video_url", None) == item_data.get("ruta"):
+            # No pisar el video real si ya empezó a resolverse/reproducirse una derivative.
+            if not getattr(self, "_active_video_derivative_url", None):
+                self.preview_box.show_video_placeholder(item_data.get("ruta"), poster_path=local_path)
+
+    def _show_remote_video_preview(self, item_data: dict, path: str):
+        """Video remoto (Wikimedia): nunca se descarga el original completo solo para
+        previsualizar. Se muestra de entrada el poster (frame estático que Wikimedia ya
+        genera) y en paralelo se resuelve y descarga la transcodificación liviana (ej. 240p)
+        para reproducir, reusando la misma caché LRU de previsualización que ya usa el audio."""
+        thumb_url = item_data.get("thumb_url")
+        poster_path = None
+        if thumb_url:
+            from core.tabs.editing_media.remote_thumbnail_cache_manager import RemoteThumbnailCacheManager
+            remote_thumb_mgr = RemoteThumbnailCacheManager.get_instance()
+            poster_path = remote_thumb_mgr.get_cached_path(thumb_url)
+            if not poster_path:
+                self._ensure_remote_thumb_connected(remote_thumb_mgr)
+                remote_thumb_mgr.request_thumbnail(thumb_url)
+
+        self.preview_box.show_video_placeholder(path, poster_path=poster_path)
+
+        source_id = item_data.get("source_id")
+        provider = getattr(self, "web_providers", {}).get(source_id) if source_id else None
+        if provider is None or not hasattr(provider, "get_video_derivative_url"):
+            return
+
+        self.active_remote_video_url = path
+        self._active_video_derivative_url = None
+
+        from core.tabs.editing_media.freesound_preview_cache import FreesoundPreviewCacheManager
+        fs_cache = FreesoundPreviewCacheManager.get_instance()
+        if not getattr(self, "_video_preview_cache_connected", False):
+            fs_cache.preview_ready.connect(self._on_remote_video_preview_ready)
+            self._video_preview_cache_connected = True
+
+        self._video_derivative_thread = VideoDerivativeResolveThread(provider, item_data, parent=self)
+        self._video_derivative_thread.resolved.connect(self._on_video_derivative_resolved)
+        self._video_derivative_thread.start()
+
+    def _on_video_derivative_resolved(self, orig_path: str, derivative_url):
+        if getattr(self, "active_remote_video_url", None) != orig_path:
+            return
+        if not derivative_url:
+            logger.info(f"[EditingMedia] No hay transcodificación liviana disponible para '{orig_path}'; se omite la previsualización de video.")
+            return
+
+        self._active_video_derivative_url = derivative_url
+        from core.tabs.editing_media.freesound_preview_cache import FreesoundPreviewCacheManager
+        fs_cache = FreesoundPreviewCacheManager.get_instance()
+        cached_local_path = fs_cache.get_cached_path(derivative_url)
+        if cached_local_path and os.path.exists(cached_local_path):
+            self.preview_box.show_video_preview(cached_local_path)
+        else:
+            fs_cache.request_preview(derivative_url)
+
+    def _on_remote_video_preview_ready(self, url: str, local_path: str):
+        if getattr(self, "_active_video_derivative_url", None) == url and local_path and os.path.exists(local_path):
+            self.preview_box.show_video_preview(local_path)
+
+            # La derivative liviana ya está en disco: pedir su waveform igual que un video
+            # local (ver rama 'else' diferida más arriba) — mismo re-apuntado de audio_path
+            # que en _on_freesound_preview_ready, por la misma razón.
+            from core.tabs.editing_media.waveform_cache_manager import WaveformCacheManager
+            wf_mgr = WaveformCacheManager.get_instance()
+            cached_peaks = wf_mgr.get_cached_peaks(local_path)
+            self.waveform_widget.set_audio_path(local_path)
+            if cached_peaks is not None:
+                self._on_video_waveform_ready(cached_peaks)
+            else:
+                wf_mgr.request_waveform(local_path, 120, interactive=True)
 
     def _on_video_waveform_ready(self, peaks: list):
         """Callback para el waveform de videos: muestra los peaks si hay audio, dibuja la regla si no."""
@@ -1126,6 +1281,23 @@ class PlaybackMixin:
                 else:
                     self.audio_player.play()
                     apply_player_play_button_style(self.btn_play, is_playing=True, icon_size=14)
+
+                # Orígenes sin waveform pre-generada (ej. Wikimedia) difirieron la forma de
+                # onda hasta tener esta copia local (ver rama 'else' de arriba) — pedirla ahora.
+                # _on_local_waveform_loaded solo renderiza si waveform_widget.audio_path
+                # coincide con el file_path de la señal, así que hay que re-apuntarlo al
+                # archivo local antes de pedir la extracción (todavía no tiene picos asignados
+                # en este punto, así que reiniciarlo no descarta nada visible).
+                item_data = self._get_current_media_data() if hasattr(self, "_get_current_media_data") else None
+                if item_data and not item_data.get("images", {}).get("waveform_m"):
+                    from core.tabs.editing_media.waveform_cache_manager import WaveformCacheManager
+                    wf_mgr = WaveformCacheManager.get_instance()
+                    cached_peaks = wf_mgr.get_cached_peaks(local_path)
+                    self.waveform_widget.set_audio_path(local_path)
+                    if cached_peaks is not None:
+                        self.waveform_widget.set_peaks(cached_peaks)
+                    else:
+                        wf_mgr.request_waveform(local_path, 120, interactive=True)
             else:
                 logger.error(f"PlaybackMixin: Error al descargar previa de Freesound para {url}")
                 

@@ -186,9 +186,18 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         self._splitter_save_timer.setInterval(500)
         self._splitter_save_timer.timeout.connect(self._save_splitter_sizes_to_config)
 
-        # Inicializar cliente de Freesound y timer para debouncing de búsqueda
+        # Inicializar orígenes de medios web (Freesound, Wikimedia, ...) y timer de
+        # debouncing de búsqueda. self.web_providers es un dict ordenado: el orden de
+        # inserción define el orden en que aparecen como hijos del nodo "Medios Web".
         from core.tabs.editing_media.freesound_client import FreesoundClient
+        from core.tabs.editing_media.web_sources.freesound_provider import FreesoundProvider
+        from core.tabs.editing_media.web_sources.wikimedia_provider import WikimediaProvider
         self.freesound_client = FreesoundClient()
+        self.web_providers = {
+            "freesound": FreesoundProvider(self.freesound_client, self.controller),
+            "wikimedia": WikimediaProvider(),
+        }
+        self.active_web_source_id = None
         self.search_timer = QTimer(self)
         self.search_timer.setSingleShot(True)
         self.search_timer.timeout.connect(self._exec_online_search)
@@ -427,30 +436,29 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         self.search_input.textChanged.connect(self._update_media_input_changed)
         search_layout.addWidget(self.search_input, 1)
 
-        # Contenedor para el filtro de licencias (solo visible en Freesound)
+        # Contenedor para el filtro de licencias (visible en cualquier origen web que declare
+        # license_filter_options — hoy Freesound y Wikimedia; se repuebla dinámicamente en
+        # _update_button_states según el provider activo).
         self.license_container = QFrame()
         self.license_container.setVisible(False)
         lic_layout = QHBoxLayout(self.license_container)
         lic_layout.setContentsMargins(0, 0, 0, 0)
         lic_layout.setSpacing(6)
-        
+
         lbl_copyright = QLabel()
         lbl_copyright.setPixmap(get_svg_icon("copyright.svg").pixmap(16, 16))
-        lbl_copyright.setToolTip(self.tr("Filtro de Licencia (Freesound)"))
+        lbl_copyright.setToolTip(self.tr("Filtro de Licencia"))
         lbl_copyright.setAlignment(Qt.AlignCenter)
         lic_layout.addWidget(lbl_copyright)
 
-        self.freesound_license_combo = AutoPopupComboBox()
-        self.freesound_license_combo.setFixedHeight(32)
-        self.freesound_license_combo.setFixedWidth(130)
-        self.freesound_license_combo.addItem(self.tr("Cualquiera"), "Cualquiera")
-        self.freesound_license_combo.addItem(self.tr("CC0 (Sin Copyright)"), "CC0")
-        self.freesound_license_combo.addItem(self.tr("CC-BY (Atribución)"), "Attribution")
-        self.freesound_license_combo.addItem(self.tr("CC-BY-NC (No Comercial)"), "Attribution NonCommercial")
-        self.freesound_license_combo.setToolTip(self.tr("Filtrar por Licencia (Freesound)"))
-        self.freesound_license_combo.currentIndexChanged.connect(lambda: self._update_media_input_changed(""))
-        lic_layout.addWidget(self.freesound_license_combo)
-        
+        self.web_license_combo = AutoPopupComboBox()
+        self.web_license_combo.setFixedHeight(32)
+        self.web_license_combo.setFixedWidth(150)
+        self.web_license_combo.addItem(self.tr("Cualquiera"), "Cualquiera")
+        self.web_license_combo.setToolTip(self.tr("Filtrar por Licencia"))
+        self.web_license_combo.currentIndexChanged.connect(lambda: self._update_media_input_changed(""))
+        lic_layout.addWidget(self.web_license_combo)
+
         search_layout.addWidget(self.license_container)
 
         self.btn_freesound_login = QPushButton()

@@ -404,7 +404,9 @@ class PreviewContainerWidget(QFrame):
         else:
             self.show_video_placeholder(path)
 
-    def show_video_placeholder(self, path: str):
+    def show_video_placeholder(self, path: str, poster_path: str = None):
+        """`poster_path`, si se pasa (ej. el frame estático que Wikimedia ya genera para un
+        video remoto aún no descargado), se pinta como fondo en vez de dejar el pixmap vacío."""
         self.stop_media()
         if hasattr(self, "empty_state_widget"):
             self.empty_state_widget.setVisible(False)
@@ -413,8 +415,18 @@ class PreviewContainerWidget(QFrame):
         if hasattr(self, "controls_widget"):
             self.controls_widget.setVisible(False)
         self.placeholder_label.setVisible(True)
-        self.placeholder_label.setPixmap(QPixmap())
         name = os.path.basename(path)
+
+        if poster_path and os.path.exists(poster_path):
+            pixmap = QPixmap(poster_path)
+            if not pixmap.isNull():
+                self.placeholder_label.setPixmap(pixmap.scaled(
+                    self.placeholder_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation
+                ))
+                self.placeholder_label.setText("")
+                return
+
+        self.placeholder_label.setPixmap(QPixmap())
         self.placeholder_label.setText(f"▶ [ Previsualización de Video ]\n\n{name}")
         self.placeholder_label.setStyleSheet(f"color: {get_theme_token('acento_primario', '#B9E640')}; font-weight: bold; font-size: 13px;")
 

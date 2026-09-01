@@ -663,35 +663,36 @@ class MainWindow(QMainWindow):
     def nativeEvent(self, eventType, message):
         """Maneja eventos nativos de Windows para permitir redimensionar la ventana sin bordes."""
         try:
-            import ctypes
-            import ctypes.wintypes
-            msg = ctypes.wintypes.MSG.from_address(int(message))
-            if msg.message == 0x0084: # WM_NCHITTEST
-                # Usa QCursor.pos() porque Qt ya se encarga de normalizar las coordenadas 
-                # a nivel lógico para todos los monitores independientemente de su DPI.
-                from PySide6.QtGui import QCursor
-                local_pos = self.mapFromGlobal(QCursor.pos())
-                x = local_pos.x()
-                y = local_pos.y()
-                
-                w, h = self.width(), self.height()
-                border = 6 # Grosor del borde para redimensionar
-                
-                left = x < border
-                right = x > w - border
-                top = y < border
-                bottom = y > h - border
-                
-                if left and top: return True, 13 # HTTOPLEFT
-                if right and top: return True, 14 # HTTOPRIGHT
-                if left and bottom: return True, 16 # HTBOTTOMLEFT
-                if right and bottom: return True, 17 # HTBOTTOMRIGHT
-                if left: return True, 10 # HTLEFT
-                if right: return True, 11 # HTRIGHT
-                if top: return True, 12 # HTTOP
-                if bottom: return True, 15 # HTBOTTOM
-        except Exception:
-            pass
+            if not self.isMaximized():
+                import ctypes
+                import ctypes.wintypes
+                msg = ctypes.wintypes.MSG.from_address(int(message))
+                if msg.message == 0x0084:  # WM_NCHITTEST
+                    # Usa QCursor.pos() porque Qt ya se encarga de normalizar las coordenadas 
+                    # a nivel lógico para todos los monitores independientemente de su DPI.
+                    from PySide6.QtGui import QCursor
+                    local_pos = self.mapFromGlobal(QCursor.pos())
+                    x = local_pos.x()
+                    y = local_pos.y()
+                    
+                    w, h = self.width(), self.height()
+                    border = 6  # Grosor del borde para redimensionar
+                    
+                    left = x < border
+                    right = x >= w - border
+                    top = y < border
+                    bottom = y >= h - border
+                    
+                    if left and top: return True, 13  # HTTOPLEFT
+                    if right and top: return True, 14  # HTTOPRIGHT
+                    if left and bottom: return True, 16  # HTBOTTOMLEFT
+                    if right and bottom: return True, 17  # HTBOTTOMRIGHT
+                    if left: return True, 10  # HTLEFT
+                    if right: return True, 11  # HTRIGHT
+                    if top: return True, 12  # HTTOP
+                    if bottom: return True, 15  # HTBOTTOM
+        except Exception as e:
+            logger.debug(f"MainWindow.nativeEvent error: {e}")
 
         return super().nativeEvent(eventType, message)
 

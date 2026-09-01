@@ -177,26 +177,28 @@ class FreesoundMixin:
             from PySide6.QtWidgets import QApplication
 
             QApplication.setOverrideCursor(Qt.WaitCursor)
-            loop = QEventLoop()
-            timer = QTimer(self)
-            timer.setSingleShot(True)
-            timer.timeout.connect(loop.quit)
-            timer.start(timeout_ms)
+            try:
+                loop = QEventLoop()
+                timer = QTimer(self)
+                timer.setSingleShot(True)
+                timer.timeout.connect(loop.quit)
+                timer.start(timeout_ms)
 
-            def _on_done(resolved_p):
-                if timer.isActive():
-                    timer.stop()
-                if loop.isRunning():
-                    loop.quit()
+                def _on_done(resolved_p):
+                    if timer.isActive():
+                        timer.stop()
+                    if loop.isRunning():
+                        loop.quit()
 
-            self._start_high_quality_download(
-                item_data,
-                on_success=lambda p: _on_done(p),
-                on_error=lambda e: _on_done(None)
-            )
+                self._start_high_quality_download(
+                    item_data,
+                    on_success=lambda p: _on_done(p),
+                    on_error=lambda e: _on_done(None)
+                )
 
-            loop.exec()
-            QApplication.restoreOverrideCursor()
+                loop.exec()
+            finally:
+                QApplication.restoreOverrideCursor()
 
             res_path = item_data.get("dest_path")
             if res_path and os.path.exists(res_path):

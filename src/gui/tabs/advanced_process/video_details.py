@@ -673,31 +673,11 @@ class VideoDetailsWidget(QFrame):
             
         dialog._rebuild_list()
 
-        # Overlay negro semitransparente sobre la ventana principal
-        main_win = self.window()
-        overlay = None
-        try:
-            from PySide6.QtWidgets import QWidget as _QWidget
-            overlay = _QWidget(main_win)
-            overlay.setStyleSheet("background-color: rgba(0, 0, 0, 0);")
-            overlay.setGeometry(main_win.rect())
-            overlay.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-            overlay.show()
-            overlay.raise_()
-            # Animar opacidad del overlay via stylesheet (efecto inmediato)
-            overlay.setStyleSheet("background-color: rgba(0, 0, 0, 160);")
-        except Exception:
-            overlay = None
-
         result = dialog.exec()
-
-        # Quitar overlay
-        if overlay is not None:
-            try:
-                overlay.hide()
-                overlay.deleteLater()
-            except Exception:
-                pass
+        main_win = self.window()
+        if main_win:
+            main_win.activateWindow()
+            main_win.raise_()
 
         if result:
             data = dialog.get_fragments_data()

@@ -35,9 +35,15 @@ class DownloadController(QObject):
         # Recodificación post-descarga (ver Proceso Avanzado > tarjeta "Recodificar"):
         # mapea el job_id del RECODE encolado -> job_id de la descarga original (o
         # _SOLO_RECODE_KEY) y guarda el backup/checkbox pendiente para resolver al
-        # terminar (ver _on_recode_job_status).
+        # terminar (ver _on_recode_job_status). Con un corte de varios fragmentos, hay
+        # VARIOS jobs RECODE por descarga (uno por fragmento, ver
+        # _resolve_fragment_download_paths) - _group_pending/_group_results, indexados
+        # por el mismo download_key, llevan la cuenta de cuántos faltan para no
+        # marcar "Completado"/reactivar el botón hasta que TODOS terminen.
         self._recode_by_download = {}
         self._recode_state = {}
+        self._group_pending = {}
+        self._group_results = {}
 
         # Connect signals
         self.queue_mgr.job_progress_changed.connect(self._on_queue_job_progress)
@@ -168,14 +174,18 @@ class DownloadController(QObject):
                     fragment_paths = self._resolve_fragment_download_paths(resolved_request_data)
                     if fragment_paths:
                         # Un job RECODE por fragmento - cada uno se pone en cuarentena y
-                        # se recodifica por separado (ver _resolve_fragment_download_paths).
-                        for actual_path, suffix in fragment_paths:
+                        # se recodifica por separado (ver _resolve_fragment_download_paths),
+                        # todos reportando "Recodificando N de M..." a la MISMA barra.
+                        total = len(fragment_paths)
+                        for i, (actual_path, suffix) in enumerate(fragment_paths, start=1):
                             self._start_post_download_recode(
                                 actual_path=actual_path,
                                 request_data=self.solo_request_data,
                                 video_data=self.tab._current_video_data,
                                 title=f"{title} - {suffix}" if title else suffix,
                                 download_key=_SOLO_RECODE_KEY,
+                                fragment_position=i,
+                                fragment_total=total,
                             )
                     else:
                         actual_path = self._resolve_final_download_path(resolved_request_data, self.last_downloaded_filepath)
@@ -410,14 +420,18 @@ class DownloadController(QObject):
                     if fragment_paths:
                         # Un job RECODE por fragmento (ver _resolve_fragment_download_paths) -
                         # sin esto solo se recodificaba job.final_filepath, que con varios
-                        # fragmentos apunta a uno solo (normalmente el último).
-                        for actual_path, suffix in fragment_paths:
+                        # fragmentos apunta a uno solo (normalmente el último). Todos
+                        # reportan "Recodificando N de M..." a la MISMA tarjeta.
+                        total = len(fragment_paths)
+                        for i, (actual_path, suffix) in enumerate(fragment_paths, start=1):
                             self._start_post_download_recode(
                                 actual_path=actual_path,
                                 request_data=job.request_data,
                                 video_data=job.video_data or job.analysis_data,
                                 title=f"{job.title} - {suffix}",
                                 download_key=job_id,
+                                fragment_position=i,
+                                fragment_total=total,
                             )
                     else:
                         self._start_post_download_recode(
@@ -480,7 +494,47 @@ class DownloadController(QObject):
             actual_path = self._find_actual_downloaded_file(path)
             editor_mgr.process_raw_download(actual_path or path, request_data)
 
-    def _start_post_download_recode(self, actual_path, request_data, video_data, title, download_key):
+    def _recode_status_text(self, position, total):
+        if total and total > 1 and position:
+            return self.tab.tr("Recodificando {0} de {1}...").format(position, total)
+        return self.tab.tr("Recodificando...")
+
+    def _finalize_group(self, download_key):
+        """Resuelve el estado final (Completado/Error) de un grupo de recodificaciones
+        por fragmento (ver _start_post_download_recode) una vez que TODAS terminaron -
+        llamado tanto desde _on_recode_job_status como desde _note_group_skip (una que
+        ni siquiera llegó a encolarse, ej. archivo faltante o preset inválido)."""
+        results = self._group_results.pop(download_key, {"all_ok": True, "final_paths": []})
+        self._group_pending.pop(download_key, None)
+        if download_key == _SOLO_RECODE_KEY:
+            final_path = results["final_paths"][-1] if results["final_paths"] else None
+            if final_path:
+                self.last_downloaded_filepath = final_path
+            if results["all_ok"]:
+                self.tab.output_options.set_progress(100, self.tab.tr("Descarga completada con éxito"), "done")
+            else:
+                self.tab.output_options.set_progress(0, self.tab.tr("Error al recodificar (original conservado)"), "wait")
+        else:
+            card = self.tab.queue_panel.cards.get(download_key)
+            if card:
+                text = self.tab.tr("Completado") if results["all_ok"] else self.tab.tr("Error al recodificar")
+                card.update_progress(100, speed_text="", status_text=text)
+
+    def _note_group_skip(self, download_key, fragment_total):
+        """Descuenta del grupo un fragmento cuya recodificación ni llegó a encolarse
+        (ver _start_post_download_recode) - sin esto, el grupo se quedaría esperando
+        para siempre a un job que nunca existió."""
+        if download_key not in self._group_pending:
+            self._group_pending[download_key] = fragment_total
+            self._group_results[download_key] = {"all_ok": True, "final_paths": []}
+        self._group_results[download_key]["all_ok"] = False
+        remaining = self._group_pending[download_key] - 1
+        self._group_pending[download_key] = remaining
+        if remaining <= 0:
+            self._finalize_group(download_key)
+
+    def _start_post_download_recode(self, actual_path, request_data, video_data, title, download_key,
+                                     fragment_position=None, fragment_total=None):
         """
         Encola un job RECODE async para un medio recién descargado (individual, LOTES o
         SOLO — `download_key` es el job_id de la descarga para LOTES, o _SOLO_RECODE_KEY
@@ -488,12 +542,22 @@ class DownloadController(QObject):
         de output_options). No se usa para PLAYLIST, que recodifica cada hijo síncrona e
         inline dentro de QueueWorker._execute_playlist (ver core/utils/queue_manager.py).
 
+        fragment_position/fragment_total (1-based) son solo para el texto "Recodificando
+        N de M..." cuando esta descarga es un corte de varios fragmentos y hay una
+        llamada a este método por cada uno (ver _resolve_fragment_download_paths) - todas
+        comparten la misma tarjeta/barra, así que no se resuelve "Completado" hasta que
+        el grupo entero termine (ver _finalize_group).
+
         El original se pone en cuarentena (.dbak) ANTES de encolar, para que quede
         protegido incluso si la app se cierra mientras el job RECODE todavía está
         esperando su turno en la cola.
         """
+        is_group = bool(fragment_total and fragment_total > 1)
+
         if not actual_path or not os.path.exists(actual_path) or os.path.isdir(actual_path):
             logger.warning(f"AdvancedProcessTab: No se encontró el archivo descargado para recodificar ({title}).")
+            if is_group:
+                self._note_group_skip(download_key, fragment_total)
             return
 
         preset_name = request_data.get("recode_preset_name")
@@ -504,15 +568,23 @@ class DownloadController(QObject):
         )
         if not settings:
             logger.warning(f"AdvancedProcessTab: Preset de recodificación '{preset_name}' no encontrado, se omite ({title}).")
+            if is_group:
+                self._note_group_skip(download_key, fragment_total)
             return
 
         try:
             backup_path = quarantine_for_recode(actual_path)
         except Exception as e:
             logger.error(f"AdvancedProcessTab: No se pudo poner en cuarentena '{actual_path}': {e}")
+            if is_group:
+                self._note_group_skip(download_key, fragment_total)
             return
 
         duration_sec = (video_data or {}).get("duration") or 0.0
+
+        if is_group and download_key not in self._group_pending:
+            self._group_pending[download_key] = fragment_total
+            self._group_results[download_key] = {"all_ok": True, "final_paths": []}
 
         recode_job_id = self.queue_mgr.add_job({
             "input_path": backup_path,
@@ -528,10 +600,13 @@ class DownloadController(QObject):
             "keep_original": request_data.get("recode_keep_original", True),
             "request_data": dict(request_data),
             "title": title,
+            "fragment_position": fragment_position,
+            "fragment_total": fragment_total,
         }
 
+        status_text = self._recode_status_text(fragment_position, fragment_total)
         if download_key == _SOLO_RECODE_KEY:
-            self.tab.output_options.set_progress(0, self.tab.tr("Recodificando..."), "downloading")
+            self.tab.output_options.set_progress(0, status_text, "downloading")
             # La cola global nace pausada (ver QueueManager.__init__) y en modo SOLO
             # nada más la despausa (a diferencia de LOTES, cuyo start_download() ya la
             # arranca antes de que un job pueda siquiera completarse y llegar hasta
@@ -548,21 +623,21 @@ class DownloadController(QObject):
                 # speed_text="" (no None) para limpiar la línea de detalle de inmediato -
                 # si no, se queda mostrando lo último que dejó la descarga (ej.
                 # "Descargado" o la velocidad final) hasta el primer tick de ffmpeg.
-                card.update_progress(0, speed_text="", status_text=self.tab.tr("Recodificando..."))
+                card.update_progress(0, speed_text="", status_text=status_text)
 
     def _on_recode_job_progress(self, job_id, percent, speed, eta):
         target = self._recode_by_download.get(job_id)
         if target is None:
             return
+        state = self._recode_state.get(job_id, {})
+        status_text = self._recode_status_text(state.get("fragment_position"), state.get("fragment_total"))
         if target == _SOLO_RECODE_KEY:
-            self.tab.output_options.set_progress(
-                int(percent), self.tab.tr("Recodificando... {0}%").format(int(percent)), "downloading"
-            )
+            self.tab.output_options.set_progress(int(percent), f"{status_text} {int(percent)}%", "downloading")
         else:
             card = self.tab.queue_panel.cards.get(target)
             if card:
                 speed_text = f"{speed} | {eta}" if speed and eta else (speed or eta or "")
-                card.update_progress(percent, speed_text=speed_text, status_text=self.tab.tr("Recodificando..."))
+                card.update_progress(percent, speed_text=speed_text, status_text=status_text)
 
     def _on_recode_job_status(self, job_id, status):
         if job_id not in self._recode_by_download:
@@ -576,9 +651,11 @@ class DownloadController(QObject):
         keep_original = state.get("keep_original", True)
         request_data = state.get("request_data") or {}
         title = state.get("title", "")
+        fragment_total = state.get("fragment_total")
         recode_job = self.queue_mgr.get_job(job_id)
 
         final_path = None
+        ok = False
         if status == "COMPLETED":
             # Éxito: la casilla decide qué pasa con el original.
             if keep_original:
@@ -586,6 +663,7 @@ class DownloadController(QObject):
             else:
                 commit_backup(backup_path)  # confirma (borra) el original
             final_path = recode_job.final_filepath if recode_job else None
+            ok = True
             if target != _SOLO_RECODE_KEY:
                 download_job = self.queue_mgr.get_job(target)
                 if download_job and final_path:
@@ -602,6 +680,31 @@ class DownloadController(QObject):
                 err = recode_job.error_message if recode_job else "desconocido"
                 logger.error(f"AdvancedProcessTab: Falló la recodificación post-descarga de '{title}': {err}")
 
+        # El job RECODE interno ya cumplió su propósito - no debe quedar visible ni
+        # reintentable en la cola compartida (no es algo que el usuario haya encolado
+        # directamente, ver conversación).
+        self.queue_mgr.remove_job(job_id)
+
+        if fragment_total and fragment_total > 1:
+            # Parte de un grupo (corte de varios fragmentos, ver
+            # _resolve_fragment_download_paths) - no se resuelve el estado final hasta
+            # que TODOS terminen (ver _finalize_group). Los que sigan pendientes van a
+            # ir mostrando su propio "Recodificando N de M..." apenas les toque correr
+            # (ver _on_recode_job_progress).
+            results = self._group_results.setdefault(target, {"all_ok": True, "final_paths": []})
+            results["all_ok"] = results["all_ok"] and ok
+            if final_path:
+                results["final_paths"].append(final_path)
+                if target == _SOLO_RECODE_KEY:
+                    self._send_to_editor_if_enabled(final_path, request_data)
+            remaining = self._group_pending.get(target, 1) - 1
+            self._group_pending[target] = remaining
+            if remaining > 0:
+                return
+            self._finalize_group(target)
+            return
+
+        # Camino normal: una sola recodificación (sin fragmentos, o un fragmento único).
         if target == _SOLO_RECODE_KEY:
             if final_path:
                 self.last_downloaded_filepath = final_path
@@ -619,11 +722,6 @@ class DownloadController(QObject):
                     self.tab.tr("Recodificación cancelada") if status == "CANCELLED" else self.tab.tr("Error al recodificar")
                 )
                 card.update_progress(100, speed_text="", status_text=text)
-
-        # El job RECODE interno ya cumplió su propósito - no debe quedar visible ni
-        # reintentable en la cola compartida (no es algo que el usuario haya encolado
-        # directamente, ver conversación).
-        self.queue_mgr.remove_job(job_id)
 
     def on_open_output_path_clicked(self):
         path = self.tab.output_options.output_path_input.text().strip()

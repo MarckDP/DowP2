@@ -168,13 +168,13 @@ class SubclipEditorDialog(QDialog):
 
     def init_ui(self):
         overlay_layout = QVBoxLayout(self)
-        overlay_layout.setContentsMargins(24, 16, 24, 16)
+        overlay_layout.setContentsMargins(16, 12, 16, 12)
         overlay_layout.setAlignment(Qt.AlignCenter)
 
         # ── Tarjeta Central Inamovible ────────────────────────
         self.card = QFrame()
         self.card.setObjectName("subclipDialogCard")
-        self.card.setMinimumSize(940, 580)
+        self.card.setMinimumSize(760, 480)
         self.card.setMaximumSize(1080, 680)
 
         card_layout = QVBoxLayout(self.card)
@@ -524,14 +524,24 @@ class SubclipEditorDialog(QDialog):
         }
         self._send_subclip_payload(payload, "Enviando rango actual como subclip")
 
+    def _cleanup_and_reactivate(self):
+        try:
+            self.trim_player.cleanup()
+        except Exception:
+            pass
+        win = self.parent().window() if self.parent() else None
+        if win:
+            win.activateWindow()
+            win.raise_()
+
     def closeEvent(self, event):
-        self.trim_player.cleanup()
+        self._cleanup_and_reactivate()
         super().closeEvent(event)
 
     def accept(self):
-        self.trim_player.cleanup()
+        self._cleanup_and_reactivate()
         super().accept()
 
     def reject(self):
-        self.trim_player.cleanup()
+        self._cleanup_and_reactivate()
         super().reject()

@@ -794,7 +794,10 @@ class QueuePanel(QWidget):
         self._update_drag_indicator(QCursor.pos())
 
     def _finish_drag(self):
-        self.releaseMouse()
+        try:
+            self.releaseMouse()
+        except Exception:
+            pass
         self._autoscroll_timer.stop()
         self._autoscroll_direction = 0
         self._drag_indicator.hide()

@@ -20,8 +20,10 @@ from PySide6.QtWidgets import (
 )
 
 from gui.widgets.preset_bar import PresetBar
+from gui.styles import get_theme_token
 
 _PRESET_NAMESPACE = "video_tools/avanzado"
+_TITLE_STYLE_BASE = "font-weight: bold; font-size: 13px;"
 
 
 class RecodeOptionsWidget(QFrame):
@@ -37,6 +39,11 @@ class RecodeOptionsWidget(QFrame):
     COMPACT_WIDTH = 350
     COLLAPSED_HEIGHT = 38
     toggled_collapse = Signal(bool)
+    # Emitida cuando cambia si hay una recodificación realmente activa (switch
+    # encendido + preset elegido, no "Sin preset") - la usa quick_mode_view.py para
+    # replicar el resaltado en su propia etiqueta "Recodificar" externa (acá el
+    # header vive oculto, ver show_header=False).
+    header_highlight_changed = Signal(bool)
 
     def __init__(self, start_expanded: bool = False, show_header: bool = True):
         super().__init__()
@@ -73,7 +80,7 @@ class RecodeOptionsWidget(QFrame):
         self.title_label = QLabel(self.tr("Recodificar"))
         self.title_label.setObjectName("sectionTitle")
         self.title_label.setAlignment(Qt.AlignCenter)
-        self.title_label.setStyleSheet("font-weight: bold; font-size: 13px;")
+        self.title_label.setStyleSheet(_TITLE_STYLE_BASE)
         header_layout.addWidget(self.title_label)
 
         self.header_widget.mousePressEvent = self._on_header_clicked
@@ -113,6 +120,7 @@ class RecodeOptionsWidget(QFrame):
             show_picker=True, show_save_button=False,
         )
         self.preset_bar.setEnabled(False)
+        self.preset_bar.preset_applied.connect(self._update_header_highlight)
         body_layout.addWidget(self.preset_bar)
 
         # Prefijo/Sufijo del archivo recodificado - vacíos por defecto (la app igual
@@ -157,6 +165,8 @@ class RecodeOptionsWidget(QFrame):
         self.main_layout.addWidget(self.body_container)
 
         self.switch_recode.toggled.connect(self._on_switch_toggled)
+        self.switch_recode.toggled.connect(self._update_header_highlight)
+        self._update_header_highlight()
 
     def _on_switch_toggled(self, checked: bool):
         self.preset_bar.setEnabled(checked)
@@ -164,11 +174,33 @@ class RecodeOptionsWidget(QFrame):
         self.txt_prefix.setEnabled(checked)
         self.txt_suffix.setEnabled(checked)
 
+    def _update_header_highlight(self, *_args):
+        """Ilumina el texto "Recodificar" en el verde de acento cuando hay una
+        recodificación realmente activa (switch encendido + preset elegido, no "Sin
+        preset" - ver conversación: dejar el switch prendido con "Sin preset" no
+        recodifica nada, así que ese estado NO debe verse "activo")."""
+        active = self.switch_recode.isChecked() and bool(self.preset_bar.active_preset_name())
+        if active:
+            accent = get_theme_token('acento_primario', '#B9E640')
+            self.title_label.setStyleSheet(f"{_TITLE_STYLE_BASE} color: {accent};")
+        else:
+            self.title_label.setStyleSheet(_TITLE_STYLE_BASE)
+        self.header_highlight_changed.emit(active)
+
     def _on_header_clicked(self, event):
         self.toggle_collapse()
 
     def toggle_collapse(self):
         self.set_expanded(not self._is_expanded, animate=True)
+
+    @property
+    def is_expanded(self) -> bool:
+        """Estado lógico actual (se actualiza al instante en set_expanded, a
+        diferencia de isVisible()/toggled_collapse, que con animate=True quedan
+        atados a cuándo termina la animación de 220ms - ver quick_mode_view.py,
+        que necesita el valor ya actualizado para no re-togglear en cada clic
+        mientras el popover todavía se está colapsando)."""
+        return self._is_expanded
 
     def _expanded_height(self) -> int:
         margins = self.main_layout.contentsMargins()

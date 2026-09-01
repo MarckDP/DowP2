@@ -39,6 +39,9 @@ class VideoDetailsWidget(QFrame):
         self.current_video_url = ""
         self.selected_fragments = [] # Lista de tuplas (start_ms, end_ms, suffix)
         self.fragment_mode = None
+        # Cache en memoria de miniaturas ya descargadas (url -> QPixmap), para no
+        # volver a pedirlas por red al cambiar entre items ya analizados.
+        self._thumbnail_pixmap_cache = {}
         main_layout = QHBoxLayout(self)
         main_layout.setContentsMargins(10, 6, 10, 6)
         main_layout.setSpacing(8)
@@ -475,32 +478,46 @@ class VideoDetailsWidget(QFrame):
             self._set_fallback_icon(is_audio_only)
 
     def load_thumbnail(self, url, fallback_urls=None):
+        # Si ya descargamos esta miniatura antes (ej. volver a un item ya
+        # analizado), reusar el pixmap en memoria en vez de pedirla por red.
+        cached_pixmap = self._thumbnail_pixmap_cache.get(url)
+        if cached_pixmap is not None:
+            self.thumb_container.set_pixmap(cached_pixmap)
+            self.btn_download_thumb.setEnabled(True)
+            return
+
         self.thumb_container.set_text(self.tr("Cargando vista previa..."))
         if not hasattr(self, '_thumb_threads'):
             self._thumb_threads = []
-            
+
         thread = ThumbnailLoaderThread(url, fallback_urls=fallback_urls)
         self._thumb_threads.append(thread)
-        
+
         def cleanup(content, error):
             if thread in getattr(self, '_thumb_threads', []):
                 self._thumb_threads.remove(thread)
-            self._on_thumbnail_loaded(content, error)
-            
+            self._on_thumbnail_loaded(content, error, cache_key=url)
+
         thread.finished.connect(cleanup)
         thread.start()
 
-    def _on_thumbnail_loaded(self, content, error):
+    def _on_thumbnail_loaded(self, content, error, cache_key=None):
         if error:
             logger.error(f"VideoDetails: Failed to load thumbnail: {error}")
             self._set_fallback_icon(False)
             return
-            
+
         try:
             image = QImage.fromData(content)
             pixmap = QPixmap.fromImage(image)
             self.thumb_container.set_pixmap(pixmap)
             self.btn_download_thumb.setEnabled(True)
+            if cache_key:
+                self._thumbnail_pixmap_cache[cache_key] = pixmap
+                # Límite simple para no crecer sin control en playlists enormes
+                if len(self._thumbnail_pixmap_cache) > 300:
+                    oldest_key = next(iter(self._thumbnail_pixmap_cache))
+                    del self._thumbnail_pixmap_cache[oldest_key]
         except Exception as e:
             logger.error(f"VideoDetails: Error processing thumbnail image: {e}")
             self._set_fallback_icon(False)

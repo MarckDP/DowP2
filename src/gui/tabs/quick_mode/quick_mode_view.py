@@ -1,6 +1,7 @@
 # src/gui/tabs/quick_mode/quick_mode_view.py
 import os
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QFrame,
     QHBoxLayout,
@@ -11,7 +12,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import Qt, QEvent, QPoint, QRect, QSize
 from PySide6.QtGui import QIcon
 
 from gui.styles import get_theme_token, apply_cut_button_style
@@ -111,7 +112,15 @@ class QuickModeTab(QWidget):
         self.recode_options.setParent(self)
         self.recode_options.hide()
         self.recode_options.toggled_collapse.connect(self._on_recode_toggled)
+        self.recode_options.header_highlight_changed.connect(self._on_recode_highlight_changed)
         self._reposition_recode_popover()
+
+        # Cerrar el popover de "Recodificar" al hacer clic afuera (de recode_bar y del
+        # propio cuerpo flotante) - filtro global porque el cuerpo no usa Qt.Popup (ver
+        # _reposition_recode_popover: vive como hijo normal posicionado a mano, no como
+        # ventana top-level), así que Qt no lo cierra solo. Se ignora mientras haya un
+        # popup interno abierto (ej. el combo de presets) para no comerle el clic.
+        QApplication.instance().installEventFilter(self)
 
         self._on_mode_changed(self.mode_combo.currentIndex())
         self.load_labels()
@@ -140,6 +149,28 @@ class QuickModeTab(QWidget):
     def _on_recode_toggled(self, expanded):
         if expanded:
             self.recode_options.raise_()
+
+    def _on_recode_highlight_changed(self, active: bool):
+        """Réplica del resaltado verde de RecodeOptionsWidget.title_label sobre
+        lbl_recode_toggle: acá el header real vive oculto (show_header=False), la
+        etiqueta visible es esta otra, fuera del widget."""
+        if active:
+            accent = get_theme_token('acento_primario', '#B9E640')
+            self.lbl_recode_toggle.setStyleSheet(f"font-weight: bold; color: {accent};")
+        else:
+            self.lbl_recode_toggle.setStyleSheet("font-weight: bold;")
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.MouseButtonPress and self.recode_options.is_expanded:
+            # No competir con un popup interno abierto (ej. el combo de presets):
+            # mientras haya uno activo, dejarle su propio clic.
+            if QApplication.activePopupWidget() is None:
+                pos = event.globalPos()
+                bar_rect = QRect(self.recode_bar.mapToGlobal(QPoint(0, 0)), self.recode_bar.size())
+                popup_rect = QRect(self.recode_options.mapToGlobal(QPoint(0, 0)), self.recode_options.size())
+                if not bar_rect.contains(pos) and not popup_rect.contains(pos):
+                    self.recode_options.toggle_collapse()
+        return super().eventFilter(obj, event)
 
     def _build_url_panel(self):
         panel = QWidget()

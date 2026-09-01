@@ -46,6 +46,10 @@ class RecodeController(QObject):
         else:
             widget.txt_suffix.setText("_recoded")
 
+        # preset_bar.refresh()/clear_selection() no emiten preset_applied (bloquean
+        # señales), así que el resaltado del header hay que refrescarlo a mano acá.
+        widget._update_header_highlight()
+
     def reset_to_defaults(self):
         self.restore_recode_to_ui({
             "recode_enabled": False,

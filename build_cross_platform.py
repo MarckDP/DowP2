@@ -55,7 +55,7 @@ UNUSED_QT_MODULES = [
     "QtAxContainer", "QtBluetooth", "QtCanvasPainter", "QtCharts", "QtConcurrent",
     "QtDBus", "QtDataVisualization", "QtDesigner", "QtGraphs", "QtGraphsWidgets",
     "QtHelp", "QtHttpServer", "QtLocation", "QtNetworkAuth", "QtNfc",
-    "QtPdf", "QtPdfWidgets", "QtPositioning", "QtQml", "QtQuick", "QtQuick3D",
+    "QtPositioning", "QtQml", "QtQuick", "QtQuick3D",
     "QtQuickControls2", "QtQuickTest", "QtQuickWidgets", "QtRemoteObjects",
     "QtScxml", "QtSensors", "QtSerialBus", "QtSerialPort", "QtSpatialAudio",
     "QtSql", "QtStateMachine", "QtTest", "QtTextToSpeech", "QtUiTools",

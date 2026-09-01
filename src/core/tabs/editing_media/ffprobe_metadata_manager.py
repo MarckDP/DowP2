@@ -180,15 +180,62 @@ class FFprobeMetadataManager(QObject):
             pass
 
         if tipo == "imagen":
-            from PySide6.QtGui import QImageReader
-            try:
-                reader = QImageReader(path)
-                if reader.canRead():
-                    sz = reader.size()
-                    meta["resolución"] = f"{sz.width()}x{sz.height()}"
-                    meta["video_codec"] = reader.format().data().decode('utf-8', errors='ignore').upper()
-            except Exception:
-                pass
+            ext = os.path.splitext(path)[1].lower()
+            if ext == ".svg":
+                try:
+                    from PySide6.QtSvg import QSvgRenderer
+                    renderer = QSvgRenderer(path)
+                    if renderer.isValid():
+                        sz = renderer.defaultSize()
+                        if sz.isValid() and sz.width() > 0 and sz.height() > 0:
+                            meta["resolución"] = f"{int(sz.width())}x{int(sz.height())}"
+                        meta["video_codec"] = "SVG"
+                except Exception:
+                    pass
+            elif ext in (".pdf", ".ai"):
+                try:
+                    from PySide6.QtPdf import QPdfDocument
+                    doc = QPdfDocument()
+                    doc.load(path)
+                    pages = doc.pageCount()
+                    if pages > 0:
+                        sz = doc.pageSize(0)
+                        pag_txt = f"{pages} {'pág' if pages == 1 else 'págs'}"
+                        if sz.isValid() and sz.width() > 0 and sz.height() > 0:
+                            meta["resolución"] = f"{int(sz.width())}x{int(sz.height())} ({pag_txt})"
+                        else:
+                            meta["resolución"] = pag_txt
+                        meta["video_codec"] = "PDF" if ext == ".pdf" else "AI"
+                except Exception:
+                    pass
+            elif ext in (".eps", ".ps"):
+                try:
+                    import re
+                    meta["video_codec"] = "EPS" if ext == ".eps" else "PS"
+                    with open(path, "rb") as f:
+                        header_sample = f.read(4096).decode("latin-1", errors="ignore")
+                        match = re.search(r"%%(?:HiRes)?BoundingBox:\s*([-\d\.]+)\s+([-\d\.]+)\s+([-\d\.]+)\s+([-\d\.]+)", header_sample)
+                        if match:
+                            x1, y1, x2, y2 = map(float, match.groups())
+                            w = int(round(abs(x2 - x1)))
+                            h = int(round(abs(y2 - y1)))
+                            if w > 0 and h > 0:
+                                meta["resolución"] = f"{w}x{h}"
+                except Exception:
+                    pass
+
+            if not meta.get("resolución") or meta.get("resolución") == "-":
+                from PySide6.QtGui import QImageReader
+                try:
+                    reader = QImageReader(path)
+                    if reader.canRead():
+                        sz = reader.size()
+                        meta["resolución"] = f"{sz.width()}x{sz.height()}"
+                        fmt = reader.format().data().decode('utf-8', errors='ignore').upper()
+                        if fmt:
+                            meta["video_codec"] = fmt
+                except Exception:
+                    pass
         return meta
 
     def _extract_ffprobe_json(self, path: str, tipo: str) -> dict:

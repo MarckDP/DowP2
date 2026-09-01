@@ -254,13 +254,113 @@ class ThumbnailCacheManager(QObject):
         """Genera la miniatura según el tipo de medio y la guarda en CACHE_DIR."""
         hash_key = self._get_hash_key(file_path)
         target_path = os.path.join(CACHE_DIR, f"{hash_key}.jpg")
+        ext = os.path.splitext(file_path)[1].lower()
 
-        if media_type == "imagen":
+        if ext == ".svg":
+            return self._generate_svg_thumbnail(file_path, target_path)
+        elif ext in (".pdf", ".ai"):
+            return self._generate_pdf_thumbnail(file_path, target_path)
+        elif ext in (".eps", ".ps"):
+            return self._generate_eps_thumbnail(file_path, target_path)
+        elif media_type == "imagen":
             return self._generate_image_thumbnail(file_path, target_path)
         elif media_type == "video":
             return self._generate_video_thumbnail(file_path, target_path)
         elif media_type == "audio":
             return self._generate_audio_thumbnail(file_path, target_path)
+        return None
+
+    def _generate_svg_thumbnail(self, src_path: str, target_path: str) -> str | None:
+        try:
+            from PySide6.QtSvg import QSvgRenderer
+            from PySide6.QtCore import QRectF, QSize
+            renderer = QSvgRenderer(src_path)
+            if not renderer.isValid():
+                return None
+
+            default_size = renderer.defaultSize()
+            if default_size.isEmpty() or default_size.width() <= 0 or default_size.height() <= 0:
+                default_size = QSize(256, 256)
+
+            scaled_size = default_size.scaled(256, 256, Qt.AspectRatioMode.KeepAspectRatio)
+            img = QImage(256, 256, QImage.Format.Format_ARGB32_Premultiplied)
+            img.fill(QColor("#1c1c1e"))
+
+            painter = QPainter(img)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+            x = (256 - scaled_size.width()) // 2
+            y = (256 - scaled_size.height()) // 2
+            renderer.render(painter, QRectF(x, y, scaled_size.width(), scaled_size.height()))
+            painter.end()
+
+            if img.save(target_path, "JPG", 85):
+                return target_path
+        except Exception as e:
+            logger.error(f"ThumbnailCacheManager: Error en miniatura SVG {src_path}: {e}")
+        return None
+
+    def _generate_pdf_thumbnail(self, src_path: str, target_path: str) -> str | None:
+        try:
+            from PySide6.QtPdf import QPdfDocument
+            from PySide6.QtCore import QSize
+            doc = QPdfDocument(self)
+            doc.load(src_path)
+            if doc.pageCount() > 0:
+                page_size = doc.pageSize(0)
+                if page_size.isValid() and page_size.width() > 0 and page_size.height() > 0:
+                    w, h = page_size.width(), page_size.height()
+                    scale = min(256.0 / w, 256.0 / h)
+                    render_w = max(1, int(w * scale))
+                    render_h = max(1, int(h * scale))
+                    page_img = doc.render(0, QSize(render_w, render_h))
+                    if not page_img.isNull():
+                        out_img = QImage(256, 256, QImage.Format.Format_RGB32)
+                        out_img.fill(QColor("#1c1c1e"))
+                        painter = QPainter(out_img)
+                        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+                        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+                        x = (256 - render_w) // 2
+                        y = (256 - render_h) // 2
+                        painter.drawImage(x, y, page_img)
+                        painter.end()
+                        if out_img.save(target_path, "JPG", 85):
+                            return target_path
+        except Exception as e:
+            logger.error(f"ThumbnailCacheManager: Error en miniatura PDF/AI {src_path}: {e}")
+        return None
+
+    def _generate_eps_thumbnail(self, src_path: str, target_path: str) -> str | None:
+        try:
+            import struct
+            # 1. Intentar extraer preview TIFF incrustado en cabecera binaria DOS EPS
+            with open(src_path, "rb") as f:
+                header = f.read(32)
+                if len(header) >= 28 and header[:4] in (b'\xC5\xD0\xD3\xC6', b'\xC6\xD3\xD0\xC5'):
+                    tiff_start, tiff_len = struct.unpack("<II", header[20:28])
+                    if tiff_len > 0:
+                        f.seek(tiff_start)
+                        tiff_bytes = f.read(tiff_len)
+                        if tiff_bytes:
+                            tiff_img = QImage.fromData(tiff_bytes)
+                            if not tiff_img.isNull():
+                                scaled = tiff_img.scaled(256, 256, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                                out_img = QImage(256, 256, QImage.Format.Format_RGB32)
+                                out_img.fill(QColor("#1c1c1e"))
+                                painter = QPainter(out_img)
+                                x = (256 - scaled.width()) // 2
+                                y = (256 - scaled.height()) // 2
+                                painter.drawImage(x, y, scaled)
+                                painter.end()
+                                if out_img.save(target_path, "JPG", 85):
+                                    return target_path
+
+            # 2. Fallback con lector de imágenes habitual
+            fallback = self._generate_image_thumbnail(src_path, target_path)
+            if fallback:
+                return fallback
+        except Exception as e:
+            logger.error(f"ThumbnailCacheManager: Error en miniatura EPS {src_path}: {e}")
         return None
 
     def _generate_image_thumbnail(self, src_path: str, target_path: str) -> str | None:

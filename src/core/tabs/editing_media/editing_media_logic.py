@@ -15,14 +15,15 @@ except ImportError:
     WATCHDOG_AVAILABLE = False
     logger.warning("EditingMediaLogic: Watchdog no está disponible. El monitoreo en tiempo real estará deshabilitado.")
 
-VALID_IMAGE_EXTS = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'}
-VALID_VIDEO_EXTS = {'.mp4', '.mkv', '.avi', '.mov', '.webm'}
-VALID_AUDIO_EXTS = {'.mp3', '.wav', '.flac', '.m4a', '.aac'}
-VALID_EXTS = VALID_IMAGE_EXTS | VALID_VIDEO_EXTS | VALID_AUDIO_EXTS
+VALID_IMAGE_EXTS = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.ico', '.tiff', '.tif', '.avif'}
+VALID_VECTOR_EXTS = {'.svg', '.ai', '.eps', '.ps', '.pdf'}
+VALID_VIDEO_EXTS = {'.mp4', '.mkv', '.avi', '.mov', '.webm', '.m4v', '.wmv', '.flv'}
+VALID_AUDIO_EXTS = {'.mp3', '.wav', '.flac', '.m4a', '.aac', '.ogg', '.opus', '.wma'}
+VALID_EXTS = VALID_IMAGE_EXTS | VALID_VECTOR_EXTS | VALID_VIDEO_EXTS | VALID_AUDIO_EXTS
 
 
 def get_media_type(ext: str) -> str:
-    if ext in VALID_IMAGE_EXTS:
+    if ext in VALID_IMAGE_EXTS or ext in VALID_VECTOR_EXTS:
         return "imagen"
     elif ext in VALID_VIDEO_EXTS:
         return "video"

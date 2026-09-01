@@ -346,18 +346,20 @@ class PreviewContainerWidget(QFrame):
         self.placeholder_label.setVisible(True)
         self.placeholder_label.setText("")
         
-        # Reproducir animación si es un GIF animado
-        if path.lower().endswith(".gif"):
+        ext = os.path.splitext(path)[1].lower()
+        avail_w = max(50, self.width() - 10)
+        avail_h = max(50, self.height() - 10)
+
+        # 1. Reproducir animación si es un GIF animado
+        if ext == ".gif":
             from PySide6.QtGui import QMovie
             movie = QMovie(path)
             if movie.isValid():
                 self._current_movie = movie
                 movie.jumpToFrame(0)
                 orig_size = movie.currentImage().size()
-                avail_w = max(50, self.width() - 10)
-                avail_h = max(50, self.height() - 10)
                 if orig_size.isValid() and not orig_size.isEmpty():
-                    scaled_size = orig_size.scaled(avail_w, avail_h, Qt.KeepAspectRatio)
+                    scaled_size = orig_size.scaled(avail_w, avail_h, Qt.AspectRatioMode.KeepAspectRatio)
                     movie.setScaledSize(scaled_size)
                 else:
                     movie.setScaledSize(QSize(avail_w, avail_h))
@@ -365,15 +367,83 @@ class PreviewContainerWidget(QFrame):
                 movie.start()
                 return
 
+        # 2. Renderizado vectorial dinámico para SVG
+        if ext == ".svg":
+            try:
+                from PySide6.QtSvg import QSvgRenderer
+                renderer = QSvgRenderer(path)
+                if renderer.isValid():
+                    sz = renderer.defaultSize()
+                    if sz.isEmpty() or sz.width() <= 0 or sz.height() <= 0:
+                        sz = QSize(avail_w, avail_h)
+                    scaled_sz = sz.scaled(avail_w, avail_h, Qt.AspectRatioMode.KeepAspectRatio)
+                    bg = create_checkerboard_pixmap(scaled_sz.width(), scaled_sz.height(), square_size=10)
+                    painter = QPainter(bg)
+                    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+                    painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+                    renderer.render(painter, QRectF(0, 0, scaled_sz.width(), scaled_sz.height()))
+                    painter.end()
+                    self.placeholder_label.setPixmap(bg)
+                    return
+            except Exception as e:
+                logger.error(f"PreviewPanel: Error renderizando SVG {path}: {e}")
+
+        # 3. Renderizado de documento PDF / Ilustrator (.ai)
+        if ext in (".pdf", ".ai"):
+            try:
+                from PySide6.QtPdf import QPdfDocument
+                doc = QPdfDocument(self)
+                doc.load(path)
+                if doc.pageCount() > 0:
+                    sz = doc.pageSize(0)
+                    if sz.isValid() and sz.width() > 0 and sz.height() > 0:
+                        scale = min(avail_w / sz.width(), avail_h / sz.height())
+                        render_w = max(1, int(sz.width() * scale))
+                        render_h = max(1, int(sz.height() * scale))
+                        page_img = doc.render(0, QSize(render_w, render_h))
+                        if not page_img.isNull():
+                            pixmap = QPixmap.fromImage(page_img)
+                            bg = create_checkerboard_pixmap(pixmap.width(), pixmap.height(), square_size=10)
+                            painter = QPainter(bg)
+                            painter.drawPixmap(0, 0, pixmap)
+                            painter.end()
+                            self.placeholder_label.setPixmap(bg)
+                            return
+            except Exception as e:
+                logger.error(f"PreviewPanel: Error renderizando PDF/AI {path}: {e}")
+
+        # 4. Preview binario incrustado para EPS / PS
+        if ext in (".eps", ".ps"):
+            try:
+                import struct
+                with open(path, "rb") as f:
+                    header = f.read(32)
+                    if len(header) >= 28 and header[:4] in (b'\xC5\xD0\xD3\xC6', b'\xC6\xD3\xD0\xC5'):
+                        tiff_start, tiff_len = struct.unpack("<II", header[20:28])
+                        if tiff_len > 0:
+                            f.seek(tiff_start)
+                            tiff_bytes = f.read(tiff_len)
+                            if tiff_bytes:
+                                tiff_img = QImage.fromData(tiff_bytes)
+                                if not tiff_img.isNull():
+                                    scaled = tiff_img.scaled(avail_w, avail_h, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                                    bg = create_checkerboard_pixmap(scaled.width(), scaled.height(), square_size=10)
+                                    painter = QPainter(bg)
+                                    painter.drawImage(0, 0, scaled)
+                                    painter.end()
+                                    self.placeholder_label.setPixmap(bg)
+                                    return
+            except Exception as e:
+                logger.error(f"PreviewPanel: Error leyendo preview EPS {path}: {e}")
+
+        # 5. Renderizado ráster estándar (PNG, JPG, WebP, etc.)
         pixmap = QPixmap(path)
         if not pixmap.isNull():
-            avail_w = max(50, self.width() - 10)
-            avail_h = max(50, self.height() - 10)
             scaled = pixmap.scaled(
                 avail_w,
                 avail_h,
-                Qt.KeepAspectRatio,
-                Qt.SmoothTransformation
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
             )
             # Dibujar el patrón de ajedrez debajo de la imagen para mostrar transparencias claramente
             bg = create_checkerboard_pixmap(scaled.width(), scaled.height(), square_size=10)

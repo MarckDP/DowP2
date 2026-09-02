@@ -94,7 +94,7 @@ class UpscalePopoverContent(QFrame):
         self.combo_scale.addItems(["2x", "3x", "4x"])
         scale_row.addWidget(self.combo_scale)
         scale_row.addStretch()
-        scale_row.addWidget(self._label("Tile Size:"))
+        scale_row.addWidget(QLabel(self.tr("Tile Size:")))
         self.entry_tile = QLineEdit("0")
         self.entry_tile.setFixedWidth(60)
         self.entry_tile.setToolTip(_TILE_TOOLTIP)

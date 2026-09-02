@@ -15,6 +15,9 @@ from gui.tabs.image_tools.image_queue_widget import ImageQueueWidget
 from gui.tabs.image_tools.upscale_popover import UpscalePopoverContent
 from gui.tabs.image_tools.rembg_popover import RembgPopoverContent
 from gui.tabs.image_tools.canvas_popover import CanvasPopoverContent
+from gui.tabs.image_tools.resize_popover import ResizePopoverContent
+from gui.tabs.image_tools.convert_panel import ConvertPanel
+from gui.tabs.image_tools.image_convert_worker import ImageConvertWorker
 from gui.tabs.image_tools.layers.layer_model import Layer, LayerStack
 from gui.tabs.image_tools.layers.layers_panel import LayersPanel
 from gui.tabs.image_tools.layers.background_dialog import BackgroundDialog
@@ -86,6 +89,22 @@ class ImageToolsTab(QWidget):
         top_layout.addWidget(self.btn_rembg)
         self._popover_buttons.append(self.btn_rembg)
 
+        # Redimensionar -- botón propio con popover (mismo patrón que Reescalar IA/
+        # Eliminar Fondo IA arriba), separado del panel "Convertir" del panel
+        # izquierdo: es una operación de tamaño aplicada a TODO el lote al exportar,
+        # no una opción de codificación de un formato puntual (ver
+        # gui/tabs/image_tools/resize_popover.py y convert_panel.py).
+        self.resize_popover_content = ResizePopoverContent()
+        self.resize_popover_content.selection_changed.connect(self._on_resize_selection_changed)
+
+        self.btn_resize = PopoverTriggerButton(host=self, content=self.resize_popover_content)
+        self.btn_resize.setFixedSize(28, 28)
+        self.btn_resize.setIconSize(QSize(16, 16))
+        self.btn_resize.setCursor(Qt.PointingHandCursor)
+        self._style_resize_button(is_active=False)
+        top_layout.addWidget(self.btn_resize)
+        self._popover_buttons.append(self.btn_resize)
+
         self.selected_canvas_option = None
         self.canvas_popover_content = CanvasPopoverContent()
         self.canvas_popover_content.selection_changed.connect(self._on_canvas_selection_changed)
@@ -107,8 +126,8 @@ class ImageToolsTab(QWidget):
         # Toggle chico que solo muestra/oculta el panel flotante de Capas -- ya NO
         # decide qué herramienta está activa (eso es independiente, ver abajo), igual
         # que el panel de Capas de Photoshop: se puede mostrar/ocultar sin que afecte
-        # qué herramienta tenés elegida. Arranca chequeado recién después de crear
-        # self.right_panel más abajo (no existe todavía en este punto).
+        # qué herramienta tenés elegida. Arranca destildado/oculto (ver right_panel
+        # más abajo) -- el usuario lo abre cuando lo necesita.
         self.btn_layers_panel = QPushButton()
         self.btn_layers_panel.setCheckable(True)
         self.btn_layers_panel.setFixedSize(28, 28)
@@ -174,6 +193,7 @@ class ImageToolsTab(QWidget):
         # Canvas (ver _on_canvas_popover_opened, que hace lo contrario: la activa).
         self.btn_upscale.opened.connect(self._reset_to_select_tool)
         self.btn_rembg.opened.connect(self._reset_to_select_tool)
+        self.btn_resize.opened.connect(self._reset_to_select_tool)
 
         top_lbl = QLabel(self.tr("Más opciones próximamente"))
         top_lbl.setStyleSheet("color: #888888; font-size: 12px;")
@@ -205,12 +225,10 @@ class ImageToolsTab(QWidget):
         # Panel "Capas": ventana flotante arrastrable (estilo panel de Photoshop), no
         # acoplada a ningún layout -- flota libremente sobre self.body_row, la mueve
         # el usuario agarrando su barra de título (ver gui/widgets/floating_panel.py).
-        self.right_panel = FloatingPanel(self.tr("Capas"), self.layers_panel, host=self.body_row, width=260)
+        self.right_panel = FloatingPanel(self.tr("Capas"), self.layers_panel, host=self.body_row, width=300)
         self.right_panel.closed.connect(lambda: self.btn_layers_panel.setChecked(False))
-        # Visible por defecto -- recién ahora existe self.right_panel, así que el
-        # toggle (creado más arriba) se deja en False hasta este punto para no
-        # dispararse contra un panel que todavía no existía.
-        self.btn_layers_panel.setChecked(True)
+        # Oculto por defecto -- self.btn_layers_panel ya nace destildado (ver arriba),
+        # así que no hace falta forzar nada acá; alcanza con no mostrar right_panel.
 
         # Puente popover <-> visor para la edición visual de Canvas (ver
         # canvas_popover.py y ZoomableImageViewer.apply_canvas_state/margin_dragged/
@@ -249,6 +267,42 @@ class ImageToolsTab(QWidget):
         self.selected_rembg_family = family_key or None
         self.selected_rembg_model = model_key or None
         self._style_rembg_button(is_valid)
+
+    def _on_resize_selection_changed(self, is_active: bool):
+        self._style_resize_button(is_active)
+
+    def _style_resize_button(self, is_active: bool):
+        """Mismo criterio visual que _style_upscale_button/_style_rembg_button --
+        verde cuando el preset elegido en el popover no es "No escalar (Original)"
+        (el default), gris si lo es."""
+        if is_active:
+            self.btn_resize.setIcon(get_colored_svg_icon("minimize.svg", "#000000", size=16))
+            self.btn_resize.setToolTip(self.tr("Redimensionar — activo"))
+            self.btn_resize.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {get_theme_token('acento_secundario', '#1DC038')};
+                    border: none;
+                    border-radius: 6px;
+                    padding: 0px;
+                }}
+                QPushButton:hover {{
+                    background-color: {get_theme_token('acento_primario', '#B9E640')};
+                }}
+            """)
+        else:
+            self.btn_resize.setIcon(get_colored_svg_icon("minimize.svg", "#6c7086", size=16))
+            self.btn_resize.setToolTip(self.tr("Redimensionar"))
+            self.btn_resize.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {get_theme_token('fondo_elemento', '#2d2d2d')};
+                    border: 1px solid {get_theme_token('borde_normal', '#2d2d2d')};
+                    border-radius: 6px;
+                    padding: 0px;
+                }}
+                QPushButton:hover {{
+                    background-color: {get_theme_token('seleccion_fondo', '#3d3d3d')};
+                }}
+            """)
 
     def _style_rembg_button(self, is_valid: bool):
         """Mismo criterio visual que _style_upscale_button -- ver ese método."""
@@ -545,8 +599,10 @@ class ImageToolsTab(QWidget):
 
     def _build_left_content(self) -> QWidget:
         """Lista de imágenes (arriba, copiada de MediaQueueWidget/Herramientas de
-        Video) + controles (abajo) -- los controles quedan como placeholder por ahora,
-        se conectan a la lógica real de conversión/IA en un paso aparte."""
+        Video) + panel "Convertir" (abajo): formato de salida + opciones + botón que
+        procesa TODO el lote de la cola con esas opciones (ver ConvertPanel/
+        ImageConvertWorker) -- mismo criterio de "un set de opciones global para
+        todo el lote" que ya usaba DowP1."""
         container = QWidget()
         layout = QVBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -559,16 +615,101 @@ class ImageToolsTab(QWidget):
         controls_scroll.setWidgetResizable(True)
         controls_scroll.setFrameShape(QScrollArea.NoFrame)
 
-        controls_placeholder = QWidget()
-        controls_layout = QVBoxLayout(controls_placeholder)
-        controls_lbl = QLabel(self.tr("Controles (Próximamente)"))
-        controls_lbl.setAlignment(Qt.AlignCenter)
-        controls_lbl.setStyleSheet("color: #888888; font-size: 12px; padding: 20px;")
-        controls_layout.addWidget(controls_lbl)
-        controls_scroll.setWidget(controls_placeholder)
+        controls_container = QWidget()
+        controls_layout = QVBoxLayout(controls_container)
+        controls_layout.setContentsMargins(0, 0, 0, 0)
+        controls_layout.setSpacing(8)
 
+        self.convert_panel = ConvertPanel()
+        self.convert_panel.validity_changed.connect(self._on_convert_validity_changed)
+        controls_layout.addWidget(self.convert_panel, 1)
+
+        self.lbl_convert_status = QLabel("")
+        self.lbl_convert_status.setAlignment(Qt.AlignCenter)
+        self.lbl_convert_status.setStyleSheet("color: #888888; font-size: 11px;")
+        self.lbl_convert_status.setVisible(False)
+        controls_layout.addWidget(self.lbl_convert_status)
+
+        convert_btn_row = QHBoxLayout()
+        self.btn_convert = QPushButton(self.tr("Convertir"))
+        self.btn_convert.setProperty("variant", "primary")
+        self.btn_convert.setCursor(Qt.PointingHandCursor)
+        self.btn_convert.clicked.connect(self._on_convert_clicked)
+        convert_btn_row.addWidget(self.btn_convert, 1)
+
+        self.btn_convert_cancel = QPushButton(self.tr("Cancelar"))
+        self.btn_convert_cancel.setProperty("variant", "danger")
+        self.btn_convert_cancel.setCursor(Qt.PointingHandCursor)
+        self.btn_convert_cancel.setVisible(False)
+        self.btn_convert_cancel.clicked.connect(self._on_convert_cancel_clicked)
+        convert_btn_row.addWidget(self.btn_convert_cancel)
+        controls_layout.addLayout(convert_btn_row)
+
+        controls_scroll.setWidget(controls_container)
         layout.addWidget(controls_scroll, 1)
+
+        self._convert_worker = None
+        self._update_convert_button_state()
+        self.image_queue.queue_updated.connect(lambda _count: self._update_convert_button_state())
         return container
+
+    # ------------------------------------------------------------------
+    # Convertir
+    # ------------------------------------------------------------------
+    def _on_convert_validity_changed(self, _is_valid: bool):
+        self._update_convert_button_state()
+
+    def _update_convert_button_state(self):
+        """Habilita "Convertir" solo si la cola tiene archivos y las opciones
+        actuales son válidas (ej. ICO necesita al menos un tamaño tildado, ver
+        ConvertPanel.is_valid()) -- mismo criterio que validity_changed ya usa
+        Herramientas de Video para su propio Convertir."""
+        if self._convert_worker is not None:
+            return  # una conversión en curso ya deja el botón deshabilitado.
+        has_files = bool(self.image_queue.get_all_filepaths())
+        self.btn_convert.setEnabled(has_files and self.convert_panel.is_valid())
+
+    def _on_convert_clicked(self):
+        filepaths = self.image_queue.get_all_filepaths()
+        if not filepaths or self._convert_worker is not None:
+            return
+        # Combina las opciones de formato/salida (ConvertPanel, panel izquierdo) con
+        # las de Redimensionar (su propio popover en la franja superior, ver
+        # resize_popover.py) en un único dict -- ImageConverter.convert_file() no
+        # distingue de dónde vino cada clave.
+        settings = {**self.resize_popover_content.get_settings(), **self.convert_panel.get_settings()}
+
+        self._convert_worker = ImageConvertWorker(filepaths, settings, parent=self)
+        self._convert_worker.file_status_changed.connect(self._on_convert_file_status)
+        self._convert_worker.finished_signal.connect(self._on_convert_finished)
+
+        self.btn_convert.setEnabled(False)
+        self.btn_convert_cancel.setVisible(True)
+        self.lbl_convert_status.setVisible(True)
+        self.lbl_convert_status.setText(self.tr("Convirtiendo 0/{0}...").format(len(filepaths)))
+        self._convert_total = len(filepaths)
+        self._convert_done = 0
+
+        self._convert_worker.start()
+
+    def _on_convert_cancel_clicked(self):
+        if self._convert_worker is not None:
+            self._convert_worker.cancel()
+            self.btn_convert_cancel.setEnabled(False)
+
+    def _on_convert_file_status(self, filepath: str, status_text: str):
+        self.image_queue.update_file_status(filepath, status_text)
+        self._convert_done += 1
+        self.lbl_convert_status.setText(
+            self.tr("Convirtiendo {0}/{1}...").format(self._convert_done, self._convert_total)
+        )
+
+    def _on_convert_finished(self, completed: int, total: int):
+        self._convert_worker = None
+        self.btn_convert_cancel.setVisible(False)
+        self.btn_convert_cancel.setEnabled(True)
+        self.lbl_convert_status.setText(self.tr("Completado: {0}/{1} archivos.").format(completed, total))
+        self._update_convert_button_state()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

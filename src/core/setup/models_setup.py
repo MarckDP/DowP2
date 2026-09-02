@@ -8,11 +8,30 @@ descarga que el resto de core/setup/*.py (requests streamed + callback de porcen
 sin checksum -- DowP 1 tampoco lo hacía)."""
 import os
 import shutil
+import sys
 import tempfile
 import zipfile
 import requests
 from core.logger.logger_manager import logger
 from core.utils.paths import get_models_dir
+
+
+def _current_platform() -> str:
+    if sys.platform.startswith("win"):
+        return "windows"
+    if sys.platform == "darwin":
+        return "macos"
+    return "linux"
+
+
+def _platform_value(value):
+    """Resuelve un campo que puede ser un dict {"windows"/"macos"/"linux": ...} (motores
+    de upscaling, un binario y una URL de release distintos por SO) o un string plano
+    (modelos rembg: son .onnx, el mismo archivo sirve para los tres SO) -- devuelve
+    directo el string, o None si el dict no tiene build para la plataforma actual."""
+    if isinstance(value, dict):
+        return value.get(_current_platform())
+    return value
 
 
 def _model_path(model_info: dict) -> str:
@@ -88,7 +107,10 @@ def _engine_dir(tool_info: dict) -> str:
 
 
 def is_upscaling_engine_installed(tool_info: dict) -> bool:
-    exe_path = os.path.join(_engine_dir(tool_info), tool_info["exe"])
+    exe_name = _platform_value(tool_info["exe"])
+    if not exe_name:
+        return False
+    exe_path = os.path.join(_engine_dir(tool_info), exe_name)
     return os.path.exists(exe_path)
 
 
@@ -138,14 +160,20 @@ def _download_and_extract_zip(url: str, dest_dir: str, progress_callback=None, w
 def download_upscaling_engine(tool_info: dict, progress_callback=None) -> tuple[bool, str]:
     """Descarga e instala un motor de upscaling NCNN-Vulkan completo (ejecutable +
     modelos que trae el propio zip) en bin/models/{folder}. Si el motor además define
-    `models_url` (ej. Upscayl), descarga ese zip de modelos aparte en {folder}/models."""
+    `models_url` (ej. Upscayl), descarga ese zip de modelos aparte en {folder}/models.
+    El release de GitHub trae un .zip distinto por SO (windows/macos/linux) -- ver
+    _platform_value()."""
     try:
+        url = _platform_value(tool_info["url"])
+        if not url:
+            return False, f"'{tool_info['name']}' no tiene una build disponible para este sistema operativo."
+
         dest_dir = _engine_dir(tool_info)
         has_models_zip = bool(tool_info.get("models_url"))
         engine_weight = (0, 60) if has_models_zip else (0, 100)
 
-        logger.info(f"Descargando motor de upscaling '{tool_info['name']}' desde {tool_info['url']}")
-        _download_and_extract_zip(tool_info["url"], dest_dir, progress_callback, weight=engine_weight)
+        logger.info(f"Descargando motor de upscaling '{tool_info['name']}' desde {url}")
+        _download_and_extract_zip(url, dest_dir, progress_callback, weight=engine_weight)
 
         if has_models_zip:
             models_dest = os.path.join(dest_dir, "models")
@@ -153,7 +181,15 @@ def download_upscaling_engine(tool_info: dict, progress_callback=None) -> tuple[
             _download_and_extract_zip(tool_info["models_url"], models_dest, progress_callback, weight=(60, 100))
 
         if not is_upscaling_engine_installed(tool_info):
-            return False, f"No se encontró {tool_info['exe']} tras la instalación."
+            return False, f"No se encontró {_platform_value(tool_info['exe'])} tras la instalación."
+
+        if _current_platform() != "windows":
+            # Los binarios de macOS/Linux necesitan el bit +x -- zipfile no siempre
+            # preserva los permisos unix del zip al extraer, así que se fuerza acá
+            # en vez de depender de eso.
+            exe_path = os.path.join(dest_dir, _platform_value(tool_info["exe"]))
+            os.chmod(exe_path, 0o755)
+
         logger.info(f"Motor '{tool_info['name']}' instalado en {dest_dir}")
         return True, "Motor instalado correctamente."
     except Exception as e:

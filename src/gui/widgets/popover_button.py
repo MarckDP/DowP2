@@ -12,7 +12,7 @@ como para meterlas acá:
      ya hace quick_mode_view.py, chequeando `not btn.geometry_contains_global(pos)`.
 """
 from PySide6.QtWidgets import QPushButton, QWidget
-from PySide6.QtCore import Signal, QRect
+from PySide6.QtCore import Signal, QRect, QEvent
 
 
 class PopoverTriggerButton(QPushButton):
@@ -31,8 +31,21 @@ class PopoverTriggerButton(QPushButton):
         self.content.setParent(host)
         self.content.hide()
         self._is_open = False
+        self._repositioning = False
+
+        # Escuchar cambios de layout/visibilidad del contenido para reajustar tamaño en vivo
+        self.content.installEventFilter(self)
+
         if left_click_opens:
             self.clicked.connect(self.toggle_popover)
+
+    def eventFilter(self, obj, event):
+        """Si el contenido cambia de tamaño o visibilidad de widgets (ej. se eligen
+        opciones que muestran más campos o avisos), reajustar posición y tamaño
+        automáticamente."""
+        if obj == self.content and event.type() == QEvent.LayoutRequest and self._is_open and not self._repositioning:
+            self.reposition()
+        return super().eventFilter(obj, event)
 
     def contextMenuEvent(self, event):
         """Clic derecho: siempre abre/cierra el popover, sin importar qué haga el
@@ -62,26 +75,46 @@ class PopoverTriggerButton(QPushButton):
     def reposition(self):
         """Ancla `content` justo debajo del botón, en coordenadas del host. Si no
         entra alineado a la izquierda, corrige para que su borde derecho no se salga
-        de la ventana (mismo criterio que _reposition_recode_popover)."""
-        if not self._is_open:
+        de la ventana (mismo criterio que _reposition_recode_popover).
+        Ajusta dinámicamente ancho y alto según el contenido visible (sizeHint)."""
+        if not self._is_open or self._repositioning:
             return
-        top_left = self.mapTo(self._host, self.rect().bottomLeft())
-        width = max(self.content.sizeHint().width(), 220)
-        max_w = max(200, self._host.width() - 20)
-        width = min(width, max_w)
-        x = top_left.x()
-        if x + width > self._host.width() - 10:
-            x = max(10, self._host.width() - 10 - width)
-        y = top_left.y() + 3
-        self.content.setFixedWidth(width)
-        # El alto hay que fijarlo DESPUÉS del ancho: con setWordWrap en el contenido
-        # (ej. el aviso de "motor no instalado"), el sizeHint().height() depende del
-        # ancho ya aplicado. Sin esto, Qt deja el widget en su tamaño por defecto
-        # (~640x480) porque nunca fue gestionado por un layout ni redimensionado.
-        self.content.setFixedHeight(self.content.sizeHint().height())
-        self.content.move(x, y)
-        if self.content.isVisible():
-            self.content.raise_()
+        self._repositioning = True
+        try:
+            # Despejar restricciones previas para que el layout calcule su tamaño real
+            self.content.setMinimumSize(0, 0)
+            self.content.setMaximumSize(16777215, 16777215)
+            if self.content.layout():
+                self.content.layout().activate()
+
+            top_left = self.mapTo(self._host, self.rect().bottomLeft())
+            hint = self.content.sizeHint()
+            width = max(hint.width(), 220)
+            max_w = max(200, self._host.width() - 20)
+            width = min(width, max_w)
+
+            x = top_left.x()
+            if x + width > self._host.width() - 10:
+                x = max(10, self._host.width() - 10 - width)
+            y = top_left.y() + 3
+
+            self.content.setFixedWidth(width)
+            if self.content.layout():
+                self.content.layout().activate()
+            height = self.content.sizeHint().height()
+
+            # Evitar desbordes verticales
+            max_h = max(100, self._host.height() - 20)
+            height = min(height, max_h)
+            if y + height > self._host.height() - 10:
+                y = max(10, self._host.height() - 10 - height)
+
+            self.content.setFixedHeight(height)
+            self.content.move(x, y)
+            if self.content.isVisible():
+                self.content.raise_()
+        finally:
+            self._repositioning = False
 
     def global_rects(self) -> tuple[QRect, QRect]:
         """Rects globales del botón y de su contenido -- para que el host arme su
@@ -89,3 +122,4 @@ class PopoverTriggerButton(QPushButton):
         btn_rect = QRect(self.mapToGlobal(self.rect().topLeft()), self.size())
         content_rect = QRect(self.content.mapToGlobal(self.content.rect().topLeft()), self.content.size())
         return btn_rect, content_rect
+

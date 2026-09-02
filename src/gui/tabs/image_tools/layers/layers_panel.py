@@ -59,7 +59,9 @@ class LayerRow(QFrame):
         top.setSpacing(5)
         self.check_visible = QCheckBox()
         self.check_visible.setChecked(True)
-        self.check_visible.setFixedWidth(16)
+        self.check_visible.setFixedSize(20, 20)
+        self.check_visible.setCursor(Qt.PointingHandCursor)
+        self.check_visible.setStyleSheet("QCheckBox { spacing: 0px; }")
         self.check_visible.setToolTip(self.tr("Mostrar/ocultar capa"))
         self.check_visible.toggled.connect(lambda v: self.visibility_toggled.emit(self.layer_id, v))
         top.addWidget(self.check_visible)
@@ -89,7 +91,7 @@ class LayerRow(QFrame):
 
         opacity_row = QHBoxLayout()
         opacity_row.setSpacing(4)
-        opacity_row.addSpacing(21)  # alinea con el nombre, debajo de check+thumb
+        opacity_row.addSpacing(25)  # alinea con el nombre, debajo de check+thumb
         self.slider_opacity = QSlider(Qt.Horizontal)
         self.slider_opacity.setFixedHeight(14)
         self.slider_opacity.setRange(0, 100)
@@ -226,8 +228,10 @@ class LayersPanel(QFrame):
         self.brush_row.addWidget(self.lbl_brush_size_val)
         layout.addLayout(self.brush_row)
 
-        self._set_row_visible(self._style_row, True)
-        self._set_row_visible(self.brush_row, False)
+        # Arranca sin ninguna fila visible -- la herramienta activa por defecto es
+        # Seleccionar (ver ImageToolsTab), y set_active_tool_ui() ya sabe resolver
+        # qué mostrar según la herramienta real en vez de hardcodear "modo Formas".
+        self.set_active_tool_ui("select")
 
         # -- Botón Fondo (acción de una sola vez, no un tool de dibujo) --
         self.btn_add_background = QPushButton(self.tr("+ Fondo"))

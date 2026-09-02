@@ -636,23 +636,67 @@ UPSCALING_TOOLS = {
     "Waifu2x": {
         "name": "Waifu2x",
         "folder": "waifu2x",
-        "exe": "waifu2x-ncnn-vulkan.exe",
-        "url": "https://github.com/nihui/waifu2x-ncnn-vulkan/releases/download/20250915/waifu2x-ncnn-vulkan-20250915-windows.zip"
+        # exe/url por plataforma -- ver core/setup/models_setup.py:_platform_value().
+        # Mismo release (20250915), un asset .zip distinto por SO en GitHub.
+        "exe": {
+            "windows": "waifu2x-ncnn-vulkan.exe",
+            "macos": "waifu2x-ncnn-vulkan",
+            "linux": "waifu2x-ncnn-vulkan",
+        },
+        "url": {
+            "windows": "https://github.com/nihui/waifu2x-ncnn-vulkan/releases/download/20250915/waifu2x-ncnn-vulkan-20250915-windows.zip",
+            "macos": "https://github.com/nihui/waifu2x-ncnn-vulkan/releases/download/20250915/waifu2x-ncnn-vulkan-20250915-macos.zip",
+            "linux": "https://github.com/nihui/waifu2x-ncnn-vulkan/releases/download/20250915/waifu2x-ncnn-vulkan-20250915-linux.zip",
+        },
     },
     "SRMD": {
         "name": "SRMD",
         "folder": "srmd",
-        "exe": "srmd-ncnn-vulkan.exe",
-        "url": "https://github.com/nihui/srmd-ncnn-vulkan/releases/download/20220728/srmd-ncnn-vulkan-20220728-windows.zip"
+        "exe": {
+            "windows": "srmd-ncnn-vulkan.exe",
+            "macos": "srmd-ncnn-vulkan",
+            "linux": "srmd-ncnn-vulkan",
+        },
+        "url": {
+            "windows": "https://github.com/nihui/srmd-ncnn-vulkan/releases/download/20220728/srmd-ncnn-vulkan-20220728-windows.zip",
+            "macos": "https://github.com/nihui/srmd-ncnn-vulkan/releases/download/20220728/srmd-ncnn-vulkan-20220728-macos.zip",
+            "linux": "https://github.com/nihui/srmd-ncnn-vulkan/releases/download/20220728/srmd-ncnn-vulkan-20220728-ubuntu.zip",
+        },
     },
     "Upscayl": {
         "name": "Upscayl (Global Engine)",
         "folder": "upscayl",
-        "exe": "upscayl-bin.exe",
-        "url": "https://github.com/upscayl/upscayl-ncnn/releases/download/20251207-174704/upscayl-bin-20251207-174704-windows.zip",
+        "exe": {
+            "windows": "upscayl-bin.exe",
+            "macos": "upscayl-bin",
+            "linux": "upscayl-bin",
+        },
+        "url": {
+            "windows": "https://github.com/upscayl/upscayl-ncnn/releases/download/20251207-174704/upscayl-bin-20251207-174704-windows.zip",
+            "macos": "https://github.com/upscayl/upscayl-ncnn/releases/download/20251207-174704/upscayl-bin-20251207-174704-macos.zip",
+            "linux": "https://github.com/upscayl/upscayl-ncnn/releases/download/20251207-174704/upscayl-bin-20251207-174704-linux.zip",
+        },
+        # Modelos (custom-models): mismo zip para los tres SO, no cambia.
         "models_url": "https://github.com/upscayl/custom-models/archive/refs/heads/main.zip"
     }
 }
+
+# --- NOTA: soporte EPS/PS en el futuro ImageConverter ---
+# EPS/PS (PostScript puro, pre-PDF) necesita un intérprete real -- no existe
+# equivalente puro-pip multiplataforma (a diferencia de SVG/PDF/AI, que se
+# resuelven con resvg_py/pypdfium2 sin binarios externos). El único intérprete
+# viable es Ghostscript, y solo Windows tiene un build oficial realmente portable
+# (zip, sin instalador) que se pueda bundlear con el mismo patrón de descarga que
+# UPSCALING_TOOLS de arriba. Por eso, al implementarlo, EPS/PS arranca
+# Windows-only -- en Linux el build oficial es un paquete Snap (no un tarball
+# suelto) y en macOS no hay build precompilado en absoluto.
+#
+# TODO(futuro): en vez de bundlear, detectar un Ghostscript ya instalado por el
+# propio usuario en Linux/macOS (binario `gs` en el PATH -- típicamente a un
+# `apt install ghostscript` / `brew install ghostscript` de distancia) y habilitar
+# EPS/PS ahí si existe, sin que la app descargue/bundlee nada. Mismo criterio de
+# "no disponible en este SO" que ya usa is_upscaling_engine_installed() para los
+# motores sin build -- ver core/setup/models_setup.py.
 
 # --- MAPEOC DE NOMBRES AMIGABLES PARA UPSCAYL ---
 UPSCAYL_MODELS_MAP = {

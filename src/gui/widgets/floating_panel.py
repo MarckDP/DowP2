@@ -4,7 +4,7 @@ desliza pegada a un borde), esta se puede mover libremente por encima de otro wi
 (su `host`), agarrando la barra de título con el mouse. Pensada para el panel de Capas
 del Editor de Imagen (estilo paneles flotantes de Photoshop), pero sin nada específico
 de capas -- reusable para cualquier otro panel flotante futuro."""
-from PySide6.QtCore import Qt, QPoint, Signal
+from PySide6.QtCore import Qt, QPoint, QRect, QEvent, Signal
 from PySide6.QtWidgets import QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QWidget
 
 from gui.styles import get_theme_token
@@ -59,16 +59,32 @@ class _TitleBar(QWidget):
 
 class FloatingPanel(QFrame):
     """`host` es el widget sobre el que flota (define los límites para no perderse
-    fuera de la ventana -- ver clamp_to_host). `content` se agrega debajo de la barra
-    de título tal cual, sin envolver en scroll: quien arma `content` es responsable de
-    que su propio contenido no necesite scroll horizontal."""
+    fuera de la ventana -- ver clamp_to_host).
+    Permite arrastre desde la barra de título y redimensionado desde los 4 bordes y esquinas."""
     closed = Signal()
 
-    def __init__(self, title: str, content: QWidget, host: QWidget, width: int = 260, parent=None):
+    RESIZE_MARGIN = 6
+    EDGE_NONE = 0
+    EDGE_LEFT = 1
+    EDGE_RIGHT = 2
+    EDGE_TOP = 4
+    EDGE_BOTTOM = 8
+
+    def __init__(self, title: str, content: QWidget, host: QWidget, width: int = 300,
+                 min_width: int = 220, min_height: int = 180, parent=None):
         super().__init__(parent if parent is not None else host)
         self._host = host
+        self._min_width = min_width
+        self._min_height = min_height
+        self._resizing_edge = self.EDGE_NONE
+        self._drag_start_pos = None
+        self._drag_start_geo = None
+
         self.setObjectName("floatingPanel")
-        self.setFixedWidth(width)
+        self.setMinimumSize(self._min_width, self._min_height)
+        self.resize(width, 360)
+        self.setMouseTracking(True)
+
         bg = get_theme_token('fondo_secundario', '#1e1e1e')
         border = get_theme_token('borde_normal', '#2d2d2d')
         self.setStyleSheet(f"""
@@ -96,11 +112,124 @@ class FloatingPanel(QFrame):
         self.hide()
         self._positioned = False
 
+        self._install_tracking(self)
+
+    def _install_tracking(self, widget: QWidget):
+        widget.setMouseTracking(True)
+        widget.installEventFilter(self)
+        for child in widget.findChildren(QWidget):
+            child.setMouseTracking(True)
+            child.installEventFilter(self)
+
+    def childEvent(self, event):
+        if event.type() == QEvent.ChildAdded and event.child().isWidgetType():
+            w = event.child()
+            w.setMouseTracking(True)
+            w.installEventFilter(self)
+        super().childEvent(event)
+
+    def _get_edge(self, pt: QPoint) -> int:
+        edge = self.EDGE_NONE
+        r = self.rect()
+        if pt.x() <= self.RESIZE_MARGIN:
+            edge |= self.EDGE_LEFT
+        elif pt.x() >= r.width() - self.RESIZE_MARGIN:
+            edge |= self.EDGE_RIGHT
+        if pt.y() <= self.RESIZE_MARGIN:
+            edge |= self.EDGE_TOP
+        elif pt.y() >= r.height() - self.RESIZE_MARGIN:
+            edge |= self.EDGE_BOTTOM
+        return edge
+
+    def _update_cursor_for_edge(self, edge: int):
+        if (edge & (self.EDGE_LEFT | self.EDGE_TOP)) == (self.EDGE_LEFT | self.EDGE_TOP) or \
+           (edge & (self.EDGE_RIGHT | self.EDGE_BOTTOM)) == (self.EDGE_RIGHT | self.EDGE_BOTTOM):
+            self.setCursor(Qt.SizeFDiagCursor)
+        elif (edge & (self.EDGE_RIGHT | self.EDGE_TOP)) == (self.EDGE_RIGHT | self.EDGE_TOP) or \
+             (edge & (self.EDGE_LEFT | self.EDGE_BOTTOM)) == (self.EDGE_LEFT | self.EDGE_BOTTOM):
+            self.setCursor(Qt.SizeBDiagCursor)
+        elif edge & (self.EDGE_LEFT | self.EDGE_RIGHT):
+            self.setCursor(Qt.SizeHorCursor)
+        elif edge & (self.EDGE_TOP | self.EDGE_BOTTOM):
+            self.setCursor(Qt.SizeVerCursor)
+        else:
+            self.unsetCursor()
+
+    def eventFilter(self, obj, event):
+        if event.type() in (QEvent.MouseMove, QEvent.MouseButtonPress, QEvent.MouseButtonRelease):
+            gpos = event.globalPosition().toPoint()
+            pos = self.mapFromGlobal(gpos)
+            edge = self._get_edge(pos)
+
+            if event.type() == QEvent.MouseMove:
+                if self._resizing_edge != self.EDGE_NONE:
+                    self._handle_resize(gpos)
+                    return True
+                elif edge != self.EDGE_NONE:
+                    self._update_cursor_for_edge(edge)
+                else:
+                    self.unsetCursor()
+
+            elif event.type() == QEvent.MouseButtonPress:
+                if event.button() == Qt.LeftButton and edge != self.EDGE_NONE:
+                    self._resizing_edge = edge
+                    self._drag_start_pos = gpos
+                    self._drag_start_geo = self.geometry()
+                    return True
+
+            elif event.type() == QEvent.MouseButtonRelease:
+                if self._resizing_edge != self.EDGE_NONE:
+                    self._resizing_edge = self.EDGE_NONE
+                    self._update_cursor_for_edge(edge)
+                    return True
+
+        return super().eventFilter(obj, event)
+
+    def _handle_resize(self, gpos: QPoint):
+        delta = gpos - self._drag_start_pos
+        host_rect = self._host.rect()
+        start_geo = self._drag_start_geo
+
+        min_w = self._min_width
+        min_h = self._min_height
+        max_w = max(min_w, host_rect.width() - 20)
+        max_h = max(min_h, host_rect.height() - 20)
+
+        new_x = start_geo.x()
+        new_y = start_geo.y()
+        new_w = start_geo.width()
+        new_h = start_geo.height()
+
+        if self._resizing_edge & self.EDGE_LEFT:
+            wanted_w = start_geo.width() - delta.x()
+            new_w = max(min_w, min(max_w, wanted_w))
+            new_x = start_geo.right() - new_w + 1
+            if new_x < 0:
+                new_x = 0
+                new_w = start_geo.right() + 1
+        elif self._resizing_edge & self.EDGE_RIGHT:
+            wanted_w = start_geo.width() + delta.x()
+            max_avail_w = max(min_w, host_rect.width() - start_geo.left())
+            new_w = max(min_w, min(max_w, min(wanted_w, max_avail_w)))
+
+        if self._resizing_edge & self.EDGE_TOP:
+            wanted_h = start_geo.height() - delta.y()
+            new_h = max(min_h, min(max_h, wanted_h))
+            new_y = start_geo.bottom() - new_h + 1
+            if new_y < 0:
+                new_y = 0
+                new_h = start_geo.bottom() + 1
+        elif self._resizing_edge & self.EDGE_BOTTOM:
+            wanted_h = start_geo.height() + delta.y()
+            max_avail_h = max(min_h, host_rect.height() - start_geo.top())
+            new_h = max(min_h, min(max_h, min(wanted_h, max_avail_h)))
+
+        self.setGeometry(new_x, new_y, new_w, new_h)
+
     def show_panel(self):
         if not self._positioned:
             self._default_position()
             self._positioned = True
-        self.adjustSize()
         self.clamp_to_host()
         self.show()
         self.raise_()

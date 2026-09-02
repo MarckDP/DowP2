@@ -1,12 +1,21 @@
 # src/gui/tabs/image_tools/image_tools_view.py
+import os
+
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QScrollArea, QApplication,
-    QPushButton, QButtonGroup,
+    QPushButton, QButtonGroup, QLineEdit, QFileDialog,
 )
-from PySide6.QtCore import Qt, QSize, QEvent
+from PySide6.QtCore import Qt, QSize, QEvent, QUrl, QStandardPaths
+from PySide6.QtGui import QDesktopServices
 
-from gui.styles import get_theme_token
+from core.utils.config_manager import get_config, save_config
+from gui.styles import (
+    get_theme_token, apply_folder_browse_button_style, apply_folder_open_button_style,
+)
 from gui.tabs.editing_media.editing_media_icons import get_colored_svg_icon
+from gui.widgets.animated_button import AnimatedButton
+from gui.widgets.bouncing_progress_bar import BouncingProgressBar
+from gui.widgets.combo_box import AutoPopupComboBox
 from gui.widgets.collapsible_panel import CollapsiblePanel
 from gui.widgets.floating_panel import FloatingPanel
 from gui.widgets.popover_button import PopoverTriggerButton
@@ -26,16 +35,14 @@ from gui.tabs.image_tools.layers.background_dialog import BackgroundDialog
 class ImageToolsTab(QWidget):
     """Editor de Imagen.
 
-    Layout tipo Herramientas de Video: franja superior de opciones (arriba, siempre
-    visible), y debajo una fila con el panel izquierdo (lista de medios + controles,
-    ancho fijo ~35%) y la vista previa a la derecha (el resto del espacio). El panel
-    izquierdo colapsa a un overlay flotante en ventanas angostas -- mismo mecanismo
-    ya usado en VideoToolsTab (ver gui/widgets/collapsible_panel.py), sin combinarlo
-    con un splitter arrastrable: ancho fijo mientras está acoplado, por decisión
-    explícita (mismo criterio que el panel de Opciones en Herramientas de Video)."""
+    Layout: barra de herramientas vertical a la izquierda (ancho fijo 40px),
+    vista previa al centro, panel derecho colapsable (cola de imágenes + opciones
+    de formato encapsuladas), y panel inferior unificado de salida y conversión
+    (política de conflicto, ruta de destino, progreso y botón Convertir)."""
 
-    LEFT_DOCKED_WIDTH = 380
-    LEFT_OVERLAY_MAX_WIDTH = 420
+    TOOLBAR_WIDTH = 40
+    RIGHT_DOCKED_WIDTH = 380
+    RIGHT_OVERLAY_MAX_WIDTH = 420
     # Ancho "cómodo" mínimo del preview antes de forzar el colapso a overlay -- no su
     # mínimo técnico absoluto, mismo criterio que PREVIEW_MIN_WIDTH en VideoToolsTab.
     PREVIEW_MIN_WIDTH = 480
@@ -46,20 +53,32 @@ class ImageToolsTab(QWidget):
         self._build_ui()
 
     def _build_ui(self):
-        main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(10, 10, 10, 10)
-        main_layout.setSpacing(8)
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(10, 10, 10, 10)
+        outer_layout.setSpacing(8)
 
-        # ── Franja superior de opciones: un botón chico por función, cada uno
-        # despliega su propio panel flotante (no empuja nada) -- ver popover_button.py.
-        # El resto de los botones (Eliminar Fondo IA, Canvas, etc.) se agregan en
-        # pasos aparte; este es el primero, de prueba.
-        self.top_strip = QFrame()
-        self.top_strip.setObjectName("imageToolsTopStrip")
-        self.top_strip.setFixedHeight(46)
-        top_layout = QHBoxLayout(self.top_strip)
-        top_layout.setContentsMargins(12, 0, 12, 0)
+        # ── Fila superior: Toolbar vertical izquierda + Fila de cuerpo
+        content_row = QHBoxLayout()
+        content_row.setContentsMargins(0, 0, 0, 0)
+        content_row.setSpacing(8)
+
+        # ── Barra de herramientas vertical: botones cuadrados estándar 32x32
+        # (mismo tamaño y proporciones que en el resto de la app), cada uno
+        # despliega su propio panel flotante o activa su herramienta de dibujo.
+        self.side_toolbar = QFrame()
+        self.side_toolbar.setObjectName("imageToolsSideToolbar")
+        self.side_toolbar.setFixedWidth(self.TOOLBAR_WIDTH)
+        top_layout = QVBoxLayout(self.side_toolbar)
+        top_layout.setContentsMargins(4, 10, 4, 10)
         top_layout.setSpacing(6)
+        top_layout.setAlignment(Qt.AlignHCenter)
+
+        def _make_sep():
+            sep = QFrame()
+            sep.setFrameShape(QFrame.HLine)
+            sep.setFixedHeight(1)
+            sep.setStyleSheet(f"background-color: {get_theme_token('borde_sutil', '#2d2d2d')}; border: none;")
+            return sep
 
         self._popover_buttons = []
 
@@ -69,8 +88,8 @@ class ImageToolsTab(QWidget):
         self.upscale_popover_content.selection_changed.connect(self._on_upscale_selection_changed)
 
         self.btn_upscale = PopoverTriggerButton(host=self, content=self.upscale_popover_content)
-        self.btn_upscale.setFixedSize(28, 28)
-        self.btn_upscale.setIconSize(QSize(16, 16))
+        self.btn_upscale.setFixedSize(32, 32)
+        self.btn_upscale.setIconSize(QSize(18, 18))
         self.btn_upscale.setCursor(Qt.PointingHandCursor)
         self._style_upscale_button(is_valid=False)
         top_layout.addWidget(self.btn_upscale)
@@ -82,8 +101,8 @@ class ImageToolsTab(QWidget):
         self.rembg_popover_content.selection_changed.connect(self._on_rembg_selection_changed)
 
         self.btn_rembg = PopoverTriggerButton(host=self, content=self.rembg_popover_content)
-        self.btn_rembg.setFixedSize(28, 28)
-        self.btn_rembg.setIconSize(QSize(16, 16))
+        self.btn_rembg.setFixedSize(32, 32)
+        self.btn_rembg.setIconSize(QSize(18, 18))
         self.btn_rembg.setCursor(Qt.PointingHandCursor)
         self._style_rembg_button(is_valid=False)
         top_layout.addWidget(self.btn_rembg)
@@ -98,12 +117,14 @@ class ImageToolsTab(QWidget):
         self.resize_popover_content.selection_changed.connect(self._on_resize_selection_changed)
 
         self.btn_resize = PopoverTriggerButton(host=self, content=self.resize_popover_content)
-        self.btn_resize.setFixedSize(28, 28)
-        self.btn_resize.setIconSize(QSize(16, 16))
+        self.btn_resize.setFixedSize(32, 32)
+        self.btn_resize.setIconSize(QSize(18, 18))
         self.btn_resize.setCursor(Qt.PointingHandCursor)
         self._style_resize_button(is_active=False)
         top_layout.addWidget(self.btn_resize)
         self._popover_buttons.append(self.btn_resize)
+
+        top_layout.addWidget(_make_sep())
 
         self.selected_canvas_option = None
         self.canvas_popover_content = CanvasPopoverContent()
@@ -130,13 +151,15 @@ class ImageToolsTab(QWidget):
         # más abajo) -- el usuario lo abre cuando lo necesita.
         self.btn_layers_panel = QPushButton()
         self.btn_layers_panel.setCheckable(True)
-        self.btn_layers_panel.setFixedSize(28, 28)
-        self.btn_layers_panel.setIconSize(QSize(16, 16))
+        self.btn_layers_panel.setFixedSize(32, 32)
+        self.btn_layers_panel.setIconSize(QSize(18, 18))
         self.btn_layers_panel.setCursor(Qt.PointingHandCursor)
         self.btn_layers_panel.setToolTip(self.tr("Mostrar/ocultar panel de Capas"))
         self.btn_layers_panel.toggled.connect(self._on_layers_panel_toggled)
         self._style_layers_panel_button(False)
         top_layout.addWidget(self.btn_layers_panel)
+
+        top_layout.addWidget(_make_sep())
 
         # Herramientas unificadas -- Seleccionar/Rectángulo/Elipse/Línea/Pincel/Canvas,
         # todas siempre visibles y mutuamente excluyentes, como la caja de
@@ -172,8 +195,8 @@ class ImageToolsTab(QWidget):
             else:
                 btn = QPushButton()
             btn.setCheckable(True)
-            btn.setFixedSize(28, 28)
-            btn.setIconSize(QSize(16, 16))
+            btn.setFixedSize(32, 32)
+            btn.setIconSize(QSize(18, 18))
             btn.setCursor(Qt.PointingHandCursor)
             btn.setToolTip(tooltip)
             btn.toggled.connect(lambda checked, k=key: self._on_tool_toggled(k, checked))
@@ -195,40 +218,39 @@ class ImageToolsTab(QWidget):
         self.btn_rembg.opened.connect(self._reset_to_select_tool)
         self.btn_resize.opened.connect(self._reset_to_select_tool)
 
-        top_lbl = QLabel(self.tr("Más opciones próximamente"))
-        top_lbl.setStyleSheet("color: #888888; font-size: 12px;")
-        top_layout.addWidget(top_lbl)
         top_layout.addStretch()
-        main_layout.addWidget(self.top_strip)
+        content_row.addWidget(self.side_toolbar)
 
-        QApplication.instance().installEventFilter(self)
-
-        # ── Fila de cuerpo: panel izquierdo colapsable + preview ──────────────────
+        # ── Fila de cuerpo: preview + panel derecho colapsable ─────────────────────
         self.body_row = QWidget()
         body_layout = QHBoxLayout(self.body_row)
         body_layout.setContentsMargins(0, 0, 0, 0)
         body_layout.setSpacing(8)
-
-        self.left_content = self._build_left_content()
-        self.left_panel = CollapsiblePanel(
-            self.left_content, edge="left",
-            docked_size=self.LEFT_DOCKED_WIDTH,
-            overlay_max_width=self.LEFT_OVERLAY_MAX_WIDTH,
-        )
-        body_layout.addWidget(self.left_panel, 0)
 
         self.preview = PreviewContainerWidget()
         self.preview.set_fill_available_space(True)
         self.preview.set_zoomable(True)
         body_layout.addWidget(self.preview, 1)
 
+        self.queue_content = self._build_queue_content()
+        self.right_panel = CollapsiblePanel(
+            self.queue_content, edge="right",
+            docked_size=self.RIGHT_DOCKED_WIDTH,
+            overlay_max_width=self.RIGHT_OVERLAY_MAX_WIDTH,
+        )
+        body_layout.addWidget(self.right_panel, 0)
+
         # Panel "Capas": ventana flotante arrastrable (estilo panel de Photoshop), no
         # acoplada a ningún layout -- flota libremente sobre self.body_row, la mueve
         # el usuario agarrando su barra de título (ver gui/widgets/floating_panel.py).
-        self.right_panel = FloatingPanel(self.tr("Capas"), self.layers_panel, host=self.body_row, width=300)
-        self.right_panel.closed.connect(lambda: self.btn_layers_panel.setChecked(False))
+        # preferred_side="left": al abrirse por primera vez aparece cerca de la barra
+        # de herramientas/sobre el preview, no encima del panel derecho de cola+Convertir.
+        self.layers_floating_panel = FloatingPanel(
+            self.tr("Capas"), self.layers_panel, host=self.body_row, width=300, preferred_side="left",
+        )
+        self.layers_floating_panel.closed.connect(lambda: self.btn_layers_panel.setChecked(False))
         # Oculto por defecto -- self.btn_layers_panel ya nace destildado (ver arriba),
-        # así que no hace falta forzar nada acá; alcanza con no mostrar right_panel.
+        # así que no hace falta forzar nada acá; alcanza con no mostrarlo.
 
         # Puente popover <-> visor para la edición visual de Canvas (ver
         # canvas_popover.py y ZoomableImageViewer.apply_canvas_state/margin_dragged/
@@ -245,11 +267,23 @@ class ImageToolsTab(QWidget):
         viewer.raster_layer_created.connect(self._on_raster_layer_created)
         viewer.shape_selected.connect(self._on_shape_selected)
 
-        self.left_panel.configure_container(self.body_row, body_layout, 0, dock_stretch=0)
+        # El host del overlay es la pestaña completa (self), no self.body_row: Qt recorta
+        # los hijos al área de su padre, así que si quedara colgado de body_row jamás podría
+        # pintarse por encima de output_bar. Al no empujar ni redimensionar nada (es un
+        # overlay flotante), cubre toda la altura disponible y el botón de borde queda
+        # pegado al límite de la ventana (mismo comportamiento que en VideoToolsTab).
+        self.right_panel.configure_container(self, body_layout, 1, dock_stretch=0)
 
         self.image_queue.file_selected.connect(self._on_file_selected)
 
-        main_layout.addWidget(self.body_row, 1)
+        content_row.addWidget(self.body_row, 1)
+        outer_layout.addLayout(content_row, 1)
+
+        # ── Fila inferior: Barra unificada de salida y conversión
+        self.output_bar = self._build_output_bar()
+        outer_layout.addWidget(self.output_bar)
+
+        QApplication.instance().installEventFilter(self)
 
     def _close_other_popovers(self, opened_btn):
         """Solo un popover de la franja superior abierto a la vez -- si se abre uno,
@@ -276,10 +310,12 @@ class ImageToolsTab(QWidget):
         verde cuando el preset elegido en el popover no es "No escalar (Original)"
         (el default), gris si lo es."""
         if is_active:
-            self.btn_resize.setIcon(get_colored_svg_icon("minimize.svg", "#000000", size=16))
+            self.btn_resize.setIcon(get_colored_svg_icon("minimize.svg", "#000000", size=18))
             self.btn_resize.setToolTip(self.tr("Redimensionar — activo"))
             self.btn_resize.setStyleSheet(f"""
                 QPushButton {{
+                    min-width: 32px; max-width: 32px;
+                    min-height: 32px; max-height: 32px;
                     background-color: {get_theme_token('acento_secundario', '#1DC038')};
                     border: none;
                     border-radius: 6px;
@@ -290,10 +326,12 @@ class ImageToolsTab(QWidget):
                 }}
             """)
         else:
-            self.btn_resize.setIcon(get_colored_svg_icon("minimize.svg", "#6c7086", size=16))
+            self.btn_resize.setIcon(get_colored_svg_icon("minimize.svg", "#6c7086", size=18))
             self.btn_resize.setToolTip(self.tr("Redimensionar"))
             self.btn_resize.setStyleSheet(f"""
                 QPushButton {{
+                    min-width: 30px; max-width: 30px;
+                    min-height: 30px; max-height: 30px;
                     background-color: {get_theme_token('fondo_elemento', '#2d2d2d')};
                     border: 1px solid {get_theme_token('borde_normal', '#2d2d2d')};
                     border-radius: 6px;
@@ -307,10 +345,12 @@ class ImageToolsTab(QWidget):
     def _style_rembg_button(self, is_valid: bool):
         """Mismo criterio visual que _style_upscale_button -- ver ese método."""
         if is_valid:
-            self.btn_rembg.setIcon(get_colored_svg_icon("content_cut.svg", "#000000", size=16))
+            self.btn_rembg.setIcon(get_colored_svg_icon("content_cut.svg", "#000000", size=18))
             self.btn_rembg.setToolTip(self.tr("Eliminar Fondo (IA) — configuración lista"))
             self.btn_rembg.setStyleSheet(f"""
                 QPushButton {{
+                    min-width: 32px; max-width: 32px;
+                    min-height: 32px; max-height: 32px;
                     background-color: {get_theme_token('acento_secundario', '#1DC038')};
                     border: none;
                     border-radius: 6px;
@@ -321,10 +361,12 @@ class ImageToolsTab(QWidget):
                 }}
             """)
         else:
-            self.btn_rembg.setIcon(get_colored_svg_icon("content_cut.svg", "#6c7086", size=16))
+            self.btn_rembg.setIcon(get_colored_svg_icon("content_cut.svg", "#6c7086", size=18))
             self.btn_rembg.setToolTip(self.tr("Eliminar Fondo (IA)"))
             self.btn_rembg.setStyleSheet(f"""
                 QPushButton {{
+                    min-width: 30px; max-width: 30px;
+                    min-height: 30px; max-height: 30px;
                     background-color: {get_theme_token('fondo_elemento', '#2d2d2d')};
                     border: 1px solid {get_theme_token('borde_normal', '#2d2d2d')};
                     border-radius: 6px;
@@ -341,10 +383,12 @@ class ImageToolsTab(QWidget):
         no) -- sin reusar esa función porque está atada a "edit.svg"/textos de
         subclip, no genérica."""
         if is_valid:
-            self.btn_upscale.setIcon(get_colored_svg_icon("zoom_in.svg", "#000000", size=16))
+            self.btn_upscale.setIcon(get_colored_svg_icon("zoom_in.svg", "#000000", size=18))
             self.btn_upscale.setToolTip(self.tr("Reescalar con IA — configuración lista"))
             self.btn_upscale.setStyleSheet(f"""
                 QPushButton {{
+                    min-width: 32px; max-width: 32px;
+                    min-height: 32px; max-height: 32px;
                     background-color: {get_theme_token('acento_secundario', '#1DC038')};
                     border: none;
                     border-radius: 6px;
@@ -355,10 +399,12 @@ class ImageToolsTab(QWidget):
                 }}
             """)
         else:
-            self.btn_upscale.setIcon(get_colored_svg_icon("zoom_in.svg", "#6c7086", size=16))
+            self.btn_upscale.setIcon(get_colored_svg_icon("zoom_in.svg", "#6c7086", size=18))
             self.btn_upscale.setToolTip(self.tr("Reescalar con IA"))
             self.btn_upscale.setStyleSheet(f"""
                 QPushButton {{
+                    min-width: 30px; max-width: 30px;
+                    min-height: 30px; max-height: 30px;
                     background-color: {get_theme_token('fondo_elemento', '#2d2d2d')};
                     border: 1px solid {get_theme_token('borde_normal', '#2d2d2d')};
                     border-radius: 6px;
@@ -419,14 +465,28 @@ class ImageToolsTab(QWidget):
         for key, btn in self._tool_buttons.items():
             icon_name = self._TOOL_ICONS[key]
             if btn.isChecked():
-                btn.setIcon(get_colored_svg_icon(icon_name, "#000000", size=16))
+                btn.setIcon(get_colored_svg_icon(icon_name, "#000000", size=18))
                 btn.setStyleSheet(f"""
-                    QPushButton {{ background-color: {accent}; border: none; border-radius: 6px; padding: 0px; }}
+                    QPushButton {{
+                        min-width: 32px; max-width: 32px;
+                        min-height: 32px; max-height: 32px;
+                        background-color: {accent};
+                        border: none;
+                        border-radius: 6px;
+                        padding: 0px;
+                    }}
                 """)
             else:
-                btn.setIcon(get_colored_svg_icon(icon_name, "#6c7086", size=16))
+                btn.setIcon(get_colored_svg_icon(icon_name, "#6c7086", size=18))
                 btn.setStyleSheet(f"""
-                    QPushButton {{ background-color: {bg}; border: 1px solid {border}; border-radius: 6px; padding: 0px; }}
+                    QPushButton {{
+                        min-width: 30px; max-width: 30px;
+                        min-height: 30px; max-height: 30px;
+                        background-color: {bg};
+                        border: 1px solid {border};
+                        border-radius: 6px;
+                        padding: 0px;
+                    }}
                     QPushButton:hover {{ background-color: {get_theme_token('seleccion_fondo', '#3d3d3d')}; }}
                 """)
 
@@ -444,17 +504,19 @@ class ImageToolsTab(QWidget):
         herramienta esté activa (igual que el panel de Capas de Photoshop)."""
         self._style_layers_panel_button(checked)
         if checked:
-            self.right_panel.show_panel()
+            self.layers_floating_panel.show_panel()
         else:
-            self.right_panel.hide_panel()
+            self.layers_floating_panel.hide_panel()
 
     def _style_layers_panel_button(self, checked: bool):
         icon = "view_list.svg" if checked else "list_alt.svg"
         color = get_theme_token('acento_primario', '#B9E640') if checked else "#6c7086"
-        self.btn_layers_panel.setIcon(get_colored_svg_icon(icon, color, size=16))
+        self.btn_layers_panel.setIcon(get_colored_svg_icon(icon, color, size=18))
         border = get_theme_token('acento_primario', '#B9E640') if checked else get_theme_token('borde_normal', '#2d2d2d')
         self.btn_layers_panel.setStyleSheet(f"""
             QPushButton {{
+                min-width: 30px; max-width: 30px;
+                min-height: 30px; max-height: 30px;
                 background-color: {get_theme_token('fondo_elemento', '#2d2d2d')};
                 border: 1px solid {border};
                 border-radius: 6px;
@@ -597,61 +659,169 @@ class ImageToolsTab(QWidget):
         else:
             self.preview.show_default_state()
 
-    def _build_left_content(self) -> QWidget:
-        """Lista de imágenes (arriba, copiada de MediaQueueWidget/Herramientas de
-        Video) + panel "Convertir" (abajo): formato de salida + opciones + botón que
-        procesa TODO el lote de la cola con esas opciones (ver ConvertPanel/
-        ImageConvertWorker) -- mismo criterio de "un set de opciones global para
-        todo el lote" que ya usaba DowP1."""
-        container = QWidget()
+    def _build_queue_content(self) -> QWidget:
+        """Lista de imágenes (arriba) + panel "Convertir" con opciones de formato
+        encapsuladas (abajo). Las acciones globales de destino/conversión viven
+        en la barra inferior de la pestaña."""
+        container = QFrame()
+        container.setObjectName("unifiedQueuePanel")
+        bg_color = get_theme_token('fondo_secundario', '#1e1e1e')
+        border_color = get_theme_token('borde_normal', '#2d2d2d')
+        container.setStyleSheet(f"""
+            QFrame#unifiedQueuePanel {{
+                background-color: {bg_color};
+                border: 1px solid {border_color};
+                border-radius: 6px;
+            }}
+        """)
+        
         layout = QVBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
+        layout.setSpacing(0)
 
         self.image_queue = ImageQueueWidget()
         layout.addWidget(self.image_queue, 1)
 
-        controls_scroll = QScrollArea()
-        controls_scroll.setWidgetResizable(True)
-        controls_scroll.setFrameShape(QScrollArea.NoFrame)
-
-        controls_container = QWidget()
-        controls_layout = QVBoxLayout(controls_container)
-        controls_layout.setContentsMargins(0, 0, 0, 0)
-        controls_layout.setSpacing(8)
+        # Divisor sutil entre la lista y las opciones
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet(f"background-color: {get_theme_token('borde_sutil', '#2d2d2d')}; max-height: 1px; border: none;")
+        layout.addWidget(sep)
 
         self.convert_panel = ConvertPanel()
         self.convert_panel.validity_changed.connect(self._on_convert_validity_changed)
-        controls_layout.addWidget(self.convert_panel, 1)
-
-        self.lbl_convert_status = QLabel("")
-        self.lbl_convert_status.setAlignment(Qt.AlignCenter)
-        self.lbl_convert_status.setStyleSheet("color: #888888; font-size: 11px;")
-        self.lbl_convert_status.setVisible(False)
-        controls_layout.addWidget(self.lbl_convert_status)
-
-        convert_btn_row = QHBoxLayout()
-        self.btn_convert = QPushButton(self.tr("Convertir"))
-        self.btn_convert.setProperty("variant", "primary")
-        self.btn_convert.setCursor(Qt.PointingHandCursor)
-        self.btn_convert.clicked.connect(self._on_convert_clicked)
-        convert_btn_row.addWidget(self.btn_convert, 1)
-
-        self.btn_convert_cancel = QPushButton(self.tr("Cancelar"))
-        self.btn_convert_cancel.setProperty("variant", "danger")
-        self.btn_convert_cancel.setCursor(Qt.PointingHandCursor)
-        self.btn_convert_cancel.setVisible(False)
-        self.btn_convert_cancel.clicked.connect(self._on_convert_cancel_clicked)
-        convert_btn_row.addWidget(self.btn_convert_cancel)
-        controls_layout.addLayout(convert_btn_row)
-
-        controls_scroll.setWidget(controls_container)
-        layout.addWidget(controls_scroll, 1)
+        layout.addWidget(self.convert_panel, 0)
 
         self._convert_worker = None
         self._update_convert_button_state()
         self.image_queue.queue_updated.connect(lambda _count: self._update_convert_button_state())
         return container
+
+    def _build_output_bar(self) -> QFrame:
+        """Panel inferior unificado de salida y conversión -- política de conflicto,
+        ruta de destino con botones de examinar/abrir, botón de acción Convertir/Cancelar
+        y barra de progreso BouncingProgressBar (mismo estilo y experiencia que
+        Modo Rápido, Proceso Avanzado y Herramientas de Video)."""
+        card = QFrame()
+        card.setObjectName("imageToolsOutputBar")
+        border_color = get_theme_token('borde_normal', '#2d2d2d')
+        bg_color = get_theme_token('fondo_secundario', '#1e1e1e')
+        card.setStyleSheet(f"""
+            QFrame#imageToolsOutputBar {{
+                background-color: {bg_color};
+                border: 1px solid {border_color};
+                border-radius: 6px;
+            }}
+        """)
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(12, 8, 12, 8)
+        card_layout.setSpacing(6)
+
+        controls_row = QHBoxLayout()
+        controls_row.setContentsMargins(0, 0, 0, 0)
+        controls_row.setSpacing(8)
+
+        # 1. Si existe (política de conflicto)
+        lbl_conflict = QLabel(self.tr("Si existe:"))
+        lbl_conflict.setObjectName("menuLabel")
+        controls_row.addWidget(lbl_conflict)
+
+        self.combo_conflict_policy = AutoPopupComboBox()
+        self.combo_conflict_policy.addItem(self.tr("Sobrescribir"), "sobrescribir")
+        self.combo_conflict_policy.addItem(self.tr("Conservar"), "conservar")
+        self.combo_conflict_policy.addItem(self.tr("Omitir"), "omitir")
+        self.combo_conflict_policy.setCurrentIndex(1)  # "Conservar" por defecto
+        self.combo_conflict_policy.setFixedHeight(32)
+        self.combo_conflict_policy.setToolTip(self.tr(
+            "• Sobrescribir: reemplaza el archivo existente (con respaldo reversible).\n"
+            "• Conservar: guarda el nuevo archivo como 'nombre (1).ext'.\n"
+            "• Omitir: no convierte ese archivo."
+        ))
+        controls_row.addWidget(self.combo_conflict_policy)
+
+        # 2. Ruta de destino + Examinar + Abrir
+        lbl_path = QLabel(self.tr("Ruta:"))
+        lbl_path.setObjectName("menuLabel")
+        controls_row.addWidget(lbl_path)
+
+        self.entry_output_folder = QLineEdit()
+        self.entry_output_folder.setPlaceholderText(self.tr("Ruta de destino"))
+        self.entry_output_folder.setFixedHeight(32)
+        
+        # Cargar ruta desde config, o usar Imágenes por defecto
+        config = get_config()
+        saved_path = config.get("image_tools_output_path", "")
+        if not saved_path or not os.path.isdir(saved_path):
+            saved_path = QStandardPaths.writableLocation(QStandardPaths.PicturesLocation)
+        self.entry_output_folder.setText(saved_path)
+        self.entry_output_folder.editingFinished.connect(self._save_output_path)
+        
+        controls_row.addWidget(self.entry_output_folder, 1)
+
+        self.btn_browse_output_folder = QPushButton()
+        self.btn_browse_output_folder.setFixedSize(32, 32)
+        self.btn_browse_output_folder.setCursor(Qt.PointingHandCursor)
+        apply_folder_browse_button_style(self.btn_browse_output_folder, self.tr("Elegir carpeta de destino"))
+        self.btn_browse_output_folder.clicked.connect(self._on_browse_output_folder)
+        controls_row.addWidget(self.btn_browse_output_folder)
+
+        self.btn_open_output_folder = QPushButton()
+        self.btn_open_output_folder.setFixedSize(32, 32)
+        self.btn_open_output_folder.setCursor(Qt.PointingHandCursor)
+        apply_folder_open_button_style(self.btn_open_output_folder, self.tr("Abrir carpeta de destino"))
+        self.btn_open_output_folder.clicked.connect(self._on_open_output_folder)
+        controls_row.addWidget(self.btn_open_output_folder)
+
+        # 3. Botones de acción: Convertir y Cancelar
+        self.btn_convert = AnimatedButton(self.tr("Convertir"))
+        self.btn_convert.setProperty("variant", "primary")
+        self.btn_convert.setCursor(Qt.PointingHandCursor)
+        self.btn_convert.setFixedHeight(32)
+        self.btn_convert.setMinimumWidth(130)
+        self.btn_convert.clicked.connect(self._on_convert_clicked)
+        controls_row.addWidget(self.btn_convert)
+
+        self.btn_convert_cancel = QPushButton(self.tr("Cancelar"))
+        self.btn_convert_cancel.setProperty("variant", "danger")
+        self.btn_convert_cancel.setCursor(Qt.PointingHandCursor)
+        self.btn_convert_cancel.setFixedHeight(32)
+        self.btn_convert_cancel.setVisible(False)
+        self.btn_convert_cancel.clicked.connect(self._on_convert_cancel_clicked)
+        controls_row.addWidget(self.btn_convert_cancel)
+
+        card_layout.addLayout(controls_row)
+
+        # 4. Barra de progreso BouncingProgressBar
+        self.progress_bar = BouncingProgressBar()
+        self.progress_bar.setObjectName("downloadProgressBar")
+        self.progress_bar.setProperty("status", "wait")
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setFormat(self.tr("En espera"))
+        self.progress_bar.setTextVisible(True)
+        card_layout.addWidget(self.progress_bar)
+
+        return card
+
+    def _on_browse_output_folder(self):
+        current = self.entry_output_folder.text().strip()
+        start = current if os.path.isdir(current) else QStandardPaths.writableLocation(QStandardPaths.PicturesLocation)
+        selected = QFileDialog.getExistingDirectory(self, self.tr("Elegir carpeta de destino"), start)
+        if selected:
+            self.entry_output_folder.setText(selected)
+            self._save_output_path()
+            
+    def _save_output_path(self):
+        path = self.entry_output_folder.text().strip()
+        if os.path.isdir(path):
+            config = get_config()
+            config["image_tools_output_path"] = path
+            save_config(config)
+
+    def _on_open_output_folder(self):
+        path = self.entry_output_folder.text().strip()
+        if path and os.path.isdir(path):
+            QDesktopServices.openUrl(QUrl.fromLocalFile(path))
 
     # ------------------------------------------------------------------
     # Convertir
@@ -664,20 +834,22 @@ class ImageToolsTab(QWidget):
         actuales son válidas (ej. ICO necesita al menos un tamaño tildado, ver
         ConvertPanel.is_valid()) -- mismo criterio que validity_changed ya usa
         Herramientas de Video para su propio Convertir."""
-        if self._convert_worker is not None:
-            return  # una conversión en curso ya deja el botón deshabilitado.
-        has_files = bool(self.image_queue.get_all_filepaths())
-        self.btn_convert.setEnabled(has_files and self.convert_panel.is_valid())
+        if not hasattr(self, "btn_convert") or self._convert_worker is not None:
+            return  # una conversión en curso o UI en construcción.
+        has_files = bool(self.image_queue.get_all_filepaths()) if hasattr(self, "image_queue") else False
+        is_valid = self.convert_panel.is_valid() if hasattr(self, "convert_panel") else True
+        self.btn_convert.setEnabled(has_files and is_valid)
 
     def _on_convert_clicked(self):
         filepaths = self.image_queue.get_all_filepaths()
         if not filepaths or self._convert_worker is not None:
             return
-        # Combina las opciones de formato/salida (ConvertPanel, panel izquierdo) con
-        # las de Redimensionar (su propio popover en la franja superior, ver
-        # resize_popover.py) en un único dict -- ImageConverter.convert_file() no
-        # distingue de dónde vino cada clave.
-        settings = {**self.resize_popover_content.get_settings(), **self.convert_panel.get_settings()}
+        settings = {
+            **self.resize_popover_content.get_settings(),
+            **self.convert_panel.get_settings(),
+            "output_folder": self.entry_output_folder.text().strip(),
+            "conflict_policy": self.combo_conflict_policy.currentData() or "conservar",
+        }
 
         self._convert_worker = ImageConvertWorker(filepaths, settings, parent=self)
         self._convert_worker.file_status_changed.connect(self._on_convert_file_status)
@@ -685,8 +857,11 @@ class ImageToolsTab(QWidget):
 
         self.btn_convert.setEnabled(False)
         self.btn_convert_cancel.setVisible(True)
-        self.lbl_convert_status.setVisible(True)
-        self.lbl_convert_status.setText(self.tr("Convirtiendo 0/{0}...").format(len(filepaths)))
+        self.btn_convert_cancel.setEnabled(True)
+        self.progress_bar.setProperty("status", "running")
+        self.progress_bar.setRange(0, len(filepaths))
+        self.progress_bar.setValue(0)
+        self.progress_bar.setFormat(self.tr("Convirtiendo 0/{0}...").format(len(filepaths)))
         self._convert_total = len(filepaths)
         self._convert_done = 0
 
@@ -696,11 +871,13 @@ class ImageToolsTab(QWidget):
         if self._convert_worker is not None:
             self._convert_worker.cancel()
             self.btn_convert_cancel.setEnabled(False)
+            self.progress_bar.setFormat(self.tr("Cancelando..."))
 
     def _on_convert_file_status(self, filepath: str, status_text: str):
         self.image_queue.update_file_status(filepath, status_text)
         self._convert_done += 1
-        self.lbl_convert_status.setText(
+        self.progress_bar.setValue(self._convert_done)
+        self.progress_bar.setFormat(
             self.tr("Convirtiendo {0}/{1}...").format(self._convert_done, self._convert_total)
         )
 
@@ -708,7 +885,9 @@ class ImageToolsTab(QWidget):
         self._convert_worker = None
         self.btn_convert_cancel.setVisible(False)
         self.btn_convert_cancel.setEnabled(True)
-        self.lbl_convert_status.setText(self.tr("Completado: {0}/{1} archivos.").format(completed, total))
+        self.progress_bar.setValue(total)
+        self.progress_bar.setProperty("status", "done")
+        self.progress_bar.setFormat(self.tr("Completado: {0}/{1} archivos").format(completed, total))
         self._update_convert_button_state()
 
     def resizeEvent(self, event):
@@ -716,27 +895,29 @@ class ImageToolsTab(QWidget):
         self._update_responsive_mode()
 
     def minimumSizeHint(self):
-        """Se sobrescribe para SIEMPRE reportar el piso "sin panel izquierdo acoplado"
+        """Se sobrescribe para SIEMPRE reportar el piso "sin panel derecho acoplado"
         (mismo criterio y mismo motivo que VideoToolsTab.minimumSizeHint()): si no lo
         hiciéramos, Qt propagaría el piso "acoplado" (más ancho, por el ancho fijo de
-        left_panel) como mínimo de toda la ventana, y un resize() de un solo salto
-        grande->chico quedaría atascado sin llegar a disparar el colapso a overlay."""
+        right_panel) como mínimo de toda la ventana, y un resize() de un solo salto
+        grande->chico quedaría atascado sin llegar a disparar el colapso a overlay.
+        TOOLBAR_WIDTH sí se suma siempre -- a diferencia de right_panel, la barra de
+        herramientas nunca colapsa/sale del layout."""
         base = super().minimumSizeHint()
         if not hasattr(self, "preview"):
             return base
-        width = self.preview.minimumSizeHint().width()
+        width = self.TOOLBAR_WIDTH + self.preview.minimumSizeHint().width()
         return QSize(width, base.height())
 
     def _update_responsive_mode(self):
-        if not hasattr(self, "left_panel"):
+        if not hasattr(self, "right_panel"):
             return
-        threshold = max(self.COLLAPSE_THRESHOLD_WIDTH, self.LEFT_DOCKED_WIDTH + self.PREVIEW_MIN_WIDTH)
+        threshold = max(self.COLLAPSE_THRESHOLD_WIDTH, self.TOOLBAR_WIDTH + self.RIGHT_DOCKED_WIDTH + self.PREVIEW_MIN_WIDTH)
         want_docked = self.width() >= threshold
-        if want_docked != self.left_panel.is_docked():
-            self.left_panel.set_mode(docked=want_docked)
-        self.left_panel.sync_overlay_geometry()
+        if want_docked != self.right_panel.is_docked():
+            self.right_panel.set_mode(docked=want_docked)
+        self.right_panel.sync_overlay_geometry()
         for btn in getattr(self, "_popover_buttons", []):
             if btn.is_open():
                 btn.reposition()
-        if hasattr(self, "right_panel") and self.right_panel.isVisible():
-            self.right_panel.clamp_to_host()
+        if hasattr(self, "layers_floating_panel") and self.layers_floating_panel.isVisible():
+            self.layers_floating_panel.clamp_to_host()

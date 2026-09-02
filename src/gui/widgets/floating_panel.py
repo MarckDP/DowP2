@@ -71,11 +71,14 @@ class FloatingPanel(QFrame):
     EDGE_BOTTOM = 8
 
     def __init__(self, title: str, content: QWidget, host: QWidget, width: int = 300,
-                 min_width: int = 220, min_height: int = 180, parent=None):
+                 min_width: int = 220, min_height: int = 180, parent=None,
+                 preferred_side: str = "right"):
         super().__init__(parent if parent is not None else host)
+        assert preferred_side in ("left", "right")
         self._host = host
         self._min_width = min_width
         self._min_height = min_height
+        self._preferred_side = preferred_side
         self._resizing_edge = self.EDGE_NONE
         self._drag_start_pos = None
         self._drag_start_geo = None
@@ -239,7 +242,10 @@ class FloatingPanel(QFrame):
 
     def _default_position(self):
         host_rect = self._host.rect()
-        x = max(10, host_rect.width() - self.width() - 20)
+        if self._preferred_side == "left":
+            x = 10
+        else:
+            x = max(10, host_rect.width() - self.width() - 20)
         y = 10
         self.move(x, y)
 

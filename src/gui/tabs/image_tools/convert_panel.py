@@ -3,13 +3,11 @@ import os
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel, QComboBox, QCheckBox,
-    QSlider, QScrollArea, QSizePolicy, QStackedWidget, QLineEdit, QPushButton,
-    QFileDialog,
+    QSlider, QScrollArea, QSizePolicy, QStackedWidget,
 )
-from PySide6.QtCore import Signal, Qt, QUrl
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtCore import Signal, Qt
 
-from gui.styles import get_theme_token, apply_folder_browse_button_style, apply_folder_open_button_style
+from gui.styles import get_theme_token
 from gui.widgets.combo_box import CheckmarkComboDelegate, AutoPopupComboBox
 from core.tabs.image_tools.convert_options import (
     OUTPUT_FORMATS, JPG_SUBSAMPLING_OPTIONS, TIFF_COMPRESSION_OPTIONS,
@@ -17,20 +15,13 @@ from core.tabs.image_tools.convert_options import (
 )
 
 _MAX_VISIBLE_COMBO_ITEMS = 12
-_TOOL_BUTTON_SIZE = 32
 
 
 class ConvertPanel(QWidget):
-    """Panel "Convertir" del Editor de Imagen -- formato de salida + sus opciones +
-    carpeta de destino, aplicado a TODO el lote de la cola (mismo criterio que
-    DowP1: un único set de opciones global, no por archivo). Redimensionar vive
-    aparte, en su propio botón/popover de la franja superior (ver
-    resize_popover.py) -- acá solo queda lo específico de "a qué formato/archivo
-    convertir", no el tamaño. Mismo contrato público que
-    gui/tabs/video_tools/convert_panel.py::ConvertPanel (get_settings/is_valid/
-    validity_changed), sin el selector Rápido/Manual -- acá no hay equivalente a
-    "auto-decidir copy vs recode", el usuario siempre elige formato + sus opciones
-    directo, como hacía DowP1 con su único panel de formato."""
+    """Panel "Convertir" del Editor de Imagen -- formato de salida + sus opciones,
+    encapsulado todo dentro de una misma tarjeta visual. Redimensionar vive
+    aparte en su propio popover, y las opciones de destino (ruta, conflicto,
+    botón Convertir y barra de progreso) viven en la barra inferior unificada."""
 
     validity_changed = Signal(bool)
 
@@ -44,60 +35,42 @@ class ConvertPanel(QWidget):
 
     def _init_ui(self):
         self.setObjectName("convertPanel")
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(0)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
-        scroll = QScrollArea(self)
-        scroll.setObjectName("convertScroll")
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.viewport().setAutoFillBackground(False)
-        self.setStyleSheet("""
-            QWidget#convertPanel { background: transparent; }
-            QScrollArea#convertScroll { background: transparent; }
-            QWidget#convertContent { background: transparent; }
-        """)
-
-        content = QWidget(scroll)
-        content.setObjectName("convertContent")
-        layout = QVBoxLayout(content)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(10)
-
-        frame_format, fv = self._card_frame(self.tr("Formato de salida"), content)
+        # Tarjeta unificada "Formato de salida" que encapsula selector + opciones
+        frame_format, fv = self._card_frame(self.tr("Formato de salida"), self)
         self.combo_format = AutoPopupComboBox(frame_format)
         self._setup_fixed_combo(self.combo_format)
         for fmt in OUTPUT_FORMATS:
             self.combo_format.addItem(fmt, fmt)
         self.combo_format.currentIndexChanged.connect(self._on_format_changed)
         fv.addWidget(self.combo_format)
+
+        # Divisor sutil entre el selector y las opciones del formato
+        sep = QFrame(frame_format)
+        sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet(f"background-color: {get_theme_token('borde_sutil', '#2d2d2d')}; max-height: 1px; border: none;")
+        fv.addWidget(sep)
+
+        self.format_stack = QStackedWidget(frame_format)
+        self._build_format_pages(frame_format)
+        fv.addWidget(self.format_stack)
+
         layout.addWidget(frame_format)
 
-        layout.addWidget(self._build_output_card(content))
-
-        self.format_stack = QStackedWidget(content)
-        self._build_format_pages(content)
-        layout.addWidget(self.format_stack)
-
-        layout.addStretch(1)
-        scroll.setWidget(content)
-        outer.addWidget(scroll)
-
     def _card_frame(self, title: str | None, parent=None) -> tuple[QFrame, QVBoxLayout]:
-        """Mismo criterio visual que gui/tabs/video_tools/convert_panel.py::_card_frame
-        (duplicado a propósito -- no hay un helper compartido factorizado en el resto
-        de la app, cada panel de opciones trae el suyo)."""
         frame = QFrame(parent or self)
         frame.setObjectName("advancedCard")
-        border_color = get_theme_token('borde_sutil', '#2d2d2d')
-        frame.setStyleSheet(f"""
-            QFrame#advancedCard {{
+        border_color = get_theme_token('borde_normal', '#2d2d2d')
+        bg_color = get_theme_token('fondo_secundario', '#1e1e1e')
+        # Eliminado el estilo de tarjeta para permitir unificación externa
+        frame.setStyleSheet("""
+            QFrame#advancedCard {
                 background-color: transparent;
-                border: 1px solid {border_color};
-                border-radius: 6px;
-            }}
+                border: none;
+            }
         """)
         frame.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         v = QVBoxLayout(frame)
@@ -117,63 +90,6 @@ class ConvertPanel(QWidget):
         combo.setMinimumContentsLength(1)
         combo.setItemDelegate(CheckmarkComboDelegate(combo))
         combo.setCursor(Qt.PointingHandCursor)
-
-    def _build_output_card(self, parent) -> QFrame:
-        """Carpeta de destino + qué hacer si el archivo de salida ya existe --
-        mismo criterio y mismos 3 valores (Sobrescribir/Conservar/Omitir) que
-        gui/tabs/advanced_process/output_options.py::OutputOptionsWidget, resuelto
-        con la misma utilidad compartida (core/utils/file_conflict_manager.
-        resolve_conflict, ver image_convert_worker.py) para que el comportamiento
-        sea consistente con el resto de la app."""
-        frame, v = self._card_frame(self.tr("Destino"), parent)
-
-        path_row = QHBoxLayout()
-        self.entry_output_folder = QLineEdit(frame)
-        self.entry_output_folder.setPlaceholderText(self.tr("Misma carpeta que cada archivo"))
-        path_row.addWidget(self.entry_output_folder, 1)
-
-        self.btn_browse_output_folder = QPushButton(frame)
-        self.btn_browse_output_folder.setFixedSize(_TOOL_BUTTON_SIZE, _TOOL_BUTTON_SIZE)
-        apply_folder_browse_button_style(self.btn_browse_output_folder, self.tr("Elegir carpeta de destino"))
-        self.btn_browse_output_folder.clicked.connect(self._on_browse_output_folder)
-        path_row.addWidget(self.btn_browse_output_folder)
-
-        self.btn_open_output_folder = QPushButton(frame)
-        self.btn_open_output_folder.setFixedSize(_TOOL_BUTTON_SIZE, _TOOL_BUTTON_SIZE)
-        apply_folder_open_button_style(self.btn_open_output_folder, self.tr("Abrir carpeta de destino"))
-        self.btn_open_output_folder.clicked.connect(self._on_open_output_folder)
-        path_row.addWidget(self.btn_open_output_folder)
-        v.addLayout(path_row)
-
-        lbl_conflict = QLabel(self.tr("Si el archivo ya existe:"), frame)
-        lbl_conflict.setObjectName("menuLabel")
-        v.addWidget(lbl_conflict)
-        self.combo_conflict_policy = AutoPopupComboBox(frame)
-        self._setup_fixed_combo(self.combo_conflict_policy)
-        self.combo_conflict_policy.addItem(self.tr("Sobrescribir"), "sobrescribir")
-        self.combo_conflict_policy.addItem(self.tr("Conservar (renombrar)"), "conservar")
-        self.combo_conflict_policy.addItem(self.tr("Omitir"), "omitir")
-        self.combo_conflict_policy.setCurrentIndex(1)  # "Conservar" por defecto, igual que Descargas.
-        self.combo_conflict_policy.setToolTip(self.tr(
-            "• Sobrescribir: reemplaza el archivo existente (con respaldo reversible).\n"
-            "• Conservar: guarda el nuevo archivo como 'nombre (1).ext'.\n"
-            "• Omitir: no convierte ese archivo."
-        ))
-        v.addWidget(self.combo_conflict_policy)
-
-        return frame
-
-    def _on_browse_output_folder(self):
-        current = self.entry_output_folder.text().strip()
-        start = current if os.path.isdir(current) else os.path.expanduser("~")
-        selected = QFileDialog.getExistingDirectory(self, self.tr("Elegir carpeta de destino"), start)
-        if selected:
-            self.entry_output_folder.setText(selected)
-
-    def _on_open_output_folder(self):
-        path = self.entry_output_folder.text().strip()
-        if path and os.path.isdir(path):
-            QDesktopServices.openUrl(QUrl.fromLocalFile(path))
 
     # ─── Páginas de opciones por formato ────────────────────────
 
@@ -205,6 +121,7 @@ class ConvertPanel(QWidget):
         lbl.setWordWrap(True)
         lbl.setObjectName("mutedLabel")
         v.addWidget(lbl)
+        v.addStretch()
         return page
 
     def _build_png_page(self, parent) -> QWidget:
@@ -218,6 +135,7 @@ class ConvertPanel(QWidget):
         self.slider_png_compression.setRange(0, 9)
         self.slider_png_compression.setValue(6)
         v.addWidget(self.slider_png_compression)
+        v.addStretch()
         return page
 
     def _build_jpg_page(self, parent) -> QWidget:
@@ -236,6 +154,7 @@ class ConvertPanel(QWidget):
         v.addWidget(self.combo_jpg_subsampling)
         self.chk_jpg_progressive = QCheckBox(self.tr("Escaneo progresivo (web)"), page)
         v.addWidget(self.chk_jpg_progressive)
+        v.addStretch()
         return page
 
     def _build_webp_page(self, parent) -> QWidget:
@@ -255,6 +174,7 @@ class ConvertPanel(QWidget):
         v.addWidget(self.chk_webp_transparency)
         self.chk_webp_metadata = QCheckBox(self.tr("Guardar metadatos EXIF"), page)
         v.addWidget(self.chk_webp_metadata)
+        v.addStretch()
         return page
 
     def _on_webp_lossless_toggled(self, checked: bool):
@@ -269,6 +189,7 @@ class ConvertPanel(QWidget):
         self.slider_avif_quality.setRange(1, 100)
         self.slider_avif_quality.setValue(80)
         v.addWidget(self.slider_avif_quality)
+        v.addStretch()
         return page
 
     def _build_tiff_page(self, parent) -> QWidget:
@@ -284,6 +205,7 @@ class ConvertPanel(QWidget):
         self.chk_tiff_transparency = QCheckBox(self.tr("Mantener transparencia"), page)
         self.chk_tiff_transparency.setChecked(True)
         v.addWidget(self.chk_tiff_transparency)
+        v.addStretch()
         return page
 
     def _build_ico_page(self, parent) -> QWidget:
@@ -296,6 +218,7 @@ class ConvertPanel(QWidget):
             chk.toggled.connect(self._emit_validity)
             v.addWidget(chk)
             self._ico_checkboxes[size] = chk
+        v.addStretch()
         return page
 
     def _build_bmp_page(self, parent) -> QWidget:
@@ -303,6 +226,7 @@ class ConvertPanel(QWidget):
         v = QVBoxLayout(page)
         self.chk_bmp_rle = QCheckBox(self.tr("Comprimir (RLE)"), page)
         v.addWidget(self.chk_bmp_rle)
+        v.addStretch()
         return page
 
     def _on_format_changed(self, *_args):
@@ -326,15 +250,12 @@ class ConvertPanel(QWidget):
         return False, self.tr("Elegí al menos un tamaño de ícono.")
 
     def get_settings(self) -> dict:
-        """No incluye resize_*/interpolation_method -- eso lo aporta
-        ResizePopoverContent.get_settings() (ver resize_popover.py); quien dispare
-        la conversión combina ambos dicts (ver ImageToolsTab._on_convert_clicked)."""
+        """No incluye resize_*/interpolation_method (eso lo aporta
+        ResizePopoverContent) ni destino/conflicto (eso lo aporta el panel
+        inferior de salida)."""
         fmt = self.combo_format.currentData() or "No Convertir"
         settings = {"format": fmt}
         settings.update(default_options_for_format(fmt))
-
-        settings["output_folder"] = self.entry_output_folder.text().strip()
-        settings["conflict_policy"] = self.combo_conflict_policy.currentData() or "conservar"
 
         if fmt == "PNG":
             settings["png_transparency"] = self.chk_png_transparency.isChecked()

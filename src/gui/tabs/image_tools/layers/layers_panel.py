@@ -128,7 +128,15 @@ class LayerRow(QFrame):
         btn.setToolTip(tooltip)
         btn.setFixedSize(15, 15)
         btn.setCursor(Qt.PointingHandCursor)
-        btn.setStyleSheet("border: none; background: transparent; padding: 0px; min-width: 0px; min-height: 0px;")
+        btn.setStyleSheet("""
+            QPushButton {
+                min-width: 15px; max-width: 15px;
+                min-height: 15px; max-height: 15px;
+                border: none;
+                background: transparent;
+                padding: 0px;
+            }
+        """)
         return btn
 
     def _on_opacity_slider_changed(self, value: int):
@@ -283,27 +291,38 @@ class LayersPanel(QFrame):
 
     def _color_swatch(self, color: QColor) -> QPushButton:
         btn = QPushButton()
-        btn.setFixedSize(20, 20)
+        btn.setFixedSize(22, 22)
         btn.setCursor(Qt.PointingHandCursor)
-        btn.setStyleSheet(f"background-color: {color.name()}; border: 1px solid #555555; border-radius: 4px;")
+        self._apply_swatch_style(btn, color)
         return btn
+
+    def _apply_swatch_style(self, btn: QPushButton, color: QColor):
+        btn.setStyleSheet(f"""
+            QPushButton {{
+                min-width: 20px; max-width: 20px;
+                min-height: 20px; max-height: 20px;
+                background-color: {color.name()};
+                border: 1px solid #555555;
+                border-radius: 4px;
+                padding: 0px;
+            }}
+            QPushButton:hover {{
+                border-color: {get_theme_token('acento_primario', '#B9E640')};
+            }}
+        """)
 
     def _pick_fill_color(self):
         dialog = AdobeColorPickerDialog(self._fill_color.name(), self)
         if dialog.exec():
             self._fill_color = QColor(dialog.get_color())
-            self.btn_fill_color.setStyleSheet(
-                f"background-color: {self._fill_color.name()}; border: 1px solid #555555; border-radius: 4px;"
-            )
+            self._apply_swatch_style(self.btn_fill_color, self._fill_color)
             self._emit_draw_style()
 
     def _pick_stroke_color(self):
         dialog = AdobeColorPickerDialog(self._stroke_color.name(), self)
         if dialog.exec():
             self._stroke_color = QColor(dialog.get_color())
-            self.btn_stroke_color.setStyleSheet(
-                f"background-color: {self._stroke_color.name()}; border: 1px solid #555555; border-radius: 4px;"
-            )
+            self._apply_swatch_style(self.btn_stroke_color, self._stroke_color)
             self._emit_draw_style()
 
     def _emit_draw_style(self):

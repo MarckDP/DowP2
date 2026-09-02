@@ -91,21 +91,36 @@ class BackgroundDialog(QDialog):
         btn = QPushButton()
         btn.setFixedSize(24, 24)
         btn.setCursor(Qt.PointingHandCursor)
-        btn.setStyleSheet(f"background-color: {color.name()}; border: 1px solid #555555; border-radius: 4px;")
+        self._apply_swatch_style(btn, color)
         return btn
+
+    def _apply_swatch_style(self, btn: QPushButton, color: QColor):
+        btn.setStyleSheet(f"""
+            QPushButton {{
+                min-width: 22px; max-width: 22px;
+                min-height: 22px; max-height: 22px;
+                background-color: {color.name()};
+                border: 1px solid #555555;
+                border-radius: 4px;
+                padding: 0px;
+            }}
+            QPushButton:hover {{
+                border-color: {get_theme_token('acento_primario', '#B9E640')};
+            }}
+        """)
 
     def _pick_color1(self):
         dialog = AdobeColorPickerDialog(self._color1.name(), self)
         if dialog.exec():
             self._color1 = QColor(dialog.get_color())
-            self.btn_color1.setStyleSheet(f"background-color: {self._color1.name()}; border: 1px solid #555555; border-radius: 4px;")
+            self._apply_swatch_style(self.btn_color1, self._color1)
             self._update_preview()
 
     def _pick_color2(self):
         dialog = AdobeColorPickerDialog(self._color2.name(), self)
         if dialog.exec():
             self._color2 = QColor(dialog.get_color())
-            self.btn_color2.setStyleSheet(f"background-color: {self._color2.name()}; border: 1px solid #555555; border-radius: 4px;")
+            self._apply_swatch_style(self.btn_color2, self._color2)
             self._update_preview()
 
     def _pick_image(self):

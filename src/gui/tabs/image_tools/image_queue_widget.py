@@ -88,12 +88,12 @@ class ImageQueueWidget(QFrame):
 
         bg_color = get_theme_token('fondo_secundario', '#1e1e1e')
         border_color = get_theme_token('borde_normal', '#2d2d2d')
-        self.setStyleSheet(f"""
-            QFrame#imageQueueWidget {{
-                background-color: {bg_color};
-                border: 1px solid {border_color};
-                border-radius: 6px;
-            }}
+        # Eliminado el estilo de tarjeta para permitir unificación externa
+        self.setStyleSheet("""
+            QFrame#imageQueueWidget {
+                background-color: transparent;
+                border: none;
+            }
         """)
 
         header_grid = QGridLayout()

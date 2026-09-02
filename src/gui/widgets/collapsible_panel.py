@@ -14,6 +14,8 @@ from PySide6.QtWidgets import QWidget, QFrame, QVBoxLayout, QScrollArea
 from PySide6.QtCore import Qt, QRect, QPoint, QSize, QEasingCurve, QPropertyAnimation, Signal
 from PySide6.QtGui import QPainter, QColor, QPolygon
 
+from gui.styles import get_theme_token
+
 
 class EdgeTabButton(QWidget):
     """Pestaña angosta pegada a un borde (izquierdo o derecho) para abrir/cerrar el overlay."""
@@ -171,14 +173,12 @@ class CollapsiblePanel(QFrame):
         """Sube (o baja) el techo real de ancho, tanto acoplado como en overlay, sin tocar
         docked_size (que sigue siendo el ancho "preferido"/de arranque vía sizeHint). Con
         un stretch > 0 en el layout que lo contiene, esto es lo que le permite crecer más
-        allá de docked_size cuando sobra espacio, en vez de quedar 100% fijo.
-
-        Se aplica SIEMPRE (no solo acoplado): en overlay, Qt igual clampa cualquier
-        setGeometry() al maximumWidth vigente, así que si esto quedara sin actualizar
-        mientras está en overlay, la animación de apertura apuntaría a un ancho más grande
-        pero terminaría recortada al viejo tope — justo el bug que esto evita."""
+        allá de docked_size cuando sobra espacio, en vez de quedar 100% fijo."""
         self._dock_max_width = max(max_width, self.docked_size)
-        self.setMaximumWidth(self._dock_max_width)
+        if self._docked:
+            self.setMaximumWidth(self._dock_max_width)
+        else:
+            self.setMaximumWidth(self._overlay_max_width)
 
     def is_docked(self) -> bool:
         return self._docked
@@ -202,6 +202,7 @@ class CollapsiblePanel(QFrame):
         self.setParent(self._dock_layout.parentWidget())
         self.setMinimumWidth(self.docked_size)
         self.setMaximumWidth(self._dock_max_width)
+        self.setStyleSheet("QFrame#collapsiblePanel { background: transparent; border: none; }")
         self.updateGeometry()
         self._dock_layout.insertWidget(self._dock_index, self, self._dock_stretch)
         self.show()
@@ -212,12 +213,17 @@ class CollapsiblePanel(QFrame):
         self._anim.stop()
         self._dock_layout.removeWidget(self)
         self.setParent(self._overlay_host)
-        # docked_size es un mínimo DURO (ver __init__) para que el panel acoplado nunca se
-        # aplaste — pero en overlay necesita poder animarse desde 0 (cerrado) hasta su
-        # ancho real, así que ese piso hay que soltarlo acá. Sin esto, Qt le impide bajar de
-        # docked_size durante gran parte de la animación de abrir/cerrar, y el slide se ve
-        # como un salto brusco al final en vez de un deslizamiento parejo.
         self.setMinimumWidth(0)
+        self.setMaximumWidth(self._overlay_max_width)
+        bg = get_theme_token('fondo_principal', '#121212')
+        border = get_theme_token('borde_normal', '#2d2d2d')
+        side_border = f"border-left: 1px solid {border};" if self.edge == "right" else f"border-right: 1px solid {border};"
+        self.setStyleSheet(f"""
+            QFrame#collapsiblePanel {{
+                background-color: {bg};
+                {side_border}
+            }}
+        """)
         self.hide()
         self.edge_tab.set_open(False)
         self.edge_tab.show()

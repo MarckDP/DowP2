@@ -3,10 +3,11 @@
 
 Reemplaza los binarios externos que usaba DowP1 (Ghostscript/Poppler/Inkscape) por
 librerías puro-pip con wheels para Windows/macOS/Linux -- ver la nota en
-core/constants.py justo después de UPSCALING_TOOLS. EPS/PS quedan sin soporte por
-ahora: no existe un equivalente puro-pip a un intérprete de PostScript real (esa
-nota documenta el plan futuro: bundlear Ghostscript solo en Windows, detectar un
-`gs` del sistema en Linux/macOS)."""
+core/constants.py justo después de UPSCALING_TOOLS. Única excepción: EPS/PS no
+tiene equivalente puro-pip (necesita un intérprete de PostScript real), así que
+en Windows usa Ghostscript como dependencia OPCIONAL (ver
+core/setup/ghostscript_setup.py y _load_eps_ps más abajo) -- en Mac/Linux todavía
+no hay build bundleable, sigue sin soporte (ver el TODO en esa misma nota)."""
 import io
 import os
 
@@ -40,7 +41,7 @@ _RESIZE_METHOD_MAP = {
     "NEAREST": Image.Resampling.NEAREST,
 }
 
-_VECTOR_UNSUPPORTED_EXTS = {".eps", ".ps"}
+_EPS_PS_EXTS = {".eps", ".ps"}
 _SVG_EXTS = {".svg", ".svgz"}
 _PDF_LIKE_EXTS = {".pdf", ".ai"}
 _VECTOR_EXTS = _SVG_EXTS | _PDF_LIKE_EXTS
@@ -133,11 +134,8 @@ class ImageConverter:
     def _load_image(self, filepath, ext, target_size, maintain_aspect, options):
         if ext in RAW_EXTS:
             return self._load_raw(filepath)
-        if ext in _VECTOR_UNSUPPORTED_EXTS:
-            raise UnsupportedFormatError(
-                f"{ext.upper()} todavía no está soportado -- requiere un intérprete de "
-                "PostScript real (ver la nota EPS/PS en core/constants.py)."
-            )
+        if ext in _EPS_PS_EXTS:
+            return self._load_eps_ps(filepath, target_size, maintain_aspect, options)
         if ext in _SVG_EXTS:
             return self._load_svg(filepath, target_size, maintain_aspect, options)
         if ext in _PDF_LIKE_EXTS:
@@ -206,6 +204,42 @@ class ImageConverter:
         if target_size:
             img = self._resize_raster_image(img, target_size, maintain_aspect, options)
         return img
+
+    def _load_eps_ps(self, filepath, target_size, maintain_aspect, options):
+        """EPS/PS -> PDF temporal vía Ghostscript (dependencia opcional, solo
+        Windows por ahora -- ver core/setup/ghostscript_setup.py), reusando
+        _load_pdf_like para el renderizado en sí -- mismo comando que usaba
+        DowP1 (image_converter.pyc decompilado, líneas 592-594)."""
+        from core.setup.ghostscript_setup import check_ghostscript, get_gs_exe_path
+
+        if not check_ghostscript():
+            raise UnsupportedFormatError(
+                f"{os.path.splitext(filepath)[1].upper()} necesita Ghostscript -- "
+                "instalalo desde Ajustes > Dependencias (Windows) o, si ya estás en "
+                "Windows, aceptá la descarga que te ofrece Convertir. No disponible "
+                "todavía en Mac/Linux."
+            )
+
+        import subprocess
+        import tempfile
+
+        gs_exe = get_gs_exe_path()
+        with tempfile.TemporaryDirectory(prefix="dowp_eps_") as tmp_dir:
+            temp_pdf = os.path.join(tmp_dir, "converted.pdf")
+            cmd = [
+                gs_exe, "-dNOPAUSE", "-dBATCH", "-dSAFER", "-sDEVICE=pdfwrite",
+                "-dEPSCrop", f"-sOutputFile={temp_pdf}", filepath,
+            ]
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=60,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+            )
+            if result.returncode != 0 or not os.path.exists(temp_pdf):
+                raise UnsupportedFormatError(
+                    f"Ghostscript no pudo convertir {os.path.basename(filepath)}: "
+                    f"{result.stderr[:300]}"
+                )
+            return self._load_pdf_like(temp_pdf, target_size, maintain_aspect, options)
 
     def _calculate_optimal_dpi(self, page, target_size, maintain_aspect) -> float:
         """Sondea el tamaño real de la página (puntos, 72/pulgada) para calcular el

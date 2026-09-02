@@ -1,15 +1,17 @@
 # src/gui/tabs/image_tools/image_tools_view.py
 import os
+import platform
 import shutil
 import tempfile
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QScrollArea, QApplication,
-    QPushButton, QButtonGroup, QLineEdit, QFileDialog,
+    QPushButton, QButtonGroup, QLineEdit, QFileDialog, QMessageBox, QProgressDialog,
 )
-from PySide6.QtCore import Qt, QSize, QEvent, QUrl, QStandardPaths
+from PySide6.QtCore import Qt, QSize, QEvent, QUrl, QStandardPaths, QThread, Signal
 from PySide6.QtGui import QDesktopServices, QPixmap
 
+from core.setup.ghostscript_setup import check_ghostscript, download_ghostscript
 from core.utils.config_manager import get_config, save_config
 from gui.styles import (
     get_theme_token, apply_folder_browse_button_style, apply_folder_open_button_style,
@@ -849,13 +851,30 @@ class ImageToolsTab(QWidget):
             viewer.add_scene_item(layer.graphics_item)
             self.layer_stack.add_layer(layer)
 
-    def _show_compare_view(self, filepath: str):
+    def _warn_result_missing(self, filepath: str):
+        """Comparar/Copiar clickeados sobre un resultado que ya no existe en
+        disco (se movió/borró después de convertir, ej. desde el explorador) --
+        image_queue.get_output_path() ya se auto-corrigió del lado de la cola
+        (limpia el registro y pone "Resultado eliminado" en la fila, ver
+        image_queue_widget.py); acá solo se refleja en estos botones y se avisa
+        -- sin esto fallaba en silencio (Comparar mostraba cualquier cosa,
+        Copiar no copiaba nada) sin que quede claro por qué."""
+        QMessageBox.information(
+            self, self.tr("Resultado no encontrado"),
+            self.tr("El resultado de este archivo ya no existe en disco -- puede "
+                     "que lo hayas movido o borrado después de convertir."),
+        )
+        self._refresh_title_and_copy_button(filepath)
+
+    def _show_compare_view(self, filepath: str) -> bool:
         """Muestra la comparación antes/después de `filepath` -- usado tanto por el
         toggle manual (_on_compare_toggled) como por la activación automática
-        cuando el trabajo incluyó IA (ver _files_with_ai_edit)."""
+        cuando el trabajo incluyó IA (ver _files_with_ai_edit). Devuelve False si
+        el resultado ya no existe en disco (ver _warn_result_missing)."""
         output_path = self.image_queue.get_output_path(filepath)
         if not output_path:
-            return
+            self._warn_result_missing(filepath)
+            return False
         before_pix, after_pix = self._compare_cache.get(filepath)
         self.preview.show_compare_preview(filepath, output_path, before_pix, after_pix)
         if before_pix is None or after_pix is None:
@@ -863,6 +882,7 @@ class ImageToolsTab(QWidget):
             # guardan los pixmaps recién usados para la próxima vez.
             cv = self.preview.compare_viewer
             self._compare_cache.put(filepath, cv.before_pixmap(), cv.after_pixmap())
+        return True
 
     def _on_compare_toggled(self, checked: bool):
         """Comparar (título/botones, ver _build_ui) -- vista bajo demanda, no
@@ -872,7 +892,12 @@ class ImageToolsTab(QWidget):
         if not filepath:
             return
         if checked:
-            self._show_compare_view(filepath)
+            if not self._show_compare_view(filepath):
+                # Resultado eliminado (ver _warn_result_missing) -- revertir el
+                # toggle en vez de dejarlo tildado mostrando cualquier cosa.
+                self.btn_compare_result.blockSignals(True)
+                self.btn_compare_result.setChecked(False)
+                self.btn_compare_result.blockSignals(False)
         else:
             # No se recarga nada -- la escena del editor (formas/pincel/Canvas)
             # nunca se tocó mientras se mostraba Comparar (show_compare_preview()
@@ -901,10 +926,16 @@ class ImageToolsTab(QWidget):
             return
         output_path = self.image_queue.get_output_path(self._current_filepath)
         if not output_path:
+            self._warn_result_missing(self._current_filepath)
             return
         pixmap = QPixmap(output_path)
         if not pixmap.isNull():
             QApplication.clipboard().setPixmap(pixmap)
+        else:
+            QMessageBox.warning(
+                self, self.tr("No se pudo copiar"),
+                self.tr("El archivo existe pero no se pudo leer como imagen."),
+            )
 
     def _build_queue_content(self) -> QWidget:
         """Lista de imágenes (arriba) + panel "Convertir" con opciones de formato
@@ -1119,9 +1150,83 @@ class ImageToolsTab(QWidget):
                 overrides[fp] = temp_path
         return overrides or None
 
+    def _confirm_ghostscript_if_needed(self, filepaths: list[str]) -> bool:
+        """EPS/PS necesita Ghostscript (dependencia opcional, solo Windows por
+        ahora -- ver core/setup/ghostscript_setup.py). Si el lote tiene alguno y
+        no está instalado, se pregunta ANTES de arrancar en vez de dejar que cada
+        archivo falle en silencio con UnsupportedFormatError (ver
+        _load_eps_ps en image_converter.py). En Mac/Linux (sin build todavía) no
+        se pregunta nada -- esos archivos fallan per-archivo como cualquier otro
+        formato no soportado, mismo criterio de siempre."""
+        if platform.system() != "Windows":
+            return True
+        has_eps_ps = any(os.path.splitext(fp)[1].lower() in (".eps", ".ps") for fp in filepaths)
+        if not has_eps_ps or check_ghostscript():
+            return True
+
+        reply = QMessageBox.question(
+            self, self.tr("Ghostscript no encontrado"),
+            self.tr(
+                "La cola tiene archivo(s) EPS/PS, que necesitan Ghostscript para "
+                "convertirse. ¿Descargarlo ahora o cancelar el proceso?"
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Yes,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return False
+        return self._download_ghostscript_blocking()
+
+    def _download_ghostscript_blocking(self) -> bool:
+        """Diálogo modal chico con barra de progreso mientras se descarga
+        Ghostscript -- mismo download_ghostscript() que usa la tarjeta de
+        Ajustes > Dependencias, acá bloqueante porque no tiene sentido arrancar
+        Convertir sin saber si terminó bien. Simplificación aceptada: sin
+        cancelación real a mitad de descarga (es una descarga única y chica),
+        mismo criterio que las tarjetas de Ajustes."""
+        progress = QProgressDialog(
+            self.tr("Descargando Ghostscript..."), self.tr("Cancelar"), 0, 100, self,
+        )
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setAutoClose(True)
+        progress.setValue(0)
+
+        result = {"success": False, "msg": ""}
+
+        class _GsDownloadThread(QThread):
+            finished_signal = Signal(bool, str)
+            progress_signal = Signal(int)
+
+            def run(self):
+                success, msg = download_ghostscript(progress_callback=self.progress_signal.emit)
+                self.finished_signal.emit(success, msg)
+
+        worker = _GsDownloadThread()
+        worker.progress_signal.connect(progress.setValue)
+
+        def _on_finished(success, msg):
+            result["success"] = success
+            result["msg"] = msg
+            progress.close()
+
+        worker.finished_signal.connect(_on_finished)
+        worker.start()
+        progress.exec()
+        worker.wait()
+
+        if not result["success"]:
+            QMessageBox.warning(
+                self, self.tr("Error"),
+                self.tr("No se pudo descargar Ghostscript:\n{0}").format(result["msg"]),
+            )
+        return result["success"]
+
     def _on_convert_clicked(self):
         filepaths = self.image_queue.get_all_filepaths()
         if not filepaths or self._convert_worker is not None:
+            return
+        if not self._confirm_ghostscript_if_needed(filepaths):
             return
         settings = {
             **self.resize_popover_content.get_settings(),

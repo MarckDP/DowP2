@@ -36,6 +36,7 @@ _STATUS_COLOR_MAP = {
     "finalizado": "estado_exito",
     "error": "estado_error",
     "cancelado": "estado_espera",
+    "eliminado": "estado_error",
 }
 
 def _get_status_icon(status_text: str):
@@ -418,7 +419,19 @@ class ImageQueueWidget(QFrame):
         self._output_paths[filepath] = output_path
 
     def get_output_path(self, filepath: str) -> str | None:
-        return self._output_paths.get(filepath)
+        """Devuelve la ruta del resultado convertido de `filepath`, o None si
+        nunca se convirtió O si el archivo ya no existe en disco (se borró/movió
+        después de convertir, ej. desde el explorador) -- en ese caso también se
+        auto-corrige: se limpia el registro interno y la fila vuelve a mostrar
+        "Resultado eliminado" en vez de seguir diciendo "Completado" para un
+        archivo que ya no está. Único punto de verdad -- todo lo que decide si
+        mostrar Comparar/Copiar pasa por acá (ver ImageToolsTab)."""
+        output_path = self._output_paths.get(filepath)
+        if output_path and not os.path.exists(output_path):
+            self._output_paths.pop(filepath, None)
+            self.update_file_status(filepath, self.tr("Resultado eliminado"))
+            return None
+        return output_path
 
     def set_title(self, filepath: str, title: str):
         title = (title or "").strip()

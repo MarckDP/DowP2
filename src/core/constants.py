@@ -681,20 +681,23 @@ UPSCALING_TOOLS = {
     }
 }
 
-# --- NOTA: soporte EPS/PS en el futuro ImageConverter ---
+# --- NOTA: soporte EPS/PS en ImageConverter ---
 # EPS/PS (PostScript puro, pre-PDF) necesita un intérprete real -- no existe
 # equivalente puro-pip multiplataforma (a diferencia de SVG/PDF/AI, que se
-# resuelven con resvg_py/pypdfium2 sin binarios externos). El único intérprete
-# viable es Ghostscript, y solo Windows tiene un build oficial realmente portable
-# (zip, sin instalador) que se pueda bundlear con el mismo patrón de descarga que
-# UPSCALING_TOOLS de arriba. Por eso, al implementarlo, EPS/PS arranca
-# Windows-only -- en Linux el build oficial es un paquete Snap (no un tarball
-# suelto) y en macOS no hay build precompilado en absoluto.
+# resuelven con resvg_py/pypdfium2 sin binarios externos). En Windows, Ghostscript
+# es una dependencia OPCIONAL (Ajustes > Dependencias, no se descarga sola) --
+# ver core/setup/ghostscript_setup.py para el detalle de cómo se instala (el
+# release oficial es un instalador NSIS, no un zip portable, y desde la 10.01.0
+# no admite instalación silenciosa -- se extrae con 7-Zip sin ejecutarlo) y
+# core/tabs/image_tools/image_converter.py::_load_eps_ps para la conversión en
+# sí (EPS/PS -> PDF temporal vía Ghostscript, reusando el renderizador PDF ya
+# existente).
 #
-# TODO(futuro): en vez de bundlear, detectar un Ghostscript ya instalado por el
-# propio usuario en Linux/macOS (binario `gs` en el PATH -- típicamente a un
-# `apt install ghostscript` / `brew install ghostscript` de distancia) y habilitar
-# EPS/PS ahí si existe, sin que la app descargue/bundlee nada. Mismo criterio de
+# TODO(futuro): en Linux/macOS no hay build bundleable (Linux: paquete Snap, no
+# un tarball suelto; macOS: sin build precompilado) -- en vez de bundlear,
+# detectar un Ghostscript ya instalado por el propio usuario ahí (binario `gs`
+# en el PATH -- típicamente a un `apt install ghostscript` / `brew install
+# ghostscript` de distancia) y habilitar EPS/PS ahí si existe. Mismo criterio de
 # "no disponible en este SO" que ya usa is_upscaling_engine_installed() para los
 # motores sin build -- ver core/setup/models_setup.py.
 

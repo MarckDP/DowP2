@@ -30,6 +30,9 @@ from core.setup.wpc_setup import (
     get_local_version as wpc_local, get_latest_remote_version as wpc_remote,
     get_browser_display_name, detect_system_browser
 )
+from core.setup.ghostscript_setup import (
+    check_ghostscript, download_ghostscript, get_local_version as gs_local,
+)
 
 
 class UpdateCheckWorker(QThread):
@@ -1431,6 +1434,166 @@ class DenoCardPanel(QFrame):
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+# TARJETA 4: GHOSTSCRIPT (EPS/PS del Editor de Imagen -- opcional, solo Windows)
+# ═════════════════════════════════════════════════════════════════════════════
+
+class GhostscriptCardPanel(QFrame):
+    """Tarjeta dedicada a Ghostscript -- a diferencia de FFmpeg/yt-dlp/Deno (que
+    la app necesita siempre), esta es 100% opcional: solo hace falta si el
+    usuario quiere convertir archivos EPS/PS en el Editor de Imagen, y nunca se
+    descarga sola (ni acá ni al intentar convertir uno, ver
+    ImageToolsTab._confirm_ghostscript_if_needed, que siempre pregunta antes)."""
+    download_requested = Signal(str, object)  # "ghostscript", None
+
+    _TOOLTIP_GS = (
+        "Ghostscript es el intérprete de PostScript que permite convertir archivos\n"
+        "EPS/PS en el Editor de Imagen -- ningún formato más de DowP lo necesita.\n\n"
+        "Es opcional: si no lo instalás, todo lo demás sigue funcionando igual,\n"
+        "y al intentar convertir un EPS/PS se te va a ofrecer descargarlo en ese momento.\n\n"
+        "Disponible solo en Windows por ahora."
+    )
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("ghostscriptCardPanel")
+        self.dep_id = "ghostscript"
+        self.is_installed = False
+        self.local_ver = None
+        self._is_windows = platform.system() == "Windows"
+        self._build_ui()
+        self.check_status()
+
+    def _build_ui(self):
+        root = QVBoxLayout(self)
+        root.setContentsMargins(14, 12, 14, 12)
+        root.setSpacing(8)
+
+        top_row = QHBoxLayout()
+        top_row.setSpacing(8)
+
+        title_lbl = QLabel(self.tr("Ghostscript (EPS/PS del Editor de Imagen)"))
+        title_lbl.setStyleSheet("font-size: 14px; font-weight: bold; color: #EEEEEE;")
+        top_row.addWidget(title_lbl)
+
+        info_btn = QToolButton()
+        info_btn.setText("?")
+        info_btn.setFixedSize(20, 20)
+        info_btn.setStyleSheet(
+            "QToolButton { border: 1px solid #555; border-radius: 10px;"
+            " color: #AAA; font-size: 11px; background: #2a2a2a; }"
+            " QToolButton:hover { background: #3a3a3a; color: #FFF; }"
+        )
+        info_btn.setToolTip(self._TOOLTIP_GS)
+        top_row.addWidget(info_btn)
+
+        self._status_badge = QLabel(self.tr("Chequeando..."))
+        self._status_badge.setStyleSheet("font-weight: bold; font-size: 12px;")
+        top_row.addWidget(self._status_badge)
+
+        top_row.addStretch()
+
+        self._version_summary = QLabel(self.tr("Versión: Calculando..."))
+        self._version_summary.setStyleSheet("color: #AAAAAA; font-size: 12px;")
+        top_row.addWidget(self._version_summary)
+
+        root.addLayout(top_row)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet("color: #333;")
+        root.addWidget(sep)
+
+        bottom_row = QHBoxLayout()
+        bottom_row.setSpacing(12)
+
+        desc_lbl = QLabel(self.tr(
+            "Opcional -- solo hace falta para convertir archivos EPS/PS. El resto del Editor de Imagen no lo necesita."
+        ))
+        desc_lbl.setStyleSheet("color: #888888; font-size: 12px;")
+        desc_lbl.setWordWrap(True)
+        bottom_row.addWidget(desc_lbl, 1)
+
+        self._btn_action = QPushButton(self.tr("Descargar"))
+        self._btn_action.setCursor(Qt.PointingHandCursor)
+        self._btn_action.setMinimumWidth(110)
+        self._btn_action.clicked.connect(self._on_action_clicked)
+        bottom_row.addWidget(self._btn_action, 0, Qt.AlignVCenter)
+
+        root.addLayout(bottom_row)
+
+        self._progress_bar = QProgressBar()
+        self._progress_bar.setTextVisible(False)
+        self._progress_bar.setFixedHeight(4)
+        self._progress_bar.setRange(0, 100)
+        self._progress_bar.hide()
+        root.addWidget(self._progress_bar)
+
+        self._progress_msg = QLabel("")
+        self._progress_msg.setStyleSheet("color: #888888; font-size: 11px;")
+        self._progress_msg.hide()
+        root.addWidget(self._progress_msg)
+
+    def check_status(self):
+        self.is_installed = check_ghostscript()
+        self.local_ver = gs_local() if self.is_installed else None
+        self._update_ui_state()
+
+    def _update_ui_state(self):
+        if not self._is_windows:
+            self._status_badge.setText(self.tr("No disponible"))
+            self._status_badge.setStyleSheet("color: #888888; font-weight: bold; font-size: 12px;")
+            self._version_summary.setText(self.tr("Solo Windows por ahora"))
+            self._version_summary.setStyleSheet("color: #888888; font-size: 12px;")
+            self._btn_action.setText(self.tr("No disponible"))
+            self._btn_action.setDisabled(True)
+            self._btn_action.setStyleSheet("")
+            return
+
+        if self.is_installed:
+            self._status_badge.setText(self.tr("✓ Instalado"))
+            self._status_badge.setStyleSheet("color: #4CAF50; font-weight: bold; font-size: 12px;")
+            self._version_summary.setText(f"Versión: {self.local_ver}")
+            self._version_summary.setStyleSheet("color: #AAAAAA; font-size: 12px;")
+            self._btn_action.setText(self.tr("Reinstalar"))
+            self._btn_action.setDisabled(False)
+            self._btn_action.setStyleSheet("")
+        else:
+            self._status_badge.setText(self.tr("✗ Falta"))
+            self._status_badge.setStyleSheet("color: #F44336; font-weight: bold; font-size: 12px;")
+            self._version_summary.setText(self.tr("No instalado"))
+            self._version_summary.setStyleSheet("color: #F44336; font-size: 12px;")
+            self._btn_action.setText(self.tr("Descargar"))
+            self._btn_action.setDisabled(False)
+            self._btn_action.setStyleSheet("background-color: #007BFF; color: white; border: none; font-weight: bold;")
+
+    def _on_action_clicked(self):
+        self.set_downloading_state(True)
+        self.download_requested.emit(self.dep_id, None)
+
+    def set_downloading_state(self, is_downloading, message=""):
+        self._btn_action.setDisabled(is_downloading)
+        if is_downloading:
+            self._progress_bar.setRange(0, 100)
+            self._progress_bar.setValue(0)
+            self._progress_bar.show()
+            self._progress_msg.setText(message if message else self.tr("Iniciando..."))
+            self._progress_msg.show()
+            self._status_badge.setText(self.tr("Procesando"))
+            self._status_badge.setStyleSheet("color: #FFC107; font-weight: bold; font-size: 12px;")
+        else:
+            self._progress_bar.hide()
+            self._progress_msg.hide()
+            self._btn_action.setStyleSheet("")
+            self.check_status()
+
+    def update_progress_msg(self, msg):
+        self._progress_msg.setText(msg)
+
+    def update_numeric_progress(self, value):
+        self._progress_bar.setValue(value)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 # PÁGINA PRINCIPAL DEL GESTOR DE DEPENDENCIAS
 # ═════════════════════════════════════════════════════════════════════════════
 
@@ -1488,6 +1651,11 @@ class DependenciesPage(QWidget):
         self.deno_panel = DenoCardPanel()
         self.deno_panel.download_requested.connect(self.start_download)
         self.scroll_layout.addWidget(self.deno_panel)
+
+        # 4. Tarjeta Ghostscript (EPS/PS del Editor de Imagen -- opcional)
+        self.gs_panel = GhostscriptCardPanel()
+        self.gs_panel.download_requested.connect(self.start_download)
+        self.scroll_layout.addWidget(self.gs_panel)
 
         scroll_area.setWidget(scroll_content)
         layout.addWidget(scroll_area)
@@ -1584,6 +1752,8 @@ class DependenciesPage(QWidget):
                 channel = get_config().get("ytdlp_channel", "stable")
         elif dep_id == "deno":
             download_fn = download_deno
+        elif dep_id == "ghostscript":
+            download_fn = download_ghostscript
         else:
             return
 
@@ -1600,12 +1770,16 @@ class DependenciesPage(QWidget):
             self.ytdlp_pot_panel.update_ytdlp_numeric_progress(val)
         elif dep_id == "deno":
             self.deno_panel.update_numeric_progress(val)
+        elif dep_id == "ghostscript":
+            self.gs_panel.update_numeric_progress(val)
 
     def on_worker_progress(self, msg, dep_id):
         if dep_id == "ytdlp":
             self.ytdlp_pot_panel.update_ytdlp_progress_msg(msg)
         elif dep_id == "deno":
             self.deno_panel.update_progress_msg(msg)
+        elif dep_id == "ghostscript":
+            self.gs_panel.update_progress_msg(msg)
 
     def on_worker_finished(self, success, msg, dep_id):
         if dep_id in self.workers:
@@ -1625,7 +1799,9 @@ class DependenciesPage(QWidget):
                 except Exception as e:
                     logger.error(f"Error actualizando versión local de Deno: {e}")
             self.deno_panel.set_downloading_state(False)
-            
+        elif dep_id == "ghostscript":
+            self.gs_panel.set_downloading_state(False)
+
         if not success:
             QMessageBox.warning(self, self.tr("Error de Descarga"), f"{self.tr('Fallo al descargar')} {dep_id}:\n{msg}")
         else:

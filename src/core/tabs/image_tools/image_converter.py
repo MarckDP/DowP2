@@ -14,7 +14,7 @@ from PIL import Image, ImageOps
 
 from core.logger.logger_manager import logger
 from core.tabs.editing_media.editing_media_logic import RAW_EXTS
-from core.constants import INTERPOLATION_METHODS
+from core.constants import INTERPOLATION_METHODS, CANVAS_PRESET_SIZES
 
 # Registro de plugins de Pillow -- opcionales a propósito (mismo criterio que
 # CAN_SVG/CAN_PDF en el image_converter.py de DowP1): si faltan, solo se
@@ -104,6 +104,13 @@ class ImageConverter:
                 img = self._apply_ai_upscale(img, options, cancellation_event)
             if progress_callback:
                 progress_callback(80)
+
+            # Canvas (preset del menú, ajuste de lote) -- último paso antes de
+            # guardar, mismo orden que DowP1 (resize -> upscale IA -> canvas).
+            if options.get("canvas_enabled", False):
+                img = self._apply_canvas(img, options)
+            if progress_callback:
+                progress_callback(90)
 
             if output_format == "NO CONVERTIR":
                 self._save_passthrough(img, input_ext, output_path, options)
@@ -259,6 +266,76 @@ class ImageConverter:
             result = Image.open(temp_out)
             result.load()
             return result
+
+    def _apply_canvas(self, img, options: dict):
+        """Canvas como ajuste de LOTE (preset elegido en el popover, clic derecho) --
+        puerto directo de _apply_canvas_by_option/_calculate_canvas_position de
+        DowP1 (image_converter.pyc decompilado), PIL puro. Cada archivo del lote
+        adapta el mismo preset a su propio tamaño nativo -- no es una posición/
+        tamaño fijo, se recalcula acá por imagen. El Canvas editado a mano sobre el
+        archivo actualmente abierto (clic izquierdo, en vivo) es un concepto
+        separado -- ver la nota de Fase 3 en el plan, no pasa por acá."""
+        img_width, img_height = img.size
+        if img.mode != "RGBA":
+            img = img.convert("RGBA")
+
+        canvas_option = options.get("canvas_option", "Sin ajuste")
+        if canvas_option == "Añadir Margen Externo":
+            margin = int(options.get("canvas_margin", 100))
+            canvas_width, canvas_height = img_width + margin * 2, img_height + margin * 2
+        elif canvas_option == "Añadir Margen Interno":
+            margin = int(options.get("canvas_margin", 100))
+            canvas_width, canvas_height = img_width, img_height
+            new_width, new_height = max(1, img_width - margin * 2), max(1, img_height - margin * 2)
+            if new_width < img_width or new_height < img_height:
+                img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+                img_width, img_height = new_width, new_height
+        elif canvas_option in CANVAS_PRESET_SIZES:
+            canvas_width, canvas_height = CANVAS_PRESET_SIZES[canvas_option]
+        elif canvas_option == "Personalizado...":
+            canvas_width = int(options.get("canvas_width", img_width))
+            canvas_height = int(options.get("canvas_height", img_height))
+        else:
+            return img
+
+        if canvas_option not in ("Añadir Margen Externo", "Añadir Margen Interno"):
+            if img_width > canvas_width or img_height > canvas_height:
+                overflow_mode = options.get("canvas_overflow_mode", "Centrar (puede recortar)")
+                if overflow_mode == "Advertir y no procesar":
+                    raise Exception(
+                        f"La imagen ({img_width}×{img_height}) excede el canvas "
+                        f"({canvas_width}×{canvas_height})."
+                    )
+                elif overflow_mode == "Reducir hasta que quepa":
+                    scale = min(canvas_width / img_width, canvas_height / img_height)
+                    img = img.resize((int(img_width * scale), int(img_height * scale)), Image.Resampling.LANCZOS)
+                    img_width, img_height = img.size
+                elif overflow_mode in ("Recortar al canvas", "Centrar (puede recortar)"):
+                    left = max(0, (img_width - canvas_width) // 2)
+                    top = max(0, (img_height - canvas_height) // 2)
+                    img = img.crop((left, top, left + canvas_width, top + canvas_height))
+                    img_width, img_height = img.size
+
+        canvas = Image.new("RGBA", (canvas_width, canvas_height), (0, 0, 0, 0))
+        position = options.get("canvas_position", "Centro")
+        x, y = self._calculate_canvas_position(canvas_width, canvas_height, img_width, img_height, position)
+        canvas.paste(img, (x, y), img)
+        return canvas
+
+    def _calculate_canvas_position(self, canvas_w, canvas_h, img_w, img_h, position: str):
+        """Misma fórmula que canvas_popover.py::calc_position (duplicada a
+        propósito -- ese vive en gui/, core/ no depende de gui/)."""
+        position_map = {
+            "Centro": ("center", "center"), "Arriba Izquierda": ("left", "top"),
+            "Arriba Centro": ("center", "top"), "Arriba Derecha": ("right", "top"),
+            "Centro Izquierda": ("left", "center"), "Centro Derecha": ("right", "center"),
+            "Abajo Izquierda": ("left", "bottom"), "Abajo Centro": ("center", "bottom"),
+            "Abajo Derecha": ("right", "bottom"),
+        }
+        h_align, v_align = position_map.get(position, ("center", "center"))
+        x = 0 if h_align == "left" else (canvas_w - img_w) // 2 if h_align == "center" else canvas_w - img_w
+        y = 0 if v_align == "top" else (canvas_h - img_h) // 2 if v_align == "center" else canvas_h - img_h
+        return int(x), int(y)
 
     # ------------------------------------------------------------------
     # Guardado -- todo Pillow/img2pdf, sin binarios externos.

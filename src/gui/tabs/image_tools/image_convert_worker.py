@@ -31,10 +31,18 @@ class ImageConvertWorker(QThread):
     file_completed = Signal(str, str)         # input_path, output_path -- solo en éxito
     finished_signal = Signal(int, int)        # completados, total
 
-    def __init__(self, filepaths: list[str], options: dict, parent=None):
+    def __init__(self, filepaths: list[str], options: dict, titles: dict | None = None,
+                 source_overrides: dict[str, str] | None = None, parent=None):
         super().__init__(parent)
         self.filepaths = list(filepaths)
         self.options = options
+        self.titles = titles or {}
+        # Fase 3 -- formas/pincel/Canvas manual ya aplanados a un PNG temporal por
+        # ImageToolsTab._build_source_overrides (input_path original -> PNG con las
+        # ediciones "horneadas"); ese PNG es lo que en realidad se lee/convierte
+        # para esos archivos puntuales, el resto de la cola sigue leyendo del
+        # archivo original sin pasar por acá.
+        self.source_overrides = source_overrides or {}
         self.cancellation_event = threading.Event()
         self._converter = ImageConverter()
 
@@ -49,7 +57,17 @@ class ImageConvertWorker(QThread):
         else:
             ext = _EXT_BY_FORMAT.get(fmt, ".png")
 
-        filename = os.path.splitext(os.path.basename(input_path))[0] + ext
+        base_name = self.titles.get(input_path) or os.path.splitext(os.path.basename(input_path))[0]
+        # Reescalar IA: el nombre final siempre lleva la escala usada (ej. "_x4"),
+        # así se distingue el resultado sin tener que abrirlo -- mismo criterio que
+        # se charló con el usuario (solo escala, sin nombre de modelo -- eso puede
+        # quedar largo/feo, ver core/constants.py::UPSCAYL_MODELS_MAP).
+        if self.options.get("upscale_enabled", False):
+            scale = str(self.options.get("upscale_scale") or "").strip().lower().replace("x", "")
+            if scale:
+                base_name = f"{base_name}_x{scale}"
+        filename = base_name + ext
+
         output_folder = (self.options.get("output_folder") or "").strip()
         if output_folder and os.path.isdir(output_folder):
             return os.path.join(output_folder, filename)
@@ -85,7 +103,7 @@ class ImageConvertWorker(QThread):
             # resolve_conflict() ya renombró ese archivo a backup_path antes de que
             # lleguemos acá -- filepath ya no existe en ese momento, así que hay que
             # leer desde el backup en vez de desde filepath.
-            read_path = filepath
+            read_path = self.source_overrides.get(filepath, filepath)
             if backup_path and os.path.normpath(desired_path) == os.path.normpath(filepath):
                 read_path = backup_path
 

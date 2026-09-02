@@ -51,6 +51,12 @@ class ZoomableImageViewer(QGraphicsView):
     # -- Señales del modo Canvas (sin cambios de comportamiento) --
     margin_dragged = Signal(int)
     size_dragged = Signal(int, int)
+    # Sin payload -- "el usuario tocó el canvas a mano" (resize por handle o
+    # arrastre de la imagen), a diferencia de elegir un preset del popover (eso
+    # sigue siendo 100% configuración de lote, ver canvas_popover.py). Quien
+    # escuche esto usa get_canvas_state() para capturar el estado completo y
+    # guardarlo por archivo (ver ImageToolsTab._on_canvas_edited).
+    canvas_edited = Signal()
 
     # -- Señales del modo Capas --
     shape_created = Signal(object, str)       # QGraphicsItem, "rect"|"ellipse"|"line"
@@ -396,6 +402,21 @@ class ZoomableImageViewer(QGraphicsView):
         self._fit_canvas_into_view()
         self.viewport().update()
 
+    def get_canvas_state(self) -> dict | None:
+        """Inverso de apply_canvas_state() -- captura el estado actual para poder
+        guardarlo por archivo (ver ImageToolsTab._on_canvas_edited). None si no hay
+        imagen/canvas cargado."""
+        if self._pixmap_item is None or self._canvas_rect is None:
+            return None
+        transform = self._pixmap_item.transform()
+        return {
+            "canvas_rect": QRectF(self._canvas_rect),
+            "mode": self._canvas_mode,
+            "resizable": self._canvas_resizable,
+            "image_pos": self._pixmap_item.pos(),
+            "image_scale": (transform.m11(), transform.m22()),
+        }
+
     def _ensure_scene_covers(self, rect: QRectF):
         """Agranda sceneRect (nunca la achica) para que `rect` quede cómodamente
         adentro, con margen de paneo -- si no, Qt clampa el zoom/scroll a los límites
@@ -537,6 +558,10 @@ class ZoomableImageViewer(QGraphicsView):
         if self._interaction_mode == "canvas_edit" and (self._active_handle is not None or self._dragging_image):
             self._active_handle = None
             self._dragging_image = False
+            # Un solo disparo acá (no en cada _apply_canvas_resize/_resize_margin,
+            # que corren en cada mouseMove mientras se arrastra) -- "la interacción
+            # manual terminó, andá a leer el estado completo con get_canvas_state()".
+            self.canvas_edited.emit()
             return
         if self._interaction_mode == "layers_draw":
             handled = self._release_layers_draw()

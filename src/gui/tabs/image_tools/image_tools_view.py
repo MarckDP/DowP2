@@ -1,5 +1,7 @@
 # src/gui/tabs/image_tools/image_tools_view.py
 import os
+import shutil
+import tempfile
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QScrollArea, QApplication,
@@ -27,6 +29,7 @@ from gui.tabs.image_tools.canvas_popover import CanvasPopoverContent
 from gui.tabs.image_tools.resize_popover import ResizePopoverContent
 from gui.tabs.image_tools.convert_panel import ConvertPanel
 from gui.tabs.image_tools.image_convert_worker import ImageConvertWorker
+from gui.tabs.image_tools.canvas_flatten import build_flattened_image
 from gui.tabs.image_tools.layers.layer_model import Layer, LayerStack
 from gui.tabs.image_tools.layers.layers_panel import LayersPanel
 from gui.tabs.image_tools.layers.background_dialog import BackgroundDialog
@@ -84,6 +87,13 @@ class ImageToolsTab(QWidget):
         super().__init__()
         self._current_filepath = None
         self._compare_cache = _CompareCache()
+        # Fase 3 -- persistencia por archivo de formas/pincel (capas no-"image")
+        # y de un Canvas editado a mano (arrastre de handles/imagen, a diferencia
+        # de un preset del popover -- eso sigue siendo 100% de lote, ver
+        # canvas_popover.py). Clave = filepath. Ver _on_file_selected/_on_canvas_edited.
+        self._layer_snapshots: dict[str, list] = {}
+        self._canvas_overrides: dict[str, dict] = {}
+        self._flatten_temp_dir: str | None = None
         self._build_ui()
 
     def _build_ui(self):
@@ -261,10 +271,39 @@ class ImageToolsTab(QWidget):
         body_layout.setContentsMargins(0, 0, 0, 0)
         body_layout.setSpacing(8)
 
+        # Columna del preview: fila de Título/Copiar arriba + preview abajo -- se
+        # envuelve en su propio widget para que esa fila quede acotada al ancho del
+        # preview (no de todo body_row, que también incluye el panel derecho).
+        preview_column = QWidget()
+        preview_column_layout = QVBoxLayout(preview_column)
+        preview_column_layout.setContentsMargins(0, 0, 0, 0)
+        preview_column_layout.setSpacing(6)
+
+        title_row = QHBoxLayout()
+        title_row.setSpacing(6)
+        lbl_title = QLabel(self.tr("Título:"))
+        lbl_title.setObjectName("menuLabel")
+        title_row.addWidget(lbl_title)
+        self.entry_title = QLineEdit()
+        self.entry_title.setPlaceholderText(self.tr("Nombre del archivo de salida"))
+        self.entry_title.setEnabled(False)
+        self.entry_title.editingFinished.connect(self._on_title_edited)
+        title_row.addWidget(self.entry_title, 1)
+        self.btn_copy_result = QPushButton(self.tr("Copiar"))
+        self.btn_copy_result.setProperty("variant", "secondary")
+        self.btn_copy_result.setCursor(Qt.PointingHandCursor)
+        self.btn_copy_result.setToolTip(self.tr("Copiar la imagen resultante al portapapeles"))
+        self.btn_copy_result.setEnabled(False)
+        self.btn_copy_result.clicked.connect(self._on_copy_result_clicked)
+        title_row.addWidget(self.btn_copy_result)
+        preview_column_layout.addLayout(title_row)
+
         self.preview = PreviewContainerWidget()
         self.preview.set_fill_available_space(True)
         self.preview.set_zoomable(True)
-        body_layout.addWidget(self.preview, 1)
+        preview_column_layout.addWidget(self.preview, 1)
+
+        body_layout.addWidget(preview_column, 1)
 
         self.queue_content = self._build_queue_content()
         self.right_panel = CollapsiblePanel(
@@ -294,6 +333,9 @@ class ImageToolsTab(QWidget):
         self.canvas_popover_content.state_changed.connect(self._on_canvas_state_changed)
         viewer.margin_dragged.connect(self.canvas_popover_content.on_margin_dragged)
         viewer.size_dragged.connect(self.canvas_popover_content.on_size_dragged)
+        # "El usuario tocó el canvas a mano" -- Fase 3, guardarlo como override
+        # propio de ESTE archivo (no toca el preset de lote, ver canvas_popover.py).
+        viewer.canvas_edited.connect(self._on_canvas_edited)
 
         # Puente panel de Capas <-> visor: figuras/trazos creados en el visor se
         # registran como capas; seleccionar en el visor resalta la fila correspondiente.
@@ -458,6 +500,29 @@ class ImageToolsTab(QWidget):
             state["canvas_rect"], state["mode"], state["resizable"],
             state["image_pos"], state["image_scale"],
         )
+
+    def _snapshot_layers_for(self, filepath: str | None):
+        """Guarda las formas/trazos (capas no-"image") que tenga ACTUALMENTE el
+        visor bajo la clave `filepath` -- usado tanto al cambiar de selección
+        (_on_file_selected) como al exportar sin haber cambiado de fila
+        (_on_convert_clicked), mismo criterio en los dos casos."""
+        if not filepath:
+            return
+        non_base = [l for l in self.layer_stack.layers if l.kind != "image"]
+        if non_base:
+            self._layer_snapshots[filepath] = non_base
+        elif filepath in self._layer_snapshots:
+            del self._layer_snapshots[filepath]
+
+    def _on_canvas_edited(self):
+        """El usuario terminó de arrastrar un handle/la imagen del Canvas -- a
+        diferencia de elegir un preset del popover (eso sigue siendo de lote,
+        Fase 2), esto queda guardado solo para el archivo actualmente abierto."""
+        if not self._current_filepath:
+            return
+        state = self.preview.zoom_viewer.get_canvas_state()
+        if state is not None:
+            self._canvas_overrides[self._current_filepath] = state
 
     def _on_tool_toggled(self, key: str, checked: bool):
         """Maneja los 6 botones de herramienta (Seleccionar/Rectángulo/Elipse/Línea/
@@ -663,7 +728,19 @@ class ImageToolsTab(QWidget):
         return super().eventFilter(obj, event)
 
     def _on_file_selected(self, filepath: str):
+        old_filepath = self._current_filepath
         self._current_filepath = filepath
+        self._refresh_title_and_copy_button(filepath)
+
+        # Fase 3 -- antes de tocar nada, guardar las formas/trazos (capas no-
+        # "image") que tuviera el archivo que se estaba mirando hasta ahora. Se
+        # hace acá arriba de cualquier rama (y no solo antes de layer_stack.clear()
+        # más abajo) para cubrir también el caso de venir de/ir hacia un archivo ya
+        # convertido (vista de comparación, ver más abajo), que no pasa por ese
+        # clear(). El Canvas manual ya quedó guardado al vuelo en _on_canvas_edited,
+        # no hace falta repetirlo acá.
+        self._snapshot_layers_for(old_filepath)
+        self.layer_stack.clear()
 
         # Si este archivo ya tiene un resultado convertido, se muestra la
         # comparación antes/después en vez del editor normal -- mismo criterio que
@@ -681,11 +758,15 @@ class ImageToolsTab(QWidget):
                 self._compare_cache.put(filepath, cv.before_pixmap(), cv.after_pixmap())
             return
 
-        # El estado de Canvas (tamaño/margen/posición) y las capas dibujadas eran
-        # relativos a la imagen anterior -- resetear evita un overlay/capas con
-        # medidas o contenido que ya no tienen sentido para el archivo nuevo.
-        self.canvas_popover_content.reset_to_none()
-        self.layer_stack.clear()
+        # El Canvas NO se resetea a un estado fijo acá a propósito: desde que un
+        # preset del menú (clic derecho) pasó a ser una configuración de LOTE (ver
+        # canvas_popover_content.get_settings(), usada por Convertir para TODOS los
+        # archivos), resetearlo al cambiar de fila borraba esa elección apenas se
+        # miraba otro archivo. Si este archivo tiene un Canvas editado a mano
+        # (_canvas_overrides, Fase 3) se reaplica tal cual; si no, se llama sync()
+        # (no solo si el popover está abierto) para que el overlay se reajuste al
+        # tamaño nativo de CADA archivo con el mismo preset elegido -- visualmente
+        # confirma que "se aplica a todos, adaptado por archivo".
         if filepath:
             self.preview.show_image_preview(filepath)
             viewer = self.preview.zoom_viewer
@@ -703,13 +784,48 @@ class ImageToolsTab(QWidget):
             size = viewer.image_size()
             if size is not None:
                 self.canvas_popover_content.set_reference_image_size(size.width(), size.height())
-            if self.btn_canvas.is_open():
+            canvas_override = self._canvas_overrides.get(filepath)
+            if canvas_override is not None:
+                viewer.apply_canvas_state(
+                    canvas_override["canvas_rect"], canvas_override["mode"],
+                    canvas_override["resizable"], canvas_override["image_pos"],
+                    canvas_override["image_scale"],
+                )
+            else:
                 self.canvas_popover_content.sync()
             base_item = viewer.base_pixmap_item()
             if base_item is not None:
                 self.layer_stack.add_layer(Layer(self.tr("Imagen Base"), "image", base_item))
+            # Fase 3 -- reponer las formas/trazos que este archivo ya tenía.
+            for layer in self._layer_snapshots.get(filepath, []):
+                viewer.add_scene_item(layer.graphics_item)
+                self.layer_stack.add_layer(layer)
         else:
             self.preview.show_default_state()
+
+    def _refresh_title_and_copy_button(self, filepath: str):
+        """Título editable (default = nombre del archivo) y botón Copiar (solo
+        habilitado si ese archivo ya tiene un resultado convertido) -- se llama en
+        cada cambio de selección y también al completarse una conversión (ver
+        _on_convert_file_completed) para la fila que se está mirando en ese momento."""
+        has_file = bool(filepath)
+        self.entry_title.setEnabled(has_file)
+        self.entry_title.setText(self.image_queue.get_title(filepath) if has_file else "")
+        self.btn_copy_result.setEnabled(has_file and bool(self.image_queue.get_output_path(filepath)))
+
+    def _on_title_edited(self):
+        if self._current_filepath:
+            self.image_queue.set_title(self._current_filepath, self.entry_title.text())
+
+    def _on_copy_result_clicked(self):
+        if not self._current_filepath:
+            return
+        output_path = self.image_queue.get_output_path(self._current_filepath)
+        if not output_path:
+            return
+        pixmap = QPixmap(output_path)
+        if not pixmap.isNull():
+            QApplication.clipboard().setPixmap(pixmap)
 
     def _build_queue_content(self) -> QWidget:
         """Lista de imágenes (arriba) + panel "Convertir" con opciones de formato
@@ -892,6 +1008,38 @@ class ImageToolsTab(QWidget):
         is_valid = self.convert_panel.is_valid() if hasattr(self, "convert_panel") else True
         self.btn_convert.setEnabled(has_files and is_valid)
 
+    def _build_source_overrides(self, filepaths: list[str]) -> dict[str, str] | None:
+        """Aplana a un PNG temporal cada archivo del lote que tenga formas/pincel
+        guardados (self._layer_snapshots) o un Canvas editado a mano
+        (self._canvas_overrides) -- ImageConvertWorker leerá de ahí en vez del
+        archivo original para ESE archivo (ver source_overrides en
+        image_convert_worker.py); el resto de la cola sigue el camino normal, sin
+        pasar por acá. El pixmap base se recarga con preview.load_pixmap_for_path()
+        usando el mismo tamaño disponible que usó show_image_preview() al mostrar
+        cada archivo -- mismas coordenadas en las que quedaron dibujadas las formas."""
+        to_flatten = [
+            fp for fp in filepaths
+            if self._layer_snapshots.get(fp) or fp in self._canvas_overrides
+        ]
+        if not to_flatten:
+            return None
+
+        avail_w = max(50, self.preview.width() - 10)
+        avail_h = max(50, self.preview.height() - 10)
+        self._flatten_temp_dir = tempfile.mkdtemp(prefix="dowp_canvas_flatten_")
+        overrides = {}
+        for fp in to_flatten:
+            base_pixmap = self.preview.load_pixmap_for_path(fp, avail_w, avail_h)
+            if base_pixmap is None or base_pixmap.isNull():
+                continue
+            canvas_state = self._canvas_overrides.get(fp)
+            layers = self._layer_snapshots.get(fp, [])
+            image = build_flattened_image(base_pixmap, canvas_state, layers)
+            temp_path = os.path.join(self._flatten_temp_dir, f"{len(overrides)}.png")
+            if image.save(temp_path, "PNG"):
+                overrides[fp] = temp_path
+        return overrides or None
+
     def _on_convert_clicked(self):
         filepaths = self.image_queue.get_all_filepaths()
         if not filepaths or self._convert_worker is not None:
@@ -899,12 +1047,23 @@ class ImageToolsTab(QWidget):
         settings = {
             **self.resize_popover_content.get_settings(),
             **self.upscale_popover_content.get_settings(),
+            **self.canvas_popover_content.get_settings(),
             **self.convert_panel.get_settings(),
             "output_folder": self.entry_output_folder.text().strip(),
             "conflict_policy": self.combo_conflict_policy.currentData() or "conservar",
         }
 
-        self._convert_worker = ImageConvertWorker(filepaths, settings, parent=self)
+        # Fase 3 -- el archivo que se está mirando en este momento puede tener
+        # ediciones sin "confirmar" (nunca se cambió de fila para disparar el
+        # snapshot automático de _on_file_selected); se fuerza acá para que
+        # tampoco quede afuera del aplanado de abajo.
+        self._snapshot_layers_for(self._current_filepath)
+
+        titles = {fp: self.image_queue.get_title(fp) for fp in filepaths}
+        source_overrides = self._build_source_overrides(filepaths)
+        self._convert_worker = ImageConvertWorker(
+            filepaths, settings, titles=titles, source_overrides=source_overrides, parent=self,
+        )
         self._convert_worker.file_status_changed.connect(self._on_convert_file_status)
         self._convert_worker.file_completed.connect(self._on_convert_file_completed)
         self._convert_worker.finished_signal.connect(self._on_convert_finished)
@@ -945,6 +1104,9 @@ class ImageToolsTab(QWidget):
             self._on_file_selected(input_path)
 
     def _on_convert_finished(self, completed: int, total: int):
+        if self._flatten_temp_dir is not None:
+            shutil.rmtree(self._flatten_temp_dir, ignore_errors=True)
+            self._flatten_temp_dir = None
         self._convert_worker = None
         self.btn_convert_cancel.setVisible(False)
         self.btn_convert_cancel.setEnabled(True)

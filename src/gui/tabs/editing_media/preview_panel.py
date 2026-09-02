@@ -453,7 +453,7 @@ class PreviewContainerWidget(QFrame):
         avail_h = max(50, self.height() - 10)
 
         # GIF animado: se queda con su propio camino de QMovie (animación en vivo)
-        # -- NO pasa por _load_pixmap_for_path(), que para .gif solo devuelve el
+        # -- NO pasa por load_pixmap_for_path(), que para .gif solo devuelve el
         # primer frame como pixmap estático (pensado para show_compare_preview(),
         # donde no tiene sentido animar el "antes").
         if ext == ".gif":
@@ -473,22 +473,22 @@ class PreviewContainerWidget(QFrame):
                 return
 
         # Resto de formatos (vector/PDF-AI/PSD/RAW/EPS/ráster + fallback de imagen
-        # pesada): decodificación centralizada en _load_pixmap_for_path(), reusada
+        # pesada): decodificación centralizada en load_pixmap_for_path(), reusada
         # también por show_compare_preview() -- ver ese método para el detalle de
         # cada rama.
-        pix = self._load_pixmap_for_path(path, avail_w, avail_h)
+        pix = self.load_pixmap_for_path(path, avail_w, avail_h)
         if pix is not None:
             self._set_preview_image(pix, avail_w, avail_h)
         else:
-            # Caso normal: imagen pesada sin cache todavía -- _load_pixmap_for_path
+            # Caso normal: imagen pesada sin cache todavía -- load_pixmap_for_path
             # ya dejó pedida la generación async (ver _on_heavy_preview_ready, que
             # completa el display cuando esté lista); acá solo queda avisar mientras
             # tanto. (Caso extremo, casi inalcanzable: un EPS/PS totalmente
-            # ilegible -- ya quedó loggeado por _load_pixmap_for_path.)
+            # ilegible -- ya quedó loggeado por load_pixmap_for_path.)
             self.placeholder_label.setText(self.tr("Generando vista previa (imagen muy pesada)..."))
             self.placeholder_label.setStyleSheet("color: #999999; font-size: 12px;")
 
-    def _load_pixmap_for_path(self, path: str, avail_w: int, avail_h: int) -> QPixmap | None:
+    def load_pixmap_for_path(self, path: str, avail_w: int, avail_h: int) -> QPixmap | None:
         """Decodifica `path` a un QPixmap mostrable -- sin componer checkerboard/
         escalado final de display (eso lo hace _set_preview_image, o lo maneja el
         propio llamador en el caso de show_compare_preview). Extraído de
@@ -772,7 +772,7 @@ class PreviewContainerWidget(QFrame):
         """Vista "antes/después" con divisor arrastrable (ver CompareViewer) --
         `before_pixmap`/`after_pixmap`, si vienen dados, evitan recargar de disco
         (cache LRU en el llamador, ver ImageToolsTab._CompareCache). El "antes" pasa
-        por _load_pixmap_for_path (mismo manejo por formato que el preview normal --
+        por load_pixmap_for_path (mismo manejo por formato que el preview normal --
         vector/RAW/PSD/EPS); el "después" siempre es un ráster plano que ya escribió
         ImageConverter (PNG/JPG/WEBP/...), sin necesidad de manejo especial."""
         self.stop_media()
@@ -788,7 +788,7 @@ class PreviewContainerWidget(QFrame):
         avail_w = max(50, self.width() - 10)
         avail_h = max(50, self.height() - 10)
         if before_pixmap is None:
-            before_pixmap = self._load_pixmap_for_path(before_path, avail_w, avail_h)
+            before_pixmap = self.load_pixmap_for_path(before_path, avail_w, avail_h)
         if after_pixmap is None:
             after_pixmap = QPixmap(after_path)
 

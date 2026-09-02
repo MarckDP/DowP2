@@ -81,6 +81,10 @@ class ImageQueueWidget(QFrame):
         # get_output_path) -- lo usa ImageToolsTab para saber si mostrar la vista
         # de comparación antes/después al seleccionar una fila.
         self._output_paths = {}
+        # filepath -> título editado por el usuario (ver set_title/get_title) --
+        # nombre base (sin extensión) que va a usar ImageConvertWorker para el
+        # archivo de salida en vez del nombre original.
+        self._titles = {}
         self._init_ui()
 
         ThumbnailCacheManager.get_instance().thumbnail_loaded.connect(self._on_thumbnail_loaded)
@@ -325,6 +329,7 @@ class ImageQueueWidget(QFrame):
         self.tree.clear()
         self._items_by_path.clear()
         self._output_paths.clear()
+        self._titles.clear()
         self._update_counter()
         self.file_selected.emit("")
 
@@ -336,6 +341,7 @@ class ImageQueueWidget(QFrame):
                 self.files_list.remove(path)
             self._items_by_path.pop(path, None)
             self._output_paths.pop(path, None)
+            self._titles.pop(path, None)
             index = self.tree.indexOfTopLevelItem(item)
             self.tree.takeTopLevelItem(index)
         self._update_counter()
@@ -413,3 +419,15 @@ class ImageQueueWidget(QFrame):
 
     def get_output_path(self, filepath: str) -> str | None:
         return self._output_paths.get(filepath)
+
+    def set_title(self, filepath: str, title: str):
+        title = (title or "").strip()
+        if title:
+            self._titles[filepath] = title
+        else:
+            self._titles.pop(filepath, None)
+
+    def get_title(self, filepath: str) -> str:
+        """Título editado por el usuario, o el nombre base del archivo (sin
+        extensión) si nunca se tocó -- default razonable para el campo "Título"."""
+        return self._titles.get(filepath) or os.path.splitext(os.path.basename(filepath))[0]

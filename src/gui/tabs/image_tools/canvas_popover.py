@@ -279,6 +279,22 @@ class CanvasPopoverContent(QFrame):
         self.entry_width.blockSignals(False)
         self.entry_height.blockSignals(False)
 
+    def get_settings(self) -> dict:
+        """Mismo criterio que ResizePopoverContent/UpscalePopoverContent: junta la
+        configuración de LOTE (el preset elegido acá) para que ImageConverter la
+        aplique a cada archivo al convertir -- ver _apply_canvas() en
+        core/tabs/image_tools/image_converter.py. La edición visual en vivo
+        (state_changed/apply_canvas_state) es un concepto aparte, sin cambios acá."""
+        return {
+            "canvas_enabled": self.is_valid_selection(),
+            "canvas_option": self.combo_option.currentText(),
+            "canvas_margin": self._int_or(self.entry_margin.text(), 100),
+            "canvas_width": self._int_or(self.entry_width.text(), self._ref_w),
+            "canvas_height": self._int_or(self.entry_height.text(), self._ref_h),
+            "canvas_position": self.combo_position.currentText(),
+            "canvas_overflow_mode": self.combo_overflow.currentText(),
+        }
+
     def sync(self):
         """Reemite el estado actual -- llamar al reabrir el popover, por si cambió el
         tamaño de referencia de la imagen desde la última vez."""

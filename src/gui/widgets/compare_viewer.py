@@ -11,10 +11,10 @@ from PySide6.QtWidgets import (
     QGraphicsView, QGraphicsScene, QGraphicsItem, QGraphicsPixmapItem,
     QGraphicsRectItem, QLabel,
 )
-from PySide6.QtCore import Qt, QPointF
+from PySide6.QtCore import Qt, QPointF, QRectF
 from PySide6.QtGui import QPixmap, QPainter, QColor, QPen
 
-from gui.styles import get_theme_token
+from gui.styles import create_checkerboard_pixmap, get_theme_token
 
 _DIVIDER_GRAB_MARGIN = 8
 _HANDLE_RADIUS = 7
@@ -32,33 +32,19 @@ class CompareViewer(QGraphicsView):
         self.setRenderHint(QPainter.SmoothPixmapTransform)
         self.setRenderHint(QPainter.Antialiasing)
         self.setFrameShape(QGraphicsView.NoFrame)
-        self.setBackgroundBrush(QColor(get_theme_token('fondo_principal', '#0a0a0a')))
+        self._checker_tile = self._build_checker_tile()
+        self._dark_bg_color = QColor(get_theme_token('fondo_principal', '#0a0a0a'))
         self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
         self.setResizeAnchor(QGraphicsView.AnchorViewCenter)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setMouseTracking(True)
 
-        # after_item queda de base (siempre dibujado completo) -- before_item vive
-        # DENTRO de un rect invisible que lo recorta según el divisor, y se dibuja
-        # ENCIMA de la base en su región visible (0..divisor, el lado izquierdo) --
-        # truco estándar de Qt para "recortar" un item sin tocar el pixmap en
-        # memoria (evita redibujar un checkerboard/máscara a mano en cada frame,
-        # que era lo que hacía DowP1). Importante: el lado que efectivamente se ve
-        # (izquierda=Original/before, derecha=Resultado/after) tiene que coincidir
-        # con dónde _position_chips() pone cada chip -- si se invierte cuál de los
-        # dos queda "recortado", las etiquetas quedan al revés del contenido real.
-        #
-        # Ambos quedan además recortados a un rect propio del tamaño completo del
-        # lienzo compartido (_after_clip_item para el "después", _clip_rect_item ya
-        # existía para el "antes" salvo que ahora también fija su ANCHO completo
-        # cuando no hay arrastre) -- necesario porque set_images() escala cada
-        # imagen en modo "cover" (llena TODO el lienzo, recorta lo que sobra) en vez
-        # de "fit": con aspectos de imagen distintos (típico tras Canvas), un
-        # "fit" centrado deja huecos en los bordes por los que se veía la otra
-        # imagen por detrás, ignorando el divisor -- "cover" garantiza que cada
-        # lado cubre 100% del lienzo sin huecos, sea cual sea la posición del
-        # divisor.
+        # Recorte bilateral estricto vía QGraphicsRectItem con ItemClipsChildrenToShape:
+        # _clip_rect_item recorta a la izquierda del divisor (0..x) para el "Antes" (Original).
+        # _after_clip_item recorta a la derecha del divisor (x..w) para el "Después" (Resultado).
+        # Al estar aisladas en sus respectivas regiones, el resultado NUNCA se filtra por
+        # debajo de las transparencias o márgenes del original en el lado izquierdo.
         self._after_clip_item = QGraphicsRectItem()
         self._after_clip_item.setPen(Qt.NoPen)
         self._after_clip_item.setBrush(Qt.NoBrush)
@@ -114,6 +100,31 @@ class CompareViewer(QGraphicsView):
         self._lbl_before = self._make_chip()
         self._lbl_after = self._make_chip()
 
+    def _build_checker_tile(self) -> QPixmap:
+        square = 10
+        return create_checkerboard_pixmap(square * 2, square * 2, square)
+
+    def refresh_checker_theme(self):
+        """Llamar si el tema/tokens de color cambian en caliente."""
+        self._checker_tile = self._build_checker_tile()
+        self._dark_bg_color = QColor(get_theme_token('fondo_principal', '#0a0a0a'))
+        self.viewport().update()
+
+    def drawBackground(self, painter: QPainter, rect: QRectF):
+        """Fondo general oscuro con cuadrícula de transparencia sobre el área del lienzo."""
+        painter.save()
+        painter.resetTransform()
+        viewport_rect = self.viewport().rect()
+        painter.fillRect(viewport_rect, self._dark_bg_color)
+        if self._content_size is not None:
+            w, h = self._content_size
+            scene_rect = QRectF(0, 0, w, h)
+            content_vp = self.mapFromScene(scene_rect).boundingRect().intersected(viewport_rect)
+            if not content_vp.isEmpty():
+                painter.setClipRect(content_vp)
+                painter.drawTiledPixmap(viewport_rect, self._checker_tile)
+        painter.restore()
+
     def _make_chip(self) -> QLabel:
         lbl = QLabel(self)
         lbl.setStyleSheet(f"""
@@ -143,28 +154,18 @@ class CompareViewer(QGraphicsView):
         self._before_item.setPixmap(before_pixmap)
         self._after_item.setPixmap(after_pixmap)
 
-        # Lienzo compartido = unión de ambos tamaños. Si difieren (típico tras un
-        # resize/Canvas -- ya no solo upscale, donde el aspecto se preservaba y un
-        # solo factor de ancho alcanzaba), cada imagen se escala POR SU CUENTA en
-        # modo "cover" (máx de ambos ejes: cubre TODO el lienzo, recorta lo que
-        # sobra por fuera -- igual que object-fit:cover) y se centra. Antes era
-        # "fit" (mín de ambos ejes): preservaba el aspecto pero podía dejar
-        # márgenes sin cubrir en un eje, y por ahí se veía la OTRA imagen por
-        # detrás -- el divisor parecía "no hacer nada" en esa franja. "cover"
-        # garantiza cobertura completa de los dos lados en cualquier posición del
-        # divisor, a costa de recortar (nunca estirar) el excedente.
+        # Lienzo compartido = dimensión envolvente. Se usa ajuste proporcional "fit"
+        # (min de ambos ejes) para centrar sin recortar ni deformar la imagen.
         target_w, target_h = max(bw, aw), max(bh, ah)
         self._content_size = (target_w, target_h)
 
-        before_scale = max(target_w / bw, target_h / bh)
-        after_scale = max(target_w / aw, target_h / ah)
+        before_scale = min(target_w / bw, target_h / bh)
+        after_scale = min(target_w / aw, target_h / ah)
         self._before_item.setScale(before_scale)
         self._after_item.setScale(after_scale)
         self._before_item.setPos((target_w - bw * before_scale) / 2, (target_h - bh * before_scale) / 2)
         self._after_item.setPos((target_w - aw * after_scale) / 2, (target_h - ah * after_scale) / 2)
 
-        self._after_clip_item.setRect(0, 0, target_w, target_h)
-        self._clip_rect_item.setRect(0, 0, target_w, target_h)
         self._scene.setSceneRect(0, 0, target_w, target_h)
 
         self._lbl_before.setText(self.tr("Original: {0}×{1} px").format(bw, bh))
@@ -191,6 +192,8 @@ class CompareViewer(QGraphicsView):
         self._before_item.setPixmap(QPixmap())
         self._after_item.setPixmap(QPixmap())
         self._content_size = None
+        self._clip_rect_item.setRect(0, 0, 0, 0)
+        self._after_clip_item.setRect(0, 0, 0, 0)
         self._scene.setSceneRect(0, 0, 1, 1)
         self._lbl_before.hide()
         self._lbl_after.hide()
@@ -205,6 +208,7 @@ class CompareViewer(QGraphicsView):
         w, h = self._content_size
         x = w * self._divider_fraction
         self._clip_rect_item.setRect(0, 0, x, h)
+        self._after_clip_item.setRect(x, 0, max(0.0, w - x), h)
         self.viewport().update()
 
     def _divider_screen_x(self) -> float:

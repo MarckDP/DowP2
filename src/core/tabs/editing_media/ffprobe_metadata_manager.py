@@ -7,6 +7,7 @@ from PySide6.QtCore import QObject, Signal, QRunnable, QThreadPool, QMutex, QMut
 from core.logger.logger_manager import logger
 from core.utils.paths import get_cache_dir
 from core.setup.ffmpeg_setup import get_ffprobe_path, get_ffmpeg_dir, get_platform_info, check_ffmpeg
+from core.tabs.editing_media.editing_media_logic import RAW_EXTS
 
 CACHE_FILE = os.path.join(get_cache_dir(), "metadata_cache.json")
 
@@ -181,7 +182,7 @@ class FFprobeMetadataManager(QObject):
 
         if tipo == "imagen":
             ext = os.path.splitext(path)[1].lower()
-            if ext == ".svg":
+            if ext in (".svg", ".svgz"):
                 try:
                     from PySide6.QtSvg import QSvgRenderer
                     renderer = QSvgRenderer(path)
@@ -199,7 +200,7 @@ class FFprobeMetadataManager(QObject):
                     doc.load(path)
                     pages = doc.pageCount()
                     if pages > 0:
-                        sz = doc.pageSize(0)
+                        sz = doc.pagePointSize(0)
                         pag_txt = f"{pages} {'pág' if pages == 1 else 'págs'}"
                         if sz.isValid() and sz.width() > 0 and sz.height() > 0:
                             meta["resolución"] = f"{int(sz.width())}x{int(sz.height())} ({pag_txt})"
@@ -233,16 +234,40 @@ class FFprobeMetadataManager(QObject):
                 except Exception:
                     pass
 
+            elif ext in RAW_EXTS:
+                meta["video_codec"] = "RAW"
+                try:
+                    import rawpy
+                    with rawpy.imread(path) as raw:
+                        # .sizes da las dimensiones leyendo solo la cabecera -- sin
+                        # decodificar el thumbnail embebido ni revelar el RAW.
+                        meta["resolución"] = f"{raw.sizes.width}x{raw.sizes.height}"
+                except Exception:
+                    pass
+
             if not meta.get("resolución") or meta.get("resolución") == "-":
                 from PySide6.QtGui import QImageReader
                 try:
                     reader = QImageReader(path)
                     if reader.canRead():
                         sz = reader.size()
-                        meta["resolución"] = f"{sz.width()}x{sz.height()}"
-                        fmt = reader.format().data().decode('utf-8', errors='ignore').upper()
-                        if fmt:
-                            meta["video_codec"] = fmt
+                        if sz.width() > 0 and sz.height() > 0:
+                            meta["resolución"] = f"{sz.width()}x{sz.height()}"
+                            fmt = reader.format().data().decode('utf-8', errors='ignore').upper()
+                            if fmt:
+                                meta["video_codec"] = fmt
+                except Exception:
+                    pass
+
+            if not meta.get("resolución") or meta.get("resolución") == "-":
+                # Qt no pudo (formato sin plugin nativo -- JPEG2000, DDS, APNG, HEIC/HEIF
+                # una vez registrado pillow-heif). Pillow sí los sabe leer.
+                try:
+                    from PIL import Image
+                    with Image.open(path) as im:
+                        meta["resolución"] = f"{im.width}x{im.height}"
+                        if im.format:
+                            meta["video_codec"] = im.format
                 except Exception:
                     pass
         return meta

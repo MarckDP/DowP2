@@ -8,6 +8,7 @@ from PySide6.QtGui import QImage, QPixmap, QIcon, QImageReader, QPainter, QColor
 from core.logger.logger_manager import logger
 from core.setup.ffmpeg_setup import get_ffmpeg_dir, get_platform_info, check_ffmpeg
 from core.utils.paths import get_thumbnail_cache_dir
+from core.tabs.editing_media.editing_media_logic import RAW_EXTS
 from core.utils.media_task_pools import (
     get_background_pool,
     get_interactive_pool,
@@ -64,7 +65,37 @@ class ThumbnailRunnable(QRunnable):
         finally:
             self.manager._task_finished(self.file_path, self)
 
-def _make_multi_state_icon(pix: QPixmap) -> QIcon:
+class PreviewWorkerSignals(QObject):
+    """Señales para el trabajador de preview de alta resolución en segundo plano."""
+    finished = Signal(str, str)  # (file_path, preview_path)
+    failed = Signal(str)         # (file_path)
+
+class PreviewRunnable(QRunnable):
+    """Genera, con Pillow, una versión cacheada de resolución media para medios que
+    Qt no puede decodificar directo (superan su límite de asignación de memoria —
+    ver QImageReader.allocationLimit(), 256MB por defecto). Solo se dispara para el
+    archivo que el usuario tiene abierto en el visor ahora mismo, nunca en generación
+    masiva de fondo, así que siempre corre en el pool interactivo."""
+    def __init__(self, file_path: str, manager: "ThumbnailCacheManager"):
+        super().__init__()
+        self.file_path = file_path
+        self.manager = manager
+        self.signals = PreviewWorkerSignals()
+
+    def run(self):
+        try:
+            preview_path = self.manager._create_preview(self.file_path)
+            if preview_path and os.path.exists(preview_path) and os.path.getsize(preview_path) > 0:
+                self.signals.finished.emit(self.file_path, preview_path)
+            else:
+                self.signals.failed.emit(self.file_path)
+        except Exception as e:
+            logger.error(f"PreviewRunnable: Error procesando {self.file_path}: {e}")
+            self.signals.failed.emit(self.file_path)
+        finally:
+            self.manager._preview_task_finished(self.file_path, self)
+
+def _make_multi_state_icon(pix: QPixmap) -> QIcon:
     if pix.isNull():
         return QIcon()
     icon = QIcon()
@@ -79,6 +110,7 @@ class ThumbnailRunnable(QRunnable):
 class ThumbnailCacheManager(QObject):
     """Gestor de caché de miniaturas en disco y memoria (RAM) con cola optimizada."""
     thumbnail_loaded = Signal(str, str)  # (file_path, thumbnail_path)
+    preview_loaded = Signal(str, str)    # (file_path, preview_path)
 
     _instance = None
 
@@ -108,6 +140,12 @@ class ThumbnailCacheManager(QObject):
         # retorna, y también hace falta tener el objeto worker a mano para poder cancelarlo
         # con QThreadPool.tryTake() en purge_stale_background() si todavía no arrancó.
         self._active_workers: dict[str, set] = {}
+
+        # Estado equivalente para el segundo nivel de caché (preview de resolución
+        # media para medios pesados) -- separado del de miniaturas porque vive en su
+        # propio archivo en disco y solo se pide de forma interactiva.
+        self._pending_preview = set()
+        self._active_preview_workers: dict[str, set] = {}
 
     def _get_hash_key(self, file_path: str) -> str:
         """Genera un hash SHA256 único y lo mantiene en memoria para evitar os.stat repetidos."""
@@ -223,6 +261,69 @@ class ThumbnailCacheManager(QObject):
             if not workers:
                 self._active_workers.pop(file_path, None)
 
+    def get_cached_preview_path(self, file_path: str) -> str | None:
+        """Devuelve la ruta del preview cacheado en disco si ya existe y es válido."""
+        hash_key = self._get_hash_key(file_path)
+        target_path = os.path.join(CACHE_DIR, f"{hash_key}_preview.png")
+        if os.path.exists(target_path) and os.path.getsize(target_path) > 0:
+            return target_path
+        return None
+
+    def request_preview(self, file_path: str):
+        """Pide, sin bloquear, el preview cacheado de un archivo demasiado pesado
+        como para que Qt lo decodifique directo (ver PreviewRunnable). Si ya existe
+        en disco, emite `preview_loaded` de inmediato; si no, lo genera en el pool
+        interactivo y emite la señal cuando esté listo. Uso exclusivamente
+        interactivo (el archivo abierto ahora mismo en el visor) — nunca se llama
+        para generación masiva de fondo."""
+        cached = self.get_cached_preview_path(file_path)
+        if cached:
+            self.preview_loaded.emit(file_path, cached)
+            return
+        if file_path in self._pending_preview:
+            return
+        self._pending_preview.add(file_path)
+        worker = PreviewRunnable(file_path, self)
+        self._active_preview_workers.setdefault(file_path, set()).add(worker)
+        worker.signals.finished.connect(self._on_preview_worker_finished)
+        worker.signals.failed.connect(self._on_preview_worker_failed)
+        get_interactive_pool().start(worker, PRIORITY_INTERACTIVE)
+
+    def _on_preview_worker_finished(self, file_path: str, preview_path: str):
+        self.preview_loaded.emit(file_path, preview_path)
+
+    def _on_preview_worker_failed(self, file_path: str):
+        pass  # Sin caché de "fallidos" propia: request_preview() se puede reintentar sin costo (isNull de Qt ya filtró antes de llamar).
+
+    def _preview_task_finished(self, file_path: str, worker=None):
+        self._pending_preview.discard(file_path)
+        workers = self._active_preview_workers.get(file_path)
+        if workers is not None:
+            workers.discard(worker)
+            if not workers:
+                self._active_preview_workers.pop(file_path, None)
+
+    def _create_preview(self, file_path: str) -> str | None:
+        """Decodifica `file_path` completo con Pillow (sin el límite de asignación
+        artificial de Qt) y guarda una versión reducida (hasta 1600px de lado largo,
+        PNG para conservar transparencia) en la caché de disco. Se paga este costo
+        una sola vez por archivo — nunca se toca el original."""
+        target_path = os.path.join(CACHE_DIR, f"{self._get_hash_key(file_path)}_preview.png")
+        try:
+            from PIL import Image
+            with Image.open(file_path) as im:
+                # No-op en formatos que no sean JPEG; para JPEG deja que libjpeg
+                # decodifique directo en baja resolución en vez de a tamaño completo.
+                im.draft("RGB", (1600, 1600))
+                rgb_im = im.convert("RGBA")
+                rgb_im.thumbnail((1600, 1600), Image.Resampling.LANCZOS)
+                rgb_im.save(target_path, "PNG")
+            if os.path.exists(target_path) and os.path.getsize(target_path) > 0:
+                return target_path
+        except Exception as e:
+            logger.error(f"ThumbnailCacheManager: Error generando preview cacheado de {file_path}: {e}")
+        return None
+
     def purge_stale_background(self):
         """Cancela las tareas de fondo aún NO iniciadas para archivos que ya no son
         relevantes tras un cambio real de carpeta/colección/filtro/búsqueda (no una carga
@@ -256,7 +357,7 @@ class ThumbnailCacheManager(QObject):
         target_path = os.path.join(CACHE_DIR, f"{hash_key}.jpg")
         ext = os.path.splitext(file_path)[1].lower()
 
-        if ext == ".svg":
+        if ext in (".svg", ".svgz"):
             return self._generate_svg_thumbnail(file_path, target_path)
         elif ext in (".pdf", ".ai"):
             return self._generate_pdf_thumbnail(file_path, target_path)
@@ -264,6 +365,8 @@ class ThumbnailCacheManager(QObject):
             return self._generate_eps_thumbnail(file_path, target_path)
         elif ext == ".psd":
             return self._generate_psd_thumbnail(file_path, target_path)
+        elif ext in RAW_EXTS:
+            return self._generate_raw_thumbnail(file_path, target_path)
         elif media_type == "imagen":
             return self._generate_image_thumbnail(file_path, target_path)
         elif media_type == "video":
@@ -310,7 +413,7 @@ class ThumbnailCacheManager(QObject):
             doc = QPdfDocument()
             doc.load(src_path)
             if doc.pageCount() > 0:
-                page_size = doc.pageSize(0)
+                page_size = doc.pagePointSize(0)
                 if page_size.isValid() and page_size.width() > 0 and page_size.height() > 0:
                     w, h = page_size.width(), page_size.height()
                     scale = min(256.0 / w, 256.0 / h)
@@ -337,7 +440,23 @@ class ThumbnailCacheManager(QObject):
 
     def _generate_psd_thumbnail(self, src_path: str, target_path: str) -> str | None:
         try:
-            # 1. Intentar con QImageReader habitual
+            # 1. Recurso de thumbnail embebido por Photoshop (psd-tools). No compone capas
+            # ni decodifica los píxeles del documento: lee directamente la vista previa
+            # de baja resolución que Photoshop ya guarda dentro del archivo, así que su
+            # costo es independiente del número de capas o de la resolución del PSD.
+            try:
+                from psd_tools import PSDImage
+                psd = PSDImage.open(src_path)
+                embedded = psd.thumbnail()
+                if embedded is not None:
+                    rgb_im = embedded.convert('RGB')
+                    rgb_im.thumbnail((256, 256))
+                    rgb_im.save(target_path, "JPEG", quality=85)
+                    return target_path
+            except Exception:
+                pass
+
+            # 2. QImageReader habitual (gratis: falla al instante si Qt no tiene plugin PSD).
             reader = QImageReader(src_path)
             if reader.canRead():
                 img = reader.read()
@@ -353,7 +472,23 @@ class ThumbnailCacheManager(QObject):
                     if out_img.save(target_path, "JPG", 85):
                         return target_path
 
-            # 2. Intentar con FFmpeg (que decodifica PSD nativamente a máxima velocidad)
+            # 3. Pillow (in-process, sin costo de arranque de subproceso). Compone todas
+            # las capas del documento, por eso va antes de FFmpeg pero después del
+            # thumbnail embebido: solo se llega aquí si el PSD no traía vista previa
+            # guardada (poco común, pero pasa con archivos generados por otras herramientas).
+            try:
+                from PIL import Image
+                with Image.open(src_path) as im:
+                    im.thumbnail((256, 256))
+                    rgb_im = im.convert('RGB')
+                    rgb_im.save(target_path, "JPEG", quality=85)
+                    return target_path
+            except Exception:
+                pass
+
+            # 4. FFmpeg como último recurso: paga el costo de lanzar un proceso nuevo
+            # (arranque + posible escaneo de antivirus en Windows), así que solo vale la
+            # pena si los tres intentos anteriores fallaron.
             if check_ffmpeg():
                 info = get_platform_info()
                 ffmpeg_exe = os.path.join(get_ffmpeg_dir(), info["binary_name"])
@@ -381,19 +516,59 @@ class ThumbnailCacheManager(QObject):
                 process.communicate(timeout=6)
                 if os.path.exists(target_path) and os.path.getsize(target_path) > 0:
                     return target_path
-
-            # 3. Intentar con PIL / Pillow si está disponible
-            try:
-                from PIL import Image
-                with Image.open(src_path) as im:
-                    im.thumbnail((256, 256))
-                    rgb_im = im.convert('RGB')
-                    rgb_im.save(target_path, "JPEG", quality=85)
-                    return target_path
-            except Exception:
-                pass
         except Exception as e:
             logger.error(f"ThumbnailCacheManager: Error en miniatura PSD {src_path}: {e}")
+        return None
+
+    def _generate_raw_thumbnail(self, src_path: str, target_path: str) -> str | None:
+        """Miniatura de RAW de cámara (CR2/NEF/ARW/DNG/...). Casi todos los RAW traen un
+        preview JPEG (a veces casi resolución completa) embebido por la propia cámara --
+        leerlo con rawpy.extract_thumb() es órdenes de magnitud más rápido que revelar el
+        RAW completo (demosaico a resolución completa). El revelado completo
+        (raw.postprocess()) queda solo como último recurso para el puñado de archivos que
+        no traen ese preview embebido."""
+        try:
+            import rawpy
+            with rawpy.imread(src_path) as raw:
+                try:
+                    thumb = raw.extract_thumb()
+                    if thumb.format == rawpy.ThumbFormat.JPEG:
+                        import io
+                        from PIL import Image
+                        im = Image.open(io.BytesIO(thumb.data))
+                    elif thumb.format == rawpy.ThumbFormat.BITMAP:
+                        from PIL import Image
+                        im = Image.fromarray(thumb.data)
+                    else:
+                        im = None
+                except (rawpy.LibRawNoThumbnailError, rawpy.LibRawUnsupportedThumbnailError):
+                    im = None
+
+                if im is None:
+                    # Sin preview embebido (raro): revelar el RAW completo como último recurso.
+                    rgb = raw.postprocess(
+                        use_camera_wb=True, output_bps=8,
+                        output_color=rawpy.ColorSpace.sRGB,
+                        demosaic_algorithm=rawpy.DemosaicAlgorithm.AHD,
+                    )
+                    from PIL import Image
+                    im = Image.fromarray(rgb)
+
+            # El JPEG embebido viene en la orientación nativa del sensor, con un tag
+            # EXIF aparte indicando cómo rotarlo para verse derecho -- Pillow no lo
+            # aplica solo. Sin esto, las fotos tomadas en vertical salen de costado.
+            try:
+                from PIL import ImageOps
+                im = ImageOps.exif_transpose(im)
+            except Exception:
+                pass
+
+            rgb_im = im.convert("RGB")
+            rgb_im.thumbnail((256, 256))
+            rgb_im.save(target_path, "JPEG", quality=85)
+            return target_path
+        except Exception as e:
+            logger.error(f"ThumbnailCacheManager: Error en miniatura RAW {src_path}: {e}")
         return None
 
     def _generate_eps_thumbnail(self, src_path: str, target_path: str) -> str | None:
@@ -429,7 +604,7 @@ class ThumbnailCacheManager(QObject):
                 doc = QPdfDocument()
                 doc.load(src_path)
                 if doc.pageCount() > 0:
-                    sz = doc.pageSize(0)
+                    sz = doc.pagePointSize(0)
                     if sz.isValid() and sz.width() > 0:
                         scale = min(256.0 / sz.width(), 256.0 / sz.height())
                         render_w = max(1, int(sz.width() * scale))
@@ -547,11 +722,29 @@ class ThumbnailCacheManager(QObject):
             
             img = reader.read()
             if img.isNull():
-                return None
+                # Qt rechazó la imagen por superar su límite de asignación de memoria
+                # (QImageReader.allocationLimit(), 256MB por defecto) -- típico en PNG/
+                # TIFF muy grandes, que a diferencia de JPEG no soportan decodificar
+                # directo en baja resolución. Pillow no tiene ese techo artificial.
+                return self._generate_image_thumbnail_with_pillow(src_path, target_path)
             if img.save(target_path, "JPG", 85):
                 return target_path
         except Exception as e:
             logger.error(f"ThumbnailCacheManager: Error en miniatura de imagen {src_path}: {e}")
+        return None
+
+    def _generate_image_thumbnail_with_pillow(self, src_path: str, target_path: str) -> str | None:
+        """Respaldo para imágenes que Qt rechaza por ser demasiado grandes/pesadas."""
+        try:
+            from PIL import Image
+            with Image.open(src_path) as im:
+                im.draft("RGB", (256, 256))  # sin efecto salvo en JPEG; ahí evita decodificar a tamaño completo
+                rgb_im = im.convert("RGB")
+                rgb_im.thumbnail((256, 256))
+                rgb_im.save(target_path, "JPEG", quality=85)
+                return target_path
+        except Exception as e:
+            logger.error(f"ThumbnailCacheManager: Pillow tampoco pudo generar miniatura de {src_path}: {e}")
         return None
 
     def _generate_video_thumbnail(self, src_path: str, target_path: str) -> str | None:

@@ -5,10 +5,11 @@ from PySide6.QtWidgets import (
     QGraphicsScene, QGraphicsView
 )
 from PySide6.QtCore import Qt, QUrl, QSize, QSizeF, QRectF
-from PySide6.QtGui import QPixmap, QIcon, QPainter, QColor
+from PySide6.QtGui import QPixmap, QIcon, QPainter, QColor, QImage
 
 from core.logger.logger_manager import logger
 from core.utils.paths import get_src_dir
+from core.tabs.editing_media.editing_media_logic import RAW_EXTS
 from gui.styles import (
     get_theme_token,
     apply_player_play_button_style,
@@ -18,6 +19,7 @@ from gui.styles import (
 )
 from gui.tabs.editing_media.editing_media_icons import get_colored_svg_icon
 from gui.widgets.volume_control import VolumeControlWidget
+from gui.widgets.zoomable_image_viewer import ZoomableImageViewer
 
 try:
     from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
@@ -105,7 +107,14 @@ class PreviewContainerWidget(QFrame):
         
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self.setMinimumHeight(140)
-        
+        # Por defecto mantiene el alto tipo "reproductor" (ancho x 0.6) que usa el
+        # Gestor de Medios -- ver set_fill_available_space() para el modo usado por el
+        # Editor de Imagen, donde el preview debe ocupar 100% del espacio disponible.
+        self._fill_available_space = False
+        # Por defecto usa el QLabel estático de siempre (ajustado a la ventana) -- ver
+        # set_zoomable() para el modo con zoom/paneo interactivo del Editor de Imagen.
+        self._zoomable = False
+
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(0, 0, 0, 0)
         self.layout.setSpacing(0)
@@ -161,7 +170,12 @@ class PreviewContainerWidget(QFrame):
         self.placeholder_label.setWordWrap(True)
         self.placeholder_label.setVisible(False)
         self.layout.addWidget(self.placeholder_label, 1)
-        
+
+        # 2b. Visor con zoom/paneo (modo Editor de Imagen, ver set_zoomable())
+        self.zoom_viewer = ZoomableImageViewer()
+        self.zoom_viewer.setVisible(False)
+        self.layout.addWidget(self.zoom_viewer, 1)
+
         # 2. Widget de Video Real Integrado en Qt
         self.video_widget = None
         self.video_scene = None
@@ -272,15 +286,42 @@ class PreviewContainerWidget(QFrame):
             # cuya aplicación en caliente resultaba poco fiable con algunos backends: a veces
             # había que activar/desactivar el botón más de una vez para que surtiera efecto).
             self.media_player.mediaStatusChanged.connect(self._on_media_status_changed_loop)
-        
+
+        from core.tabs.editing_media.thumbnail_cache_manager import ThumbnailCacheManager
+        ThumbnailCacheManager.get_instance().preview_loaded.connect(self._on_heavy_preview_ready)
+
         self.show_default_state()
+
+    def set_fill_available_space(self, enabled: bool):
+        """Cambia entre el alto tipo "reproductor" (ancho x 0.6, usado por el Gestor de
+        Medios) y ocupar el 100% del alto que le da el layout, sin franjas vacías (usado
+        por el Editor de Imagen). Hay que llamarlo una sola vez tras crear el widget."""
+        self._fill_available_space = enabled
+        if enabled:
+            self.setMinimumHeight(0)
+            self.setMaximumHeight(16777215)  # QWIDGETSIZE_MAX -- deshace cualquier setFixedHeight previo
+            self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        else:
+            self.setMinimumHeight(140)
+            self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+
+    def set_zoomable(self, enabled: bool):
+        """Activa el visor con zoom (rueda del mouse) y paneo (arrastrar) para
+        imágenes ya decodificadas -- ver ZoomableImageViewer. Usado por el Editor de
+        Imagen; el Gestor de Medios deja esto en False (comportamiento de siempre:
+        QLabel estático ajustado a la ventana). Hay que llamarlo una sola vez tras
+        crear el widget."""
+        self._zoomable = enabled
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         w = self.width()
         if w > 0:
-            avail_h = int(w * 0.6)
-            self.setFixedHeight(avail_h)
+            if self._fill_available_space:
+                avail_h = self.height()
+            else:
+                avail_h = int(w * 0.6)
+                self.setFixedHeight(avail_h)
             if hasattr(self, "volume_control") and self.volume_control:
                 self.volume_control.set_slider_visible(w >= 280)
             if hasattr(self, "lbl_video_time") and self.lbl_video_time:
@@ -291,6 +332,22 @@ class PreviewContainerWidget(QFrame):
                 if orig_size.isValid() and not orig_size.isEmpty():
                     scaled_size = orig_size.scaled(max(50, w - 10), max(50, avail_h - 10), Qt.KeepAspectRatio)
                     movie.setScaledSize(scaled_size)
+            elif hasattr(self, "_current_base_pixmap") and self._current_base_pixmap and self.placeholder_label.isVisible():
+                # Reescala desde la imagen ya decodificada en memoria en vez de recargar
+                # el archivo con QPixmap(path): Qt no tiene loader nativo para .psd/.pdf/
+                # .ai/.eps, así que ese reload silenciosamente no hacía nada con esos
+                # formatos y la vista previa quedaba pegada al tamaño del primer render.
+                scaled = self._current_base_pixmap.scaled(
+                    max(50, w - 10),
+                    max(50, avail_h - 10),
+                    Qt.KeepAspectRatio,
+                    Qt.SmoothTransformation
+                )
+                bg = create_checkerboard_pixmap(scaled.width(), scaled.height(), square_size=10)
+                painter = QPainter(bg)
+                painter.drawPixmap(0, 0, scaled)
+                painter.end()
+                self.placeholder_label.setPixmap(bg)
             elif hasattr(self, "_current_image_path") and self._current_image_path and self.placeholder_label.isVisible():
                 pixmap = QPixmap(self._current_image_path)
                 if not pixmap.isNull():
@@ -307,6 +364,7 @@ class PreviewContainerWidget(QFrame):
     def stop_media(self):
         """Detiene cualquier reproducción de video o animación GIF activa."""
         self._current_image_path = None
+        self._current_base_pixmap = None
         if hasattr(self, "_current_movie") and self._current_movie:
             try:
                 self._current_movie.stop()
@@ -315,6 +373,9 @@ class PreviewContainerWidget(QFrame):
             self._current_movie = None
         if hasattr(self, "placeholder_label") and self.placeholder_label:
             self.placeholder_label.setMovie(None)
+        if hasattr(self, "zoom_viewer") and self.zoom_viewer:
+            self.zoom_viewer.clear()
+            self.zoom_viewer.setVisible(False)
 
         if self.media_player:
             try:
@@ -333,9 +394,39 @@ class PreviewContainerWidget(QFrame):
         self.placeholder_label.setVisible(False)
         self.placeholder_label.setPixmap(QPixmap())
 
+    def _set_preview_image(self, source, avail_w: int, avail_h: int) -> bool:
+        """Escala `source` (QPixmap o QImage) a `avail_w`x`avail_h`, lo compone sobre
+        el fondo de cuadrícula de transparencia y lo muestra. Cachea el pixmap base
+        sin escalar en `_current_base_pixmap` para que resizeEvent pueda reescalarlo
+        al agrandar/achicar el panel sin recurrir a QPixmap(path) (que no sabe releer
+        .psd/.pdf/.ai/.eps desde disco)."""
+        pix = source if isinstance(source, QPixmap) else QPixmap.fromImage(source)
+        if pix.isNull():
+            return False
+        self._current_base_pixmap = pix
+
+        if self._zoomable:
+            # Resolución completa, sin escalar/hornear checkerboard: el visor maneja
+            # su propio zoom/paneo y pinta el checkerboard él solo.
+            self.placeholder_label.setVisible(False)
+            self.zoom_viewer.setVisible(True)
+            self.zoom_viewer.set_pixmap(pix)
+            return True
+
+        self.zoom_viewer.setVisible(False)
+        self.placeholder_label.setVisible(True)
+        scaled = pix.scaled(avail_w, avail_h, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+        bg = create_checkerboard_pixmap(scaled.width(), scaled.height(), square_size=10)
+        painter = QPainter(bg)
+        painter.drawPixmap(0, 0, scaled)
+        painter.end()
+        self.placeholder_label.setPixmap(bg)
+        return True
+
     def show_image_preview(self, path: str):
         self.stop_media()
         self._current_image_path = path
+        self._current_base_pixmap = None
         if hasattr(self, "empty_state_widget"):
             self.empty_state_widget.setVisible(False)
         if self.video_widget:
@@ -368,7 +459,7 @@ class PreviewContainerWidget(QFrame):
                 return
 
         # 2. Renderizado vectorial dinámico para SVG
-        if ext == ".svg":
+        if ext in (".svg", ".svgz"):
             try:
                 from PySide6.QtSvg import QSvgRenderer
                 renderer = QSvgRenderer(path)
@@ -395,19 +486,13 @@ class PreviewContainerWidget(QFrame):
                 doc = QPdfDocument(self)
                 doc.load(path)
                 if doc.pageCount() > 0:
-                    sz = doc.pageSize(0)
+                    sz = doc.pagePointSize(0)
                     if sz.isValid() and sz.width() > 0 and sz.height() > 0:
                         scale = min(avail_w / sz.width(), avail_h / sz.height())
                         render_w = max(1, int(sz.width() * scale))
                         render_h = max(1, int(sz.height() * scale))
                         page_img = doc.render(0, QSize(render_w, render_h))
-                        if not page_img.isNull():
-                            pixmap = QPixmap.fromImage(page_img)
-                            bg = create_checkerboard_pixmap(pixmap.width(), pixmap.height(), square_size=10)
-                            painter = QPainter(bg)
-                            painter.drawPixmap(0, 0, pixmap)
-                            painter.end()
-                            self.placeholder_label.setPixmap(bg)
+                        if not page_img.isNull() and self._set_preview_image(page_img, avail_w, avail_h):
                             return
             except Exception as e:
                 logger.error(f"PreviewPanel: Error renderizando PDF/AI {path}: {e}")
@@ -415,32 +500,106 @@ class PreviewContainerWidget(QFrame):
         # 4. Renderizado para Photoshop (.psd)
         if ext == ".psd":
             try:
+                # 4.0 Thumbnail embebido por Photoshop (psd-tools): evita componer todas las
+                # capas del documento en el hilo de UI, que es lo que congela la vista previa
+                # más de un segundo en archivos con muchas capas.
+                try:
+                    from psd_tools import PSDImage
+                    psd = PSDImage.open(path)
+                    embedded = psd.thumbnail()
+                    if embedded is not None:
+                        rgb_im = embedded.convert("RGBA")
+                        data = rgb_im.tobytes("raw", "RGBA")
+                        qimg = QImage(data, rgb_im.width, rgb_im.height, rgb_im.width * 4, QImage.Format.Format_RGBA8888).copy()
+                        if self._set_preview_image(qimg, avail_w, avail_h):
+                            return
+                except Exception:
+                    pass
+
                 pixmap = QPixmap(path)
-                if not pixmap.isNull():
-                    scaled = pixmap.scaled(avail_w, avail_h, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-                    bg = create_checkerboard_pixmap(scaled.width(), scaled.height(), square_size=10)
-                    painter = QPainter(bg)
-                    painter.drawPixmap(0, 0, scaled)
-                    painter.end()
-                    self.placeholder_label.setPixmap(bg)
+                if not pixmap.isNull() and self._set_preview_image(pixmap, avail_w, avail_h):
                     return
-                # Intentar con Pillow si está disponible
-                from PIL import Image
-                with Image.open(path) as im:
-                    rgb_im = im.convert("RGBA")
-                    data = rgb_im.tobytes("raw", "RGBA")
-                    qimg = QImage(data, rgb_im.width, rgb_im.height, QImage.Format.Format_RGBA8888)
-                    pix = QPixmap.fromImage(qimg)
-                    if not pix.isNull():
-                        scaled = pix.scaled(avail_w, avail_h, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-                        bg = create_checkerboard_pixmap(scaled.width(), scaled.height(), square_size=10)
-                        painter = QPainter(bg)
-                        painter.drawPixmap(0, 0, scaled)
-                        painter.end()
-                        self.placeholder_label.setPixmap(bg)
-                        return
+                # Intentar con Pillow
+                try:
+                    from PIL import Image
+                    with Image.open(path) as im:
+                        rgb_im = im.convert("RGBA")
+                        data = rgb_im.tobytes("raw", "RGBA")
+                        qimg = QImage(data, rgb_im.width, rgb_im.height, rgb_im.width * 4, QImage.Format.Format_RGBA8888).copy()
+                        if self._set_preview_image(qimg, avail_w, avail_h):
+                            return
+                except Exception:
+                    pass
+
+                # Fallback con FFmpeg por tubería en memoria si Pillow no leyera el PSD
+                from core.setup.ffmpeg_setup import get_ffmpeg_dir, get_platform_info, check_ffmpeg
+                import subprocess
+                if check_ffmpeg():
+                    info = get_platform_info()
+                    ffmpeg_exe = os.path.join(get_ffmpeg_dir(), info["binary_name"])
+                    startupinfo = None
+                    if os.name == 'nt':
+                        startupinfo = subprocess.STARTUPINFO()
+                        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                    cmd = [
+                        ffmpeg_exe, "-hide_banner", "-loglevel", "error",
+                        "-i", path, "-vframes", "1",
+                        "-f", "image2pipe", "-vcodec", "bmp", "-"
+                    ]
+                    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, startupinfo=startupinfo)
+                    out, _ = proc.communicate(timeout=5)
+                    if out:
+                        img = QImage.fromData(out)
+                        if not img.isNull() and self._set_preview_image(img, avail_w, avail_h):
+                            return
             except Exception as e:
                 logger.error(f"PreviewPanel: Error renderizando PSD {path}: {e}")
+
+        # 4.5 Renderizado para RAW de cámara (.cr2, .nef, .arw, .dng, ...)
+        if ext in RAW_EXTS:
+            try:
+                import rawpy
+                with rawpy.imread(path) as raw:
+                    im = None
+                    try:
+                        thumb = raw.extract_thumb()
+                        if thumb.format == rawpy.ThumbFormat.JPEG:
+                            import io
+                            from PIL import Image
+                            im = Image.open(io.BytesIO(thumb.data))
+                        elif thumb.format == rawpy.ThumbFormat.BITMAP:
+                            from PIL import Image
+                            im = Image.fromarray(thumb.data)
+                    except (rawpy.LibRawNoThumbnailError, rawpy.LibRawUnsupportedThumbnailError):
+                        pass
+
+                    if im is None:
+                        # Sin preview embebido (raro): revelar el RAW completo como último
+                        # recurso. A propósito NO se reintenta en segundo plano si esto
+                        # también falla -- mismo criterio que PSD, sin reprocesado extra.
+                        rgb = raw.postprocess(
+                            use_camera_wb=True, output_bps=8,
+                            output_color=rawpy.ColorSpace.sRGB,
+                            demosaic_algorithm=rawpy.DemosaicAlgorithm.AHD,
+                        )
+                        from PIL import Image
+                        im = Image.fromarray(rgb)
+
+                # El JPEG embebido viene en la orientación nativa del sensor; sin
+                # aplicar su tag EXIF, las fotos tomadas en vertical salen de costado.
+                try:
+                    from PIL import ImageOps
+                    im = ImageOps.exif_transpose(im)
+                except Exception:
+                    pass
+
+                rgb_im = im.convert("RGB")
+                data = rgb_im.tobytes("raw", "RGB")
+                qimg = QImage(data, rgb_im.width, rgb_im.height, rgb_im.width * 3, QImage.Format.Format_RGB888).copy()
+                if self._set_preview_image(qimg, avail_w, avail_h):
+                    return
+            except Exception as e:
+                logger.error(f"PreviewPanel: Error renderizando RAW {path}: {e}")
 
         # 5. Preview para EPS / PS (PostScript)
         if ext in (".eps", ".ps"):
@@ -456,13 +615,7 @@ class PreviewContainerWidget(QFrame):
                             tiff_bytes = f.read(tiff_len)
                             if tiff_bytes:
                                 tiff_img = QImage.fromData(tiff_bytes)
-                                if not tiff_img.isNull():
-                                    scaled = tiff_img.scaled(avail_w, avail_h, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-                                    bg = create_checkerboard_pixmap(scaled.width(), scaled.height(), square_size=10)
-                                    painter = QPainter(bg)
-                                    painter.drawImage(0, 0, scaled)
-                                    painter.end()
-                                    self.placeholder_label.setPixmap(bg)
+                                if not tiff_img.isNull() and self._set_preview_image(tiff_img, avail_w, avail_h):
                                     return
 
                 # B. QPdfDocument (si el EPS contiene datos PDF/AI)
@@ -471,19 +624,13 @@ class PreviewContainerWidget(QFrame):
                     doc = QPdfDocument(self)
                     doc.load(path)
                     if doc.pageCount() > 0:
-                        sz = doc.pageSize(0)
+                        sz = doc.pagePointSize(0)
                         if sz.isValid() and sz.width() > 0:
                             scale = min(avail_w / sz.width(), avail_h / sz.height())
                             render_w = max(1, int(sz.width() * scale))
                             render_h = max(1, int(sz.height() * scale))
                             page_img = doc.render(0, QSize(render_w, render_h))
-                            if not page_img.isNull():
-                                pixmap = QPixmap.fromImage(page_img)
-                                bg = create_checkerboard_pixmap(pixmap.width(), pixmap.height(), square_size=10)
-                                painter = QPainter(bg)
-                                painter.drawPixmap(0, 0, pixmap)
-                                painter.end()
-                                self.placeholder_label.setPixmap(bg)
+                            if not page_img.isNull() and self._set_preview_image(page_img, avail_w, avail_h):
                                 return
                 except Exception:
                     pass
@@ -542,21 +689,37 @@ class PreviewContainerWidget(QFrame):
         # 5. Renderizado ráster estándar (PNG, JPG, WebP, etc.)
         pixmap = QPixmap(path)
         if not pixmap.isNull():
-            scaled = pixmap.scaled(
-                avail_w,
-                avail_h,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation
-            )
-            # Dibujar el patrón de ajedrez debajo de la imagen para mostrar transparencias claramente
-            bg = create_checkerboard_pixmap(scaled.width(), scaled.height(), square_size=10)
-            painter = QPainter(bg)
-            painter.drawPixmap(0, 0, scaled)
-            painter.end()
-            self.placeholder_label.setPixmap(bg)
+            self._set_preview_image(pixmap, avail_w, avail_h)
         else:
-            self.placeholder_label.setText(f"[ Error al cargar Imagen ]\n\n{os.path.basename(path)}")
-            self.placeholder_label.setStyleSheet("color: #ff6c6b; font-weight: bold; font-size: 13px;")
+            # Qt rechazó la imagen por superar su límite de asignación de memoria
+            # (imagen muy grande/pesada). Usar el preview cacheado por
+            # ThumbnailCacheManager (Pillow, sin ese límite) en vez de mostrar error.
+            self._show_heavy_image_preview(path, avail_w, avail_h)
+
+    def _show_heavy_image_preview(self, path: str, avail_w: int, avail_h: int):
+        """El original nunca se toca: esto solo alimenta el visor de DowP con una
+        versión reducida cacheada en disco (se genera una sola vez por archivo)."""
+        from core.tabs.editing_media.thumbnail_cache_manager import ThumbnailCacheManager
+        manager = ThumbnailCacheManager.get_instance()
+        cached = manager.get_cached_preview_path(path)
+        if cached:
+            pix = QPixmap(cached)
+            if self._set_preview_image(pix, avail_w, avail_h):
+                return
+        self.placeholder_label.setText("Generando vista previa (imagen muy pesada)...")
+        self.placeholder_label.setStyleSheet("color: #999999; font-size: 12px;")
+        manager.request_preview(path)
+
+    def _on_heavy_preview_ready(self, path: str, preview_path: str):
+        if path != self._current_image_path:
+            return
+        pix = QPixmap(preview_path)
+        if pix.isNull():
+            return
+        avail_w = max(50, self.width() - 10)
+        avail_h = max(50, self.height() - 10)
+        if self._set_preview_image(pix, avail_w, avail_h):
+            self.placeholder_label.setStyleSheet("")
 
     def show_video_preview(self, path: str):
         if self.video_widget and self.media_player:

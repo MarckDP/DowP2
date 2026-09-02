@@ -448,7 +448,6 @@ AI_MODEL_HOLDER = "Seleccione el modelo..."
 CANVAS_OPTIONS = [
     "Sin ajuste",
     "Añadir Margen Externo",
-    "Añadir Margen Interno",
     "Instagram Post (1080×1080)",
     "Instagram Story (1080×1920)",
     "YouTube Thumbnail (1280×720)",

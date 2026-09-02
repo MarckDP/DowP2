@@ -22,6 +22,16 @@ from core.utils.config_manager import get_config
 
 __version__ = "2.0.0"
 
+# Registrar el soporte de HEIC/HEIF en Pillow una sola vez al arrancar: pillow-heif no
+# se auto-registra solo con importarlo, hace falta este llamado explícito para que
+# Image.open() reconozca .heic/.heif (si no, Image.open() los rechaza igual que si la
+# librería no estuviera instalada).
+try:
+    import pillow_heif
+    pillow_heif.register_heif_opener()
+except ImportError:
+    pass
+
 from PySide6.QtCore import QObject, QEvent, Qt
 from PySide6.QtWidgets import QPushButton, QCheckBox, QRadioButton, QComboBox, QTabBar, QStyledItemDelegate
 

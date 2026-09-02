@@ -43,6 +43,14 @@ def get_app_data_dir() -> str:
     os.makedirs(app_dir, exist_ok=True)
     return app_dir
 
+def get_models_dir() -> str:
+    """Retorna bin/models (junto a bin/dependences), donde se instalan los modelos de
+    IA (rembg, motores de upscaling). A diferencia de las dependencias, los modelos
+    NUNCA se descargan solos al abrir la app -- solo cuando el usuario los pide."""
+    models_dir = os.path.join(os.path.dirname(get_src_dir()), "bin", "models")
+    os.makedirs(models_dir, exist_ok=True)
+    return models_dir
+
 def get_cache_dir() -> str:
     """Retorna el directorio principal de caché persistente de disco (ej. AppData/DowP2/cache)."""
     cache_dir = os.path.join(get_app_data_dir(), "cache")

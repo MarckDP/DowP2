@@ -140,6 +140,10 @@ args = [
     "--collect-all=Cryptodome",
     "--collect-all=brotli",
     "--collect-all=websockets",
+    "--collect-all=PIL",
+    "--collect-all=pillow_heif",
+    "--collect-all=psd_tools",
+    "--collect-all=rawpy",
 ]
 
 for mod in UNUSED_QT_MODULES:

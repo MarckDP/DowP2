@@ -369,8 +369,12 @@ class PreviewContainerWidget(QFrame):
             elif hasattr(self, "video_widget") and self.video_widget and self.video_widget.isVisible():
                 self.video_widget.refit()
 
-    def stop_media(self):
-        """Detiene cualquier reproducción de video o animación GIF activa."""
+    def stop_media(self, clear_zoom_viewer: bool = True):
+        """Detiene cualquier reproducción de video o animación GIF activa.
+        `clear_zoom_viewer=False` (usado por show_compare_preview()) solo lo
+        oculta sin vaciar su escena -- preserva las formas/pincel/Canvas en vivo
+        del Editor de Imagen para poder volver con show_zoom_viewer_only(), ver
+        ImageToolsTab._on_compare_toggled."""
         self._current_image_path = None
         self._current_base_pixmap = None
         if hasattr(self, "_current_movie") and self._current_movie:
@@ -382,7 +386,8 @@ class PreviewContainerWidget(QFrame):
         if hasattr(self, "placeholder_label") and self.placeholder_label:
             self.placeholder_label.setMovie(None)
         if hasattr(self, "zoom_viewer") and self.zoom_viewer:
-            self.zoom_viewer.clear()
+            if clear_zoom_viewer:
+                self.zoom_viewer.clear()
             self.zoom_viewer.setVisible(False)
         if hasattr(self, "compare_viewer") and self.compare_viewer:
             self.compare_viewer.clear()
@@ -775,7 +780,7 @@ class PreviewContainerWidget(QFrame):
         por load_pixmap_for_path (mismo manejo por formato que el preview normal --
         vector/RAW/PSD/EPS); el "después" siempre es un ráster plano que ya escribió
         ImageConverter (PNG/JPG/WEBP/...), sin necesidad de manejo especial."""
-        self.stop_media()
+        self.stop_media(clear_zoom_viewer=False)
         self._current_image_path = before_path
         if hasattr(self, "empty_state_widget"):
             self.empty_state_widget.setVisible(False)
@@ -801,6 +806,16 @@ class PreviewContainerWidget(QFrame):
 
         self.compare_viewer.setVisible(True)
         self.compare_viewer.set_images(before_pixmap, after_pixmap)
+
+    def show_zoom_viewer_only(self):
+        """Vuelve a mostrar el editor sin recargar la imagen ni tocar su escena --
+        usado para volver desde show_compare_preview() (ver
+        ImageToolsTab._on_compare_toggled) preservando el estado en vivo tal cual
+        estaba, a diferencia de show_image_preview() que sí recarga de disco."""
+        if hasattr(self, "empty_state_widget"):
+            self.empty_state_widget.setVisible(False)
+        self.compare_viewer.setVisible(False)
+        self.zoom_viewer.setVisible(True)
 
     def _on_heavy_preview_ready(self, path: str, preview_path: str):
         if path != self._current_image_path:

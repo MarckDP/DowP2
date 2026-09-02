@@ -66,6 +66,14 @@ class _CompareCache:
         self._order.append(filepath)
         self._entries[filepath] = (before, after)
 
+    def invalidate(self, filepath: str):
+        """Descarta el par antes/después cacheado de `filepath` -- se llama al
+        registrar un output_path NUEVO para un archivo (reconversión), para que
+        Comparar no muestre el resultado anterior ya pisado en disco."""
+        self._entries.pop(filepath, None)
+        if filepath in self._order:
+            self._order.remove(filepath)
+
 
 class ImageToolsTab(QWidget):
     """Editor de Imagen.
@@ -94,6 +102,12 @@ class ImageToolsTab(QWidget):
         self._layer_snapshots: dict[str, list] = {}
         self._canvas_overrides: dict[str, dict] = {}
         self._flatten_temp_dir: str | None = None
+        # Filepath -> si el resultado ya convertido de ese archivo usó IA
+        # (reescalado por ahora, ver _on_convert_file_completed -- a futuro también
+        # Eliminar Fondo cuando tenga ejecución conectada) -- determina si Comparar
+        # arranca activado por defecto al mirar ese archivo (ver _on_file_selected).
+        self._files_with_ai_edit: dict[str, bool] = {}
+        self._active_convert_settings: dict | None = None
         self._build_ui()
 
     def _build_ui(self):
@@ -289,6 +303,18 @@ class ImageToolsTab(QWidget):
         self.entry_title.setEnabled(False)
         self.entry_title.editingFinished.connect(self._on_title_edited)
         title_row.addWidget(self.entry_title, 1)
+        # Toggle -- por defecto SIEMPRE se ve el editor (formas/pincel/Canvas
+        # siguen visibles y editables incluso después de convertir, ver
+        # _on_file_selected/_show_editable_view); la comparación antes/después
+        # queda como vista explícita bajo demanda, no como estado permanente.
+        self.btn_compare_result = QPushButton(self.tr("Comparar"))
+        self.btn_compare_result.setProperty("variant", "secondary")
+        self.btn_compare_result.setCursor(Qt.PointingHandCursor)
+        self.btn_compare_result.setToolTip(self.tr("Ver comparación antes/después del resultado"))
+        self.btn_compare_result.setCheckable(True)
+        self.btn_compare_result.setEnabled(False)
+        self.btn_compare_result.toggled.connect(self._on_compare_toggled)
+        title_row.addWidget(self.btn_compare_result)
         self.btn_copy_result = QPushButton(self.tr("Copiar"))
         self.btn_copy_result.setProperty("variant", "secondary")
         self.btn_copy_result.setCursor(Qt.PointingHandCursor)
@@ -495,6 +521,16 @@ class ImageToolsTab(QWidget):
         self.selected_canvas_option = option if is_valid else None
 
     def _on_canvas_state_changed(self, state: dict):
+        # El popover (combo/campos) volvió a ser la fuente de verdad para el
+        # archivo actual -- si tenía un override manual guardado (arrastre de
+        # handle/imagen, Fase 3), se descarta: elegir un preset o tocar un campo
+        # es "quiero esto en vez de mi ajuste a mano", no "sumale esto a mi
+        # ajuste a mano". Sin este descarte, _build_source_overrides seguía
+        # aplicando el override viejo al convertir aunque el editor mostrara en
+        # pantalla el preset nuevo (bug reportado: "salió con el ajuste de antes
+        # sumando las opciones nuevas").
+        if self._current_filepath:
+            self._canvas_overrides.pop(self._current_filepath, None)
         viewer = self.preview.zoom_viewer
         viewer.apply_canvas_state(
             state["canvas_rect"], state["mode"], state["resizable"],
@@ -733,31 +769,60 @@ class ImageToolsTab(QWidget):
         self._refresh_title_and_copy_button(filepath)
 
         # Fase 3 -- antes de tocar nada, guardar las formas/trazos (capas no-
-        # "image") que tuviera el archivo que se estaba mirando hasta ahora. Se
-        # hace acá arriba de cualquier rama (y no solo antes de layer_stack.clear()
-        # más abajo) para cubrir también el caso de venir de/ir hacia un archivo ya
-        # convertido (vista de comparación, ver más abajo), que no pasa por ese
-        # clear(). El Canvas manual ya quedó guardado al vuelo en _on_canvas_edited,
-        # no hace falta repetirlo acá.
+        # "image") que tuviera el archivo que se estaba mirando hasta ahora.
+        # El Canvas manual ya quedó guardado al vuelo en _on_canvas_edited, no
+        # hace falta repetirlo acá.
         self._snapshot_layers_for(old_filepath)
         self.layer_stack.clear()
 
-        # Si este archivo ya tiene un resultado convertido, se muestra la
-        # comparación antes/después en vez del editor normal -- mismo criterio que
-        # DowP1 (puramente por selección, sin botón aparte): no tiene sentido
-        # dibujar/editar sobre un archivo ya procesado, así que ni siquiera se arma
-        # el puente Canvas/Capas de más abajo en ese caso.
-        output_path = self.image_queue.get_output_path(filepath) if filepath else None
-        if output_path:
-            before_pix, after_pix = self._compare_cache.get(filepath)
-            self.preview.show_compare_preview(filepath, output_path, before_pix, after_pix)
-            if before_pix is None or after_pix is None:
-                # Cache miss -- preview_panel ya cargó de disco/re-renderizó; se
-                # guardan los pixmaps recién usados para la próxima selección.
-                cv = self.preview.compare_viewer
-                self._compare_cache.put(filepath, cv.before_pixmap(), cv.after_pixmap())
+        # A diferencia del diseño anterior (y de DowP1), un archivo ya convertido
+        # NO pasa a mostrar la comparación antes/después de forma permanente --
+        # el editor (con las formas/pincel/Canvas del usuario) sigue siendo la
+        # vista por defecto, como en Photoshop: convertís y podés seguir editando.
+        # Comparar es una acción explícita (ver btn_compare_result/
+        # _on_compare_toggled)... EXCEPTO si el resultado de este archivo incluyó
+        # IA (reescalado por ahora, ver _files_with_ai_edit/
+        # _on_convert_file_completed -- a futuro también Eliminar Fondo, cuando
+        # tenga su ejecución conectada): ahí Comparar arranca activado, porque ver
+        # el antes/después es lo primero que se quiere confirmar de un resultado
+        # generado por IA.
+        self._show_editable_view(filepath)
+        auto_compare = (
+            bool(filepath)
+            and bool(self.image_queue.get_output_path(filepath))
+            and self._files_with_ai_edit.get(filepath, False)
+        )
+        self.btn_compare_result.blockSignals(True)
+        self.btn_compare_result.setChecked(auto_compare)
+        self.btn_compare_result.blockSignals(False)
+        if auto_compare:
+            self._show_compare_view(filepath)
+
+    def _show_editable_view(self, filepath: str):
+        """Carga el editor normal (imagen + formas/pincel/Canvas restaurados) para
+        `filepath` -- llamado desde _on_file_selected y también al destildar
+        Comparar (_on_compare_toggled) para volver desde la vista de comparación
+        sin perder nada de lo ya restaurado."""
+        if not filepath:
+            self.preview.show_default_state()
             return
 
+        self.preview.show_image_preview(filepath)
+        viewer = self.preview.zoom_viewer
+        # show_image_preview() vuelve a cargar el pixmap del visor -- eso ya deja
+        # el canvas inicializado a su tamaño nativo (como borde de referencia) y
+        # el modo en "pan" por su cuenta (ver ZoomableImageViewer._reset_edit_state);
+        # acá solo hace falta reaplicar la herramienta que estuviera activa.
+        current_tool = self._current_tool_key()
+        if current_tool == "canvas":
+            viewer.set_interaction_mode("canvas_edit")
+        else:
+            viewer.set_interaction_mode("layers_draw")
+            viewer.set_active_tool(current_tool)
+            self.layers_panel.set_active_tool_ui(current_tool)
+        size = viewer.image_size()
+        if size is not None:
+            self.canvas_popover_content.set_reference_image_size(size.width(), size.height())
         # El Canvas NO se resetea a un estado fijo acá a propósito: desde que un
         # preset del menú (clic derecho) pasó a ser una configuración de LOTE (ver
         # canvas_popover_content.get_settings(), usada por Convertir para TODOS los
@@ -767,51 +832,65 @@ class ImageToolsTab(QWidget):
         # (no solo si el popover está abierto) para que el overlay se reajuste al
         # tamaño nativo de CADA archivo con el mismo preset elegido -- visualmente
         # confirma que "se aplica a todos, adaptado por archivo".
-        if filepath:
-            self.preview.show_image_preview(filepath)
-            viewer = self.preview.zoom_viewer
-            # show_image_preview() vuelve a cargar el pixmap del visor -- eso ya deja
-            # el canvas inicializado a su tamaño nativo (como borde de referencia) y
-            # el modo en "pan" por su cuenta (ver ZoomableImageViewer._reset_edit_state);
-            # acá solo hace falta reaplicar la herramienta que estuviera activa.
-            current_tool = self._current_tool_key()
-            if current_tool == "canvas":
-                viewer.set_interaction_mode("canvas_edit")
-            else:
-                viewer.set_interaction_mode("layers_draw")
-                viewer.set_active_tool(current_tool)
-                self.layers_panel.set_active_tool_ui(current_tool)
-            size = viewer.image_size()
-            if size is not None:
-                self.canvas_popover_content.set_reference_image_size(size.width(), size.height())
-            canvas_override = self._canvas_overrides.get(filepath)
-            if canvas_override is not None:
-                viewer.apply_canvas_state(
-                    canvas_override["canvas_rect"], canvas_override["mode"],
-                    canvas_override["resizable"], canvas_override["image_pos"],
-                    canvas_override["image_scale"],
-                )
-            else:
-                self.canvas_popover_content.sync()
-            base_item = viewer.base_pixmap_item()
-            if base_item is not None:
-                self.layer_stack.add_layer(Layer(self.tr("Imagen Base"), "image", base_item))
-            # Fase 3 -- reponer las formas/trazos que este archivo ya tenía.
-            for layer in self._layer_snapshots.get(filepath, []):
-                viewer.add_scene_item(layer.graphics_item)
-                self.layer_stack.add_layer(layer)
+        canvas_override = self._canvas_overrides.get(filepath)
+        if canvas_override is not None:
+            viewer.apply_canvas_state(
+                canvas_override["canvas_rect"], canvas_override["mode"],
+                canvas_override["resizable"], canvas_override["image_pos"],
+                canvas_override["image_scale"],
+            )
         else:
-            self.preview.show_default_state()
+            self.canvas_popover_content.sync()
+        base_item = viewer.base_pixmap_item()
+        if base_item is not None:
+            self.layer_stack.add_layer(Layer(self.tr("Imagen Base"), "image", base_item))
+        # Fase 3 -- reponer las formas/trazos que este archivo ya tenía.
+        for layer in self._layer_snapshots.get(filepath, []):
+            viewer.add_scene_item(layer.graphics_item)
+            self.layer_stack.add_layer(layer)
+
+    def _show_compare_view(self, filepath: str):
+        """Muestra la comparación antes/después de `filepath` -- usado tanto por el
+        toggle manual (_on_compare_toggled) como por la activación automática
+        cuando el trabajo incluyó IA (ver _files_with_ai_edit)."""
+        output_path = self.image_queue.get_output_path(filepath)
+        if not output_path:
+            return
+        before_pix, after_pix = self._compare_cache.get(filepath)
+        self.preview.show_compare_preview(filepath, output_path, before_pix, after_pix)
+        if before_pix is None or after_pix is None:
+            # Cache miss -- preview_panel ya cargó de disco/re-renderizó; se
+            # guardan los pixmaps recién usados para la próxima vez.
+            cv = self.preview.compare_viewer
+            self._compare_cache.put(filepath, cv.before_pixmap(), cv.after_pixmap())
+
+    def _on_compare_toggled(self, checked: bool):
+        """Comparar (título/botones, ver _build_ui) -- vista bajo demanda, no
+        permanente: destildar vuelve al editor tal cual estaba (_show_editable_view
+        reaplica las formas/Canvas restauradas, no se pierde nada)."""
+        filepath = self._current_filepath
+        if not filepath:
+            return
+        if checked:
+            self._show_compare_view(filepath)
+        else:
+            # No se recarga nada -- la escena del editor (formas/pincel/Canvas)
+            # nunca se tocó mientras se mostraba Comparar (show_compare_preview()
+            # solo oculta el widget, no vacía la escena), así que alcanza con
+            # volver a mostrarlo tal cual estaba.
+            self.preview.show_zoom_viewer_only()
 
     def _refresh_title_and_copy_button(self, filepath: str):
-        """Título editable (default = nombre del archivo) y botón Copiar (solo
-        habilitado si ese archivo ya tiene un resultado convertido) -- se llama en
-        cada cambio de selección y también al completarse una conversión (ver
-        _on_convert_file_completed) para la fila que se está mirando en ese momento."""
+        """Título editable (default = nombre del archivo) y botones Copiar/Comparar
+        (solo habilitados si ese archivo ya tiene un resultado convertido) -- se
+        llama en cada cambio de selección y también al completarse una conversión
+        (ver _on_convert_file_completed) para la fila que se está mirando."""
         has_file = bool(filepath)
+        has_output = has_file and bool(self.image_queue.get_output_path(filepath))
         self.entry_title.setEnabled(has_file)
         self.entry_title.setText(self.image_queue.get_title(filepath) if has_file else "")
-        self.btn_copy_result.setEnabled(has_file and bool(self.image_queue.get_output_path(filepath)))
+        self.btn_copy_result.setEnabled(has_output)
+        self.btn_compare_result.setEnabled(has_output)
 
     def _on_title_edited(self):
         if self._current_filepath:
@@ -1061,6 +1140,9 @@ class ImageToolsTab(QWidget):
 
         titles = {fp: self.image_queue.get_title(fp) for fp in filepaths}
         source_overrides = self._build_source_overrides(filepaths)
+        # Para saber, al completarse cada archivo, si ESTE lote usó IA -- ver
+        # _on_convert_file_completed/_files_with_ai_edit.
+        self._active_convert_settings = settings
         self._convert_worker = ImageConvertWorker(
             filepaths, settings, titles=titles, source_overrides=source_overrides, parent=self,
         )
@@ -1095,13 +1177,25 @@ class ImageToolsTab(QWidget):
         )
 
     def _on_convert_file_completed(self, input_path: str, output_path: str):
-        """Registra el resultado de una conversión exitosa para la vista antes/
-        después (ver _on_file_selected) -- si el usuario ya está mirando esta misma
-        fila mientras corre la conversión, refresca el preview ya mismo en vez de
-        esperar a que la re-seleccione."""
+        """Registra el resultado de una conversión exitosa -- a propósito NO
+        interrumpe una edición en curso (como en Photoshop), EXCEPTO cuando el
+        lote usó IA (reescalado por ahora -- Eliminar Fondo todavía no tiene
+        ejecución conectada, ver rembg_popover.py): ahí si el usuario está
+        mirando justo esta fila, Comparar se activa solo para mostrar el
+        resultado de una vez. Invalida el cache de comparación por si ya había
+        un resultado previo de una reconversión."""
         self.image_queue.set_output_path(input_path, output_path)
-        if input_path == self._current_filepath:
-            self._on_file_selected(input_path)
+        self._compare_cache.invalidate(input_path)
+        uses_ai = bool(self._active_convert_settings and self._active_convert_settings.get("upscale_enabled"))
+        self._files_with_ai_edit[input_path] = uses_ai
+        if input_path != self._current_filepath:
+            return
+        self._refresh_title_and_copy_button(input_path)
+        if uses_ai:
+            self.btn_compare_result.blockSignals(True)
+            self.btn_compare_result.setChecked(True)
+            self.btn_compare_result.blockSignals(False)
+            self._show_compare_view(input_path)
 
     def _on_convert_finished(self, completed: int, total: int):
         if self._flatten_temp_dir is not None:

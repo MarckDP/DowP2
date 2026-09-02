@@ -93,7 +93,15 @@ class CanvasPopoverContent(QFrame):
         option_row.addWidget(self._label("Ajuste:"))
         self.combo_option = QComboBox()
         self.combo_option.addItems(CANVAS_OPTIONS)
-        self.combo_option.currentTextChanged.connect(self._on_option_changed)
+        # textActivated (no currentTextChanged): dispara SIEMPRE que el usuario
+        # elige algo del desplegable, incluso si re-elige la opción que ya estaba
+        # mostrada -- necesario para poder "deshacer" un ajuste manual de Canvas
+        # (arrastre de handle, Fase 3) reseleccionando "Sin ajuste" cuando el combo
+        # ya decía "Sin ajuste" de entrada (el arrastre nunca toca este combo, ver
+        # ZoomableImageViewer.canvas_edited); currentTextChanged no emite nada ahí
+        # porque el valor no "cambia" -- ver ImageToolsTab._on_canvas_state_changed,
+        # que es quien realmente descarta el override guardado.
+        self.combo_option.textActivated.connect(self._on_option_changed)
         option_row.addWidget(self.combo_option, 1)
         layout.addLayout(option_row)
 

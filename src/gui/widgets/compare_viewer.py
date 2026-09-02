@@ -9,7 +9,7 @@ solo). Mismo nivel/estilo que ZoomableImageViewer/_PreviewVideoView
 (esa clase ya carga bastante: herramientas de dibujo, Canvas, capas)."""
 from PySide6.QtWidgets import (
     QGraphicsView, QGraphicsScene, QGraphicsItem, QGraphicsPixmapItem,
-    QGraphicsRectItem, QGraphicsLineItem, QLabel,
+    QGraphicsRectItem, QLabel,
 )
 from PySide6.QtCore import Qt, QPointF
 from PySide6.QtGui import QPixmap, QPainter, QColor, QPen
@@ -48,9 +48,25 @@ class CompareViewer(QGraphicsView):
         # (izquierda=Original/before, derecha=Resultado/after) tiene que coincidir
         # con dónde _position_chips() pone cada chip -- si se invierte cuál de los
         # dos queda "recortado", las etiquetas quedan al revés del contenido real.
-        self._after_item = QGraphicsPixmapItem()
+        #
+        # Ambos quedan además recortados a un rect propio del tamaño completo del
+        # lienzo compartido (_after_clip_item para el "después", _clip_rect_item ya
+        # existía para el "antes" salvo que ahora también fija su ANCHO completo
+        # cuando no hay arrastre) -- necesario porque set_images() escala cada
+        # imagen en modo "cover" (llena TODO el lienzo, recorta lo que sobra) en vez
+        # de "fit": con aspectos de imagen distintos (típico tras Canvas), un
+        # "fit" centrado deja huecos en los bordes por los que se veía la otra
+        # imagen por detrás, ignorando el divisor -- "cover" garantiza que cada
+        # lado cubre 100% del lienzo sin huecos, sea cual sea la posición del
+        # divisor.
+        self._after_clip_item = QGraphicsRectItem()
+        self._after_clip_item.setPen(Qt.NoPen)
+        self._after_clip_item.setBrush(Qt.NoBrush)
+        self._after_clip_item.setFlag(QGraphicsItem.ItemClipsChildrenToShape, True)
+        self._scene.addItem(self._after_clip_item)
+
+        self._after_item = QGraphicsPixmapItem(self._after_clip_item)
         self._after_item.setTransformationMode(Qt.SmoothTransformation)
-        self._scene.addItem(self._after_item)
 
         self._clip_rect_item = QGraphicsRectItem()
         self._clip_rect_item.setPen(Qt.NoPen)
@@ -61,18 +77,13 @@ class CompareViewer(QGraphicsView):
         self._before_item = QGraphicsPixmapItem(self._clip_rect_item)
         self._before_item.setTransformationMode(Qt.SmoothTransformation)
 
+        # El divisor se dibuja en paintEvent(), en coordenadas de VIEWPORT (no como
+        # QGraphicsLineItem de escena) -- a propósito, para que abarque SIEMPRE el
+        # alto completo del panel de vista previa, no solo el alto del contenido de
+        # la imagen (que puede quedar más chico que el viewport, ej. con letterbox
+        # al hacer zoom out o con una imagen mucho más ancha que alta).
         divider_color = QColor(get_theme_token('acento_primario', '#B9E640'))
-        divider_pen = QPen(divider_color, 2)
-        # Cosmetic: el grosor queda fijo en píxeles de PANTALLA, no en unidades de
-        # escena -- sin esto, la línea se agranda/achica con el zoom del view igual
-        # que la imagen (el line item vive en coordenadas de escena, que sí se
-        # transforman con el zoom; un pen cosmético es la forma estándar de Qt de
-        # sacar un trazo de esa transformación).
-        divider_pen.setCosmetic(True)
-        self._divider_line = QGraphicsLineItem()
-        self._divider_line.setPen(divider_pen)
-        self._divider_line.setZValue(10)
-        self._scene.addItem(self._divider_line)
+        self._divider_pen = QPen(divider_color, 2)
 
         # El agarre del divisor es un QWidget aparte (no un item de la escena) a
         # propósito: así se puede mantener siempre centrado verticalmente en lo que
@@ -132,17 +143,27 @@ class CompareViewer(QGraphicsView):
         self._before_item.setPixmap(before_pixmap)
         self._after_item.setPixmap(after_pixmap)
 
-        # Si difieren en tamaño (típico tras un resize/upscale), se escala el más
-        # chico al tamaño del más grande vía setScale() del item -- no se
-        # re-samplea el pixmap en memoria, solo la transformación de dibujo.
+        # Lienzo compartido = unión de ambos tamaños. Si difieren (típico tras un
+        # resize/Canvas -- ya no solo upscale, donde el aspecto se preservaba y un
+        # solo factor de ancho alcanzaba), cada imagen se escala POR SU CUENTA en
+        # modo "cover" (máx de ambos ejes: cubre TODO el lienzo, recorta lo que
+        # sobra por fuera -- igual que object-fit:cover) y se centra. Antes era
+        # "fit" (mín de ambos ejes): preservaba el aspecto pero podía dejar
+        # márgenes sin cubrir en un eje, y por ahí se veía la OTRA imagen por
+        # detrás -- el divisor parecía "no hacer nada" en esa franja. "cover"
+        # garantiza cobertura completa de los dos lados en cualquier posición del
+        # divisor, a costa de recortar (nunca estirar) el excedente.
         target_w, target_h = max(bw, aw), max(bh, ah)
         self._content_size = (target_w, target_h)
 
-        self._before_item.setPos(0, 0)
-        self._before_item.setScale(target_w / bw)
-        self._after_item.setPos(0, 0)
-        self._after_item.setScale(target_w / aw)
+        before_scale = max(target_w / bw, target_h / bh)
+        after_scale = max(target_w / aw, target_h / ah)
+        self._before_item.setScale(before_scale)
+        self._after_item.setScale(after_scale)
+        self._before_item.setPos((target_w - bw * before_scale) / 2, (target_h - bh * before_scale) / 2)
+        self._after_item.setPos((target_w - aw * after_scale) / 2, (target_h - ah * after_scale) / 2)
 
+        self._after_clip_item.setRect(0, 0, target_w, target_h)
         self._clip_rect_item.setRect(0, 0, target_w, target_h)
         self._scene.setSceneRect(0, 0, target_w, target_h)
 
@@ -184,7 +205,7 @@ class CompareViewer(QGraphicsView):
         w, h = self._content_size
         x = w * self._divider_fraction
         self._clip_rect_item.setRect(0, 0, x, h)
-        self._divider_line.setLine(x, 0, x, h)
+        self.viewport().update()
 
     def _divider_screen_x(self) -> float:
         if not self._content_size:
@@ -258,6 +279,21 @@ class CompareViewer(QGraphicsView):
         super().resizeEvent(event)
         self._position_chips()
         self._position_handle()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if not self._content_size:
+            return
+        # En coordenadas de VIEWPORT, no de escena -- por eso abarca el alto
+        # completo del panel aunque el contenido (letterboxed por fitInView/zoom)
+        # ocupe menos, ver comentario en __init__ sobre por qué ya no es un
+        # QGraphicsLineItem.
+        painter = QPainter(self.viewport())
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(self._divider_pen)
+        x = int(self._divider_screen_x())
+        painter.drawLine(x, 0, x, self.viewport().height())
+        painter.end()
 
     def _position_chips(self):
         margin = 10

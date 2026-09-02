@@ -71,6 +71,7 @@ class ZoomableImageViewer(QGraphicsView):
         self._native_size = None  # QSize de la imagen tal cual se cargó, sin escalar
         self._user_zoomed = False
         self._checker_tile = self._build_checker_tile()
+        self._dark_bg_color = QColor(get_theme_token('fondo_principal', '#0a0a0a'))
 
         self._interaction_mode = "canvas_edit"  # "canvas_edit" | "layers_draw"
 
@@ -134,6 +135,7 @@ class ZoomableImageViewer(QGraphicsView):
     def refresh_checker_theme(self):
         """Llamar si el tema/tokens de color cambian en caliente."""
         self._checker_tile = self._build_checker_tile()
+        self._dark_bg_color = QColor(get_theme_token('fondo_principal', '#0a0a0a'))
         self.viewport().update()
 
     def drawBackground(self, painter: QPainter, rect: QRectF):
@@ -145,7 +147,17 @@ class ZoomableImageViewer(QGraphicsView):
         # sin importar cuánto zoom haya, igual que la cuadrícula de cualquier editor.
         painter.save()
         painter.resetTransform()
-        painter.drawTiledPixmap(self.viewport().rect(), self._checker_tile)
+        viewport_rect = self.viewport().rect()
+        # Oscuro en TODO el viewport primero -- lo de afuera del canvas ("espacio de
+        # trabajo") ya no es cuadrícula, es fondo sólido (mismo tono que el resto de
+        # la app). De paso, si el tiling de la cuadrícula llega a fallar en algún
+        # frame (bug esporádico de drawTiledPixmap), nunca se ve "vacío": como
+        # mínimo queda el oscuro de siempre, no un hueco en blanco/negro plano.
+        painter.fillRect(viewport_rect, self._dark_bg_color)
+        if self._canvas_rect is not None and self._pixmap_item is not None:
+            canvas_vp = self._scene_rect_to_viewport(self._canvas_rect)
+            painter.setClipRect(canvas_vp)
+        painter.drawTiledPixmap(viewport_rect, self._checker_tile)
         painter.restore()
 
     def drawForeground(self, painter: QPainter, rect: QRectF):

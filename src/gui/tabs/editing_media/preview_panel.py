@@ -20,6 +20,7 @@ from gui.styles import (
 from gui.tabs.editing_media.editing_media_icons import get_colored_svg_icon
 from gui.widgets.volume_control import VolumeControlWidget
 from gui.widgets.zoomable_image_viewer import ZoomableImageViewer
+from gui.widgets.compare_viewer import CompareViewer
 
 try:
     from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
@@ -175,6 +176,13 @@ class PreviewContainerWidget(QFrame):
         self.zoom_viewer = ZoomableImageViewer()
         self.zoom_viewer.setVisible(False)
         self.layout.addWidget(self.zoom_viewer, 1)
+
+        # 2c. Comparación antes/después (Editor de Imagen, ver show_compare_preview())
+        # -- mismo patrón que zoom_viewer/video_widget: hermano en el mismo layout,
+        # se muestra/oculta con setVisible(), sin necesidad de un overlay/Z-order real.
+        self.compare_viewer = CompareViewer()
+        self.compare_viewer.setVisible(False)
+        self.layout.addWidget(self.compare_viewer, 1)
 
         # 2. Widget de Video Real Integrado en Qt
         self.video_widget = None
@@ -376,6 +384,9 @@ class PreviewContainerWidget(QFrame):
         if hasattr(self, "zoom_viewer") and self.zoom_viewer:
             self.zoom_viewer.clear()
             self.zoom_viewer.setVisible(False)
+        if hasattr(self, "compare_viewer") and self.compare_viewer:
+            self.compare_viewer.clear()
+            self.compare_viewer.setVisible(False)
 
         if self.media_player:
             try:
@@ -433,15 +444,18 @@ class PreviewContainerWidget(QFrame):
             self.video_widget.setVisible(False)
         if hasattr(self, "controls_widget"):
             self.controls_widget.setVisible(False)
-        
+
         self.placeholder_label.setVisible(True)
         self.placeholder_label.setText("")
-        
+
         ext = os.path.splitext(path)[1].lower()
         avail_w = max(50, self.width() - 10)
         avail_h = max(50, self.height() - 10)
 
-        # 1. Reproducir animación si es un GIF animado
+        # GIF animado: se queda con su propio camino de QMovie (animación en vivo)
+        # -- NO pasa por _load_pixmap_for_path(), que para .gif solo devuelve el
+        # primer frame como pixmap estático (pensado para show_compare_preview(),
+        # donde no tiene sentido animar el "antes").
         if ext == ".gif":
             from PySide6.QtGui import QMovie
             movie = QMovie(path)
@@ -458,7 +472,42 @@ class PreviewContainerWidget(QFrame):
                 movie.start()
                 return
 
-        # 2. Renderizado vectorial dinámico para SVG
+        # Resto de formatos (vector/PDF-AI/PSD/RAW/EPS/ráster + fallback de imagen
+        # pesada): decodificación centralizada en _load_pixmap_for_path(), reusada
+        # también por show_compare_preview() -- ver ese método para el detalle de
+        # cada rama.
+        pix = self._load_pixmap_for_path(path, avail_w, avail_h)
+        if pix is not None:
+            self._set_preview_image(pix, avail_w, avail_h)
+        else:
+            # Caso normal: imagen pesada sin cache todavía -- _load_pixmap_for_path
+            # ya dejó pedida la generación async (ver _on_heavy_preview_ready, que
+            # completa el display cuando esté lista); acá solo queda avisar mientras
+            # tanto. (Caso extremo, casi inalcanzable: un EPS/PS totalmente
+            # ilegible -- ya quedó loggeado por _load_pixmap_for_path.)
+            self.placeholder_label.setText(self.tr("Generando vista previa (imagen muy pesada)..."))
+            self.placeholder_label.setStyleSheet("color: #999999; font-size: 12px;")
+
+    def _load_pixmap_for_path(self, path: str, avail_w: int, avail_h: int) -> QPixmap | None:
+        """Decodifica `path` a un QPixmap mostrable -- sin componer checkerboard/
+        escalado final de display (eso lo hace _set_preview_image, o lo maneja el
+        propio llamador en el caso de show_compare_preview). Extraído de
+        show_image_preview() para poder reusarse ahí y en show_compare_preview()
+        sin duplicar el manejo por formato. Devuelve None solo para el caso de
+        imagen pesada aún sin cache (la generación async ya quedó pedida)."""
+        ext = os.path.splitext(path)[1].lower()
+
+        if ext == ".gif":
+            from PySide6.QtGui import QMovie
+            movie = QMovie(path)
+            if movie.isValid():
+                movie.jumpToFrame(0)
+                img = movie.currentImage()
+                if not img.isNull():
+                    return QPixmap.fromImage(img)
+            return None
+
+        # Renderizado vectorial dinámico para SVG
         if ext in (".svg", ".svgz"):
             try:
                 from PySide6.QtSvg import QSvgRenderer
@@ -468,18 +517,18 @@ class PreviewContainerWidget(QFrame):
                     if sz.isEmpty() or sz.width() <= 0 or sz.height() <= 0:
                         sz = QSize(avail_w, avail_h)
                     scaled_sz = sz.scaled(avail_w, avail_h, Qt.AspectRatioMode.KeepAspectRatio)
-                    bg = create_checkerboard_pixmap(scaled_sz.width(), scaled_sz.height(), square_size=10)
-                    painter = QPainter(bg)
+                    pix = QPixmap(scaled_sz)
+                    pix.fill(Qt.GlobalColor.transparent)
+                    painter = QPainter(pix)
                     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
                     painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
                     renderer.render(painter, QRectF(0, 0, scaled_sz.width(), scaled_sz.height()))
                     painter.end()
-                    self.placeholder_label.setPixmap(bg)
-                    return
+                    return pix
             except Exception as e:
                 logger.error(f"PreviewPanel: Error renderizando SVG {path}: {e}")
 
-        # 3. Renderizado de documento PDF / Ilustrator (.ai)
+        # Renderizado de documento PDF / Ilustrator (.ai)
         if ext in (".pdf", ".ai"):
             try:
                 from PySide6.QtPdf import QPdfDocument
@@ -492,17 +541,17 @@ class PreviewContainerWidget(QFrame):
                         render_w = max(1, int(sz.width() * scale))
                         render_h = max(1, int(sz.height() * scale))
                         page_img = doc.render(0, QSize(render_w, render_h))
-                        if not page_img.isNull() and self._set_preview_image(page_img, avail_w, avail_h):
-                            return
+                        if not page_img.isNull():
+                            return QPixmap.fromImage(page_img)
             except Exception as e:
                 logger.error(f"PreviewPanel: Error renderizando PDF/AI {path}: {e}")
 
-        # 4. Renderizado para Photoshop (.psd)
+        # Renderizado para Photoshop (.psd)
         if ext == ".psd":
             try:
-                # 4.0 Thumbnail embebido por Photoshop (psd-tools): evita componer todas las
-                # capas del documento en el hilo de UI, que es lo que congela la vista previa
-                # más de un segundo en archivos con muchas capas.
+                # Thumbnail embebido por Photoshop (psd-tools): evita componer todas
+                # las capas del documento en el hilo de UI, que es lo que congela la
+                # vista previa más de un segundo en archivos con muchas capas.
                 try:
                     from psd_tools import PSDImage
                     psd = PSDImage.open(path)
@@ -511,14 +560,15 @@ class PreviewContainerWidget(QFrame):
                         rgb_im = embedded.convert("RGBA")
                         data = rgb_im.tobytes("raw", "RGBA")
                         qimg = QImage(data, rgb_im.width, rgb_im.height, rgb_im.width * 4, QImage.Format.Format_RGBA8888).copy()
-                        if self._set_preview_image(qimg, avail_w, avail_h):
-                            return
+                        if not qimg.isNull():
+                            return QPixmap.fromImage(qimg)
                 except Exception:
                     pass
 
                 pixmap = QPixmap(path)
-                if not pixmap.isNull() and self._set_preview_image(pixmap, avail_w, avail_h):
-                    return
+                if not pixmap.isNull():
+                    return pixmap
+
                 # Intentar con Pillow
                 try:
                     from PIL import Image
@@ -526,8 +576,8 @@ class PreviewContainerWidget(QFrame):
                         rgb_im = im.convert("RGBA")
                         data = rgb_im.tobytes("raw", "RGBA")
                         qimg = QImage(data, rgb_im.width, rgb_im.height, rgb_im.width * 4, QImage.Format.Format_RGBA8888).copy()
-                        if self._set_preview_image(qimg, avail_w, avail_h):
-                            return
+                        if not qimg.isNull():
+                            return QPixmap.fromImage(qimg)
                 except Exception:
                     pass
 
@@ -550,12 +600,12 @@ class PreviewContainerWidget(QFrame):
                     out, _ = proc.communicate(timeout=5)
                     if out:
                         img = QImage.fromData(out)
-                        if not img.isNull() and self._set_preview_image(img, avail_w, avail_h):
-                            return
+                        if not img.isNull():
+                            return QPixmap.fromImage(img)
             except Exception as e:
                 logger.error(f"PreviewPanel: Error renderizando PSD {path}: {e}")
 
-        # 4.5 Renderizado para RAW de cámara (.cr2, .nef, .arw, .dng, ...)
+        # Renderizado para RAW de cámara (.cr2, .nef, .arw, .dng, ...)
         if ext in RAW_EXTS:
             try:
                 import rawpy
@@ -596,12 +646,12 @@ class PreviewContainerWidget(QFrame):
                 rgb_im = im.convert("RGB")
                 data = rgb_im.tobytes("raw", "RGB")
                 qimg = QImage(data, rgb_im.width, rgb_im.height, rgb_im.width * 3, QImage.Format.Format_RGB888).copy()
-                if self._set_preview_image(qimg, avail_w, avail_h):
-                    return
+                if not qimg.isNull():
+                    return QPixmap.fromImage(qimg)
             except Exception as e:
                 logger.error(f"PreviewPanel: Error renderizando RAW {path}: {e}")
 
-        # 5. Preview para EPS / PS (PostScript)
+        # Preview para EPS / PS (PostScript)
         if ext in (".eps", ".ps"):
             try:
                 import struct
@@ -615,8 +665,8 @@ class PreviewContainerWidget(QFrame):
                             tiff_bytes = f.read(tiff_len)
                             if tiff_bytes:
                                 tiff_img = QImage.fromData(tiff_bytes)
-                                if not tiff_img.isNull() and self._set_preview_image(tiff_img, avail_w, avail_h):
-                                    return
+                                if not tiff_img.isNull():
+                                    return QPixmap.fromImage(tiff_img)
 
                 # B. QPdfDocument (si el EPS contiene datos PDF/AI)
                 try:
@@ -630,85 +680,127 @@ class PreviewContainerWidget(QFrame):
                             render_w = max(1, int(sz.width() * scale))
                             render_h = max(1, int(sz.height() * scale))
                             page_img = doc.render(0, QSize(render_w, render_h))
-                            if not page_img.isNull() and self._set_preview_image(page_img, avail_w, avail_h):
-                                return
+                            if not page_img.isNull():
+                                return QPixmap.fromImage(page_img)
                 except Exception:
                     pass
 
                 # C. Tarjeta visual informativa estilizada con dimensiones
-                import re
-                dim_str = ""
-                with open(path, "rb") as f:
-                    header_text = f.read(4096).decode("latin-1", errors="ignore")
-                    match = re.search(r"%%(?:HiRes)?BoundingBox:\s*([-\d\.]+)\s+([-\d\.]+)\s+([-\d\.]+)\s+([-\d\.]+)", header_text)
-                    if match:
-                        x1, y1, x2, y2 = map(float, match.groups())
-                        w = int(round(abs(x2 - x1)))
-                        h = int(round(abs(y2 - y1)))
-                        if w > 0 and h > 0:
-                            dim_str = f"{w}x{h} px"
-
-                card_w = min(avail_w, 320)
-                card_h = min(avail_h, 180)
-                out_pix = QPixmap(card_w, card_h)
-                out_pix.fill(QColor("#18181a"))
-                painter = QPainter(out_pix)
-                painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-                painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
-
-                from PySide6.QtGui import QPen, QBrush, QFont
-                pen = QPen(QColor("#2d2d30"), 1.5)
-                painter.setPen(pen)
-                painter.setBrush(QBrush(QColor("#202024")))
-                painter.drawRoundedRect(8, 8, card_w - 16, card_h - 16, 8, 8)
-
-                ext_name = "EPS" if ext == ".eps" else "PS"
-                font_badge = QFont("Segoe UI", 18, QFont.Weight.Bold)
-                painter.setFont(font_badge)
-                painter.setPen(QColor("#e67e22"))
-                painter.drawText(QRectF(8, 20, card_w - 16, 32), Qt.AlignmentFlag.AlignCenter, f"Vector {ext_name}")
-
-                font_name = QFont("Segoe UI", 10)
-                painter.setFont(font_name)
-                painter.setPen(QColor("#cccccc"))
-                painter.drawText(QRectF(16, 60, card_w - 32, 40), Qt.AlignmentFlag.AlignCenter, os.path.basename(path))
-
-                if dim_str:
-                    font_dim = QFont("Segoe UI", 11, QFont.Weight.DemiBold)
-                    painter.setFont(font_dim)
-                    painter.setPen(QColor(get_theme_token("acento_primario", "#B9E640")))
-                    painter.drawText(QRectF(8, 110, card_w - 16, 25), Qt.AlignmentFlag.AlignCenter, f"Lienzo: {dim_str}")
-
-                painter.end()
-                self.placeholder_label.setPixmap(out_pix)
-                return
+                return self._build_vector_info_card(path, ext, avail_w, avail_h)
 
             except Exception as e:
                 logger.error(f"PreviewPanel: Error leyendo preview EPS {path}: {e}")
+            return None
 
-        # 5. Renderizado ráster estándar (PNG, JPG, WebP, etc.)
+        # Renderizado ráster estándar (PNG, JPG, WebP, etc.)
         pixmap = QPixmap(path)
         if not pixmap.isNull():
-            self._set_preview_image(pixmap, avail_w, avail_h)
-        else:
-            # Qt rechazó la imagen por superar su límite de asignación de memoria
-            # (imagen muy grande/pesada). Usar el preview cacheado por
-            # ThumbnailCacheManager (Pillow, sin ese límite) en vez de mostrar error.
-            self._show_heavy_image_preview(path, avail_w, avail_h)
+            return pixmap
 
-    def _show_heavy_image_preview(self, path: str, avail_w: int, avail_h: int):
-        """El original nunca se toca: esto solo alimenta el visor de DowP con una
-        versión reducida cacheada en disco (se genera una sola vez por archivo)."""
+        # Qt rechazó la imagen por superar su límite de asignación de memoria
+        # (imagen muy grande/pesada). Usar el preview cacheado por
+        # ThumbnailCacheManager (Pillow, sin ese límite) en vez de mostrar error.
+        return self._load_heavy_image_pixmap(path)
+
+    def _build_vector_info_card(self, path: str, ext: str, avail_w: int, avail_h: int) -> QPixmap:
+        """Tarjeta informativa estilizada (nombre + dimensiones del BoundingBox) --
+        último recurso cuando un EPS/PS no se pudo decodificar como imagen real."""
+        import re
+        dim_str = ""
+        with open(path, "rb") as f:
+            header_text = f.read(4096).decode("latin-1", errors="ignore")
+            match = re.search(r"%%(?:HiRes)?BoundingBox:\s*([-\d\.]+)\s+([-\d\.]+)\s+([-\d\.]+)\s+([-\d\.]+)", header_text)
+            if match:
+                x1, y1, x2, y2 = map(float, match.groups())
+                w = int(round(abs(x2 - x1)))
+                h = int(round(abs(y2 - y1)))
+                if w > 0 and h > 0:
+                    dim_str = f"{w}x{h} px"
+
+        card_w = min(avail_w, 320)
+        card_h = min(avail_h, 180)
+        out_pix = QPixmap(card_w, card_h)
+        out_pix.fill(QColor("#18181a"))
+        painter = QPainter(out_pix)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+
+        from PySide6.QtGui import QPen, QBrush, QFont
+        pen = QPen(QColor("#2d2d30"), 1.5)
+        painter.setPen(pen)
+        painter.setBrush(QBrush(QColor("#202024")))
+        painter.drawRoundedRect(8, 8, card_w - 16, card_h - 16, 8, 8)
+
+        ext_name = "EPS" if ext == ".eps" else "PS"
+        font_badge = QFont("Segoe UI", 18, QFont.Weight.Bold)
+        painter.setFont(font_badge)
+        painter.setPen(QColor("#e67e22"))
+        painter.drawText(QRectF(8, 20, card_w - 16, 32), Qt.AlignmentFlag.AlignCenter, f"Vector {ext_name}")
+
+        font_name = QFont("Segoe UI", 10)
+        painter.setFont(font_name)
+        painter.setPen(QColor("#cccccc"))
+        painter.drawText(QRectF(16, 60, card_w - 32, 40), Qt.AlignmentFlag.AlignCenter, os.path.basename(path))
+
+        if dim_str:
+            font_dim = QFont("Segoe UI", 11, QFont.Weight.DemiBold)
+            painter.setFont(font_dim)
+            painter.setPen(QColor(get_theme_token("acento_primario", "#B9E640")))
+            painter.drawText(QRectF(8, 110, card_w - 16, 25), Qt.AlignmentFlag.AlignCenter, f"Lienzo: {dim_str}")
+
+        painter.end()
+        return out_pix
+
+    def _load_heavy_image_pixmap(self, path: str) -> QPixmap | None:
+        """El original nunca se toca: usa una versión reducida cacheada en disco (se
+        genera una sola vez por archivo, vía ThumbnailCacheManager/Pillow, sin el
+        límite de asignación de Qt). Si todavía no existe cache, deja pedida la
+        generación async y devuelve None -- _on_heavy_preview_ready completa el
+        display cuando esté lista."""
         from core.tabs.editing_media.thumbnail_cache_manager import ThumbnailCacheManager
         manager = ThumbnailCacheManager.get_instance()
         cached = manager.get_cached_preview_path(path)
         if cached:
             pix = QPixmap(cached)
-            if self._set_preview_image(pix, avail_w, avail_h):
-                return
-        self.placeholder_label.setText("Generando vista previa (imagen muy pesada)...")
-        self.placeholder_label.setStyleSheet("color: #999999; font-size: 12px;")
+            if not pix.isNull():
+                return pix
         manager.request_preview(path)
+        return None
+
+    def show_compare_preview(self, before_path: str, after_path: str,
+                              before_pixmap: QPixmap = None, after_pixmap: QPixmap = None):
+        """Vista "antes/después" con divisor arrastrable (ver CompareViewer) --
+        `before_pixmap`/`after_pixmap`, si vienen dados, evitan recargar de disco
+        (cache LRU en el llamador, ver ImageToolsTab._CompareCache). El "antes" pasa
+        por _load_pixmap_for_path (mismo manejo por formato que el preview normal --
+        vector/RAW/PSD/EPS); el "después" siempre es un ráster plano que ya escribió
+        ImageConverter (PNG/JPG/WEBP/...), sin necesidad de manejo especial."""
+        self.stop_media()
+        self._current_image_path = before_path
+        if hasattr(self, "empty_state_widget"):
+            self.empty_state_widget.setVisible(False)
+        if self.video_widget:
+            self.video_widget.setVisible(False)
+        if hasattr(self, "controls_widget"):
+            self.controls_widget.setVisible(False)
+        self.placeholder_label.setVisible(False)
+
+        avail_w = max(50, self.width() - 10)
+        avail_h = max(50, self.height() - 10)
+        if before_pixmap is None:
+            before_pixmap = self._load_pixmap_for_path(before_path, avail_w, avail_h)
+        if after_pixmap is None:
+            after_pixmap = QPixmap(after_path)
+
+        if not before_pixmap or not after_pixmap or before_pixmap.isNull() or after_pixmap.isNull():
+            # Caso extremo (imagen "antes" pesada sin cache todavía, o "después"
+            # ilegible) -- se cae a la vista normal en vez de mostrar un comparador
+            # vacío/roto.
+            self.show_image_preview(before_path)
+            return
+
+        self.compare_viewer.setVisible(True)
+        self.compare_viewer.set_images(before_pixmap, after_pixmap)
 
     def _on_heavy_preview_ready(self, path: str, preview_path: str):
         if path != self._current_image_path:

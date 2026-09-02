@@ -28,6 +28,7 @@ class ImageConvertWorker(QThread):
 
     file_progress = Signal(str, int)          # filepath, %
     file_status_changed = Signal(str, str)    # filepath, texto de estado
+    file_completed = Signal(str, str)         # input_path, output_path -- solo en éxito
     finished_signal = Signal(int, int)        # completados, total
 
     def __init__(self, filepaths: list[str], options: dict, parent=None):
@@ -105,6 +106,7 @@ class ImageConvertWorker(QThread):
                 commit_backup(backup_path)
                 completed += 1
                 self.file_status_changed.emit(filepath, self.tr("Completado"))
+                self.file_completed.emit(filepath, output_path)
             else:
                 rollback_backup(backup_path)
                 self.file_status_changed.emit(filepath, self.tr("Error: {0}").format(message))

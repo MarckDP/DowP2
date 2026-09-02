@@ -77,6 +77,10 @@ class ImageQueueWidget(QFrame):
         self.files_list = []
         self._items_by_path = {}
         self._icon_cache = {}
+        # filepath -> ruta del archivo ya convertido (ver set_output_path/
+        # get_output_path) -- lo usa ImageToolsTab para saber si mostrar la vista
+        # de comparación antes/después al seleccionar una fila.
+        self._output_paths = {}
         self._init_ui()
 
         ThumbnailCacheManager.get_instance().thumbnail_loaded.connect(self._on_thumbnail_loaded)
@@ -320,6 +324,7 @@ class ImageQueueWidget(QFrame):
         self.files_list.clear()
         self.tree.clear()
         self._items_by_path.clear()
+        self._output_paths.clear()
         self._update_counter()
         self.file_selected.emit("")
 
@@ -330,6 +335,7 @@ class ImageQueueWidget(QFrame):
             if path in self.files_list:
                 self.files_list.remove(path)
             self._items_by_path.pop(path, None)
+            self._output_paths.pop(path, None)
             index = self.tree.indexOfTopLevelItem(item)
             self.tree.takeTopLevelItem(index)
         self._update_counter()
@@ -398,3 +404,12 @@ class ImageQueueWidget(QFrame):
         if item:
             item.setText(3, status_text)
             item.setIcon(3, _get_status_icon(status_text))
+
+    def set_output_path(self, filepath: str, output_path: str):
+        """Registra el archivo de salida de una conversión completada -- ver
+        ImageToolsTab._on_convert_file_completed. Sobrescribe cualquier ruta previa
+        (una reconversión reemplaza al resultado anterior)."""
+        self._output_paths[filepath] = output_path
+
+    def get_output_path(self, filepath: str) -> str | None:
+        return self._output_paths.get(filepath)

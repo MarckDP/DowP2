@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
     QPushButton, QButtonGroup, QLineEdit, QFileDialog,
 )
 from PySide6.QtCore import Qt, QSize, QEvent, QUrl, QStandardPaths
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QDesktopServices, QPixmap
 
 from core.utils.config_manager import get_config, save_config
 from gui.styles import (
@@ -31,6 +31,38 @@ from gui.tabs.image_tools.layers.layer_model import Layer, LayerStack
 from gui.tabs.image_tools.layers.layers_panel import LayersPanel
 from gui.tabs.image_tools.layers.background_dialog import BackgroundDialog
 
+_COMPARE_CACHE_SIZE = 5
+
+
+class _CompareCache:
+    """Cache RAM chico para la vista antes/después (ver PreviewContainerWidget.
+    show_compare_preview) -- evita recargar de disco/re-renderizar un vector o RAW
+    en cada selección de la misma fila. A diferencia del cache de DowP1 (que solo
+    guardaba el "antes"), acá se guardan ambos lados -- el "después" también se
+    recargaba de disco en cada click en DowP1, un desperdicio real ya que el
+    proceso mismo lo acaba de escribir. FIFO simple, tope 5 (mismo tamaño que
+    DowP1), suficiente para un flujo de "comparar unas pocas filas por sesión"."""
+
+    def __init__(self, max_size: int = _COMPARE_CACHE_SIZE):
+        self._max_size = max_size
+        self._entries: dict[str, tuple[QPixmap, QPixmap]] = {}
+        self._order: list[str] = []
+
+    def get(self, filepath: str) -> tuple[QPixmap | None, QPixmap | None]:
+        entry = self._entries.get(filepath)
+        return entry if entry else (None, None)
+
+    def put(self, filepath: str, before: QPixmap, after: QPixmap):
+        if before is None or after is None or before.isNull() or after.isNull():
+            return
+        if filepath not in self._entries and len(self._entries) >= self._max_size:
+            oldest = self._order.pop(0)
+            self._entries.pop(oldest, None)
+        if filepath in self._order:
+            self._order.remove(filepath)
+        self._order.append(filepath)
+        self._entries[filepath] = (before, after)
+
 
 class ImageToolsTab(QWidget):
     """Editor de Imagen.
@@ -50,6 +82,8 @@ class ImageToolsTab(QWidget):
 
     def __init__(self):
         super().__init__()
+        self._current_filepath = None
+        self._compare_cache = _CompareCache()
         self._build_ui()
 
     def _build_ui(self):
@@ -629,6 +663,24 @@ class ImageToolsTab(QWidget):
         return super().eventFilter(obj, event)
 
     def _on_file_selected(self, filepath: str):
+        self._current_filepath = filepath
+
+        # Si este archivo ya tiene un resultado convertido, se muestra la
+        # comparación antes/después en vez del editor normal -- mismo criterio que
+        # DowP1 (puramente por selección, sin botón aparte): no tiene sentido
+        # dibujar/editar sobre un archivo ya procesado, así que ni siquiera se arma
+        # el puente Canvas/Capas de más abajo en ese caso.
+        output_path = self.image_queue.get_output_path(filepath) if filepath else None
+        if output_path:
+            before_pix, after_pix = self._compare_cache.get(filepath)
+            self.preview.show_compare_preview(filepath, output_path, before_pix, after_pix)
+            if before_pix is None or after_pix is None:
+                # Cache miss -- preview_panel ya cargó de disco/re-renderizó; se
+                # guardan los pixmaps recién usados para la próxima selección.
+                cv = self.preview.compare_viewer
+                self._compare_cache.put(filepath, cv.before_pixmap(), cv.after_pixmap())
+            return
+
         # El estado de Canvas (tamaño/margen/posición) y las capas dibujadas eran
         # relativos a la imagen anterior -- resetear evita un overlay/capas con
         # medidas o contenido que ya no tienen sentido para el archivo nuevo.
@@ -854,6 +906,7 @@ class ImageToolsTab(QWidget):
 
         self._convert_worker = ImageConvertWorker(filepaths, settings, parent=self)
         self._convert_worker.file_status_changed.connect(self._on_convert_file_status)
+        self._convert_worker.file_completed.connect(self._on_convert_file_completed)
         self._convert_worker.finished_signal.connect(self._on_convert_finished)
 
         self.btn_convert.setEnabled(False)
@@ -881,6 +934,15 @@ class ImageToolsTab(QWidget):
         self.progress_bar.setFormat(
             self.tr("Convirtiendo {0}/{1}...").format(self._convert_done, self._convert_total)
         )
+
+    def _on_convert_file_completed(self, input_path: str, output_path: str):
+        """Registra el resultado de una conversión exitosa para la vista antes/
+        después (ver _on_file_selected) -- si el usuario ya está mirando esta misma
+        fila mientras corre la conversión, refresca el preview ya mismo en vez de
+        esperar a que la re-seleccione."""
+        self.image_queue.set_output_path(input_path, output_path)
+        if input_path == self._current_filepath:
+            self._on_file_selected(input_path)
 
     def _on_convert_finished(self, completed: int, total: int):
         self._convert_worker = None

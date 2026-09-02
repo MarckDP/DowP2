@@ -97,8 +97,12 @@ class LayerStack(QObject):
         """Saca todas las capas de la escena (para cargar una imagen nueva) sin
         emitir un layers_changed por cada una -- una sola señal al final."""
         for layer in self.layers:
-            if layer.graphics_item is not None and layer.graphics_item.scene() is not None:
-                layer.graphics_item.scene().removeItem(layer.graphics_item)
+            if layer.graphics_item is not None:
+                try:
+                    if layer.graphics_item.scene() is not None:
+                        layer.graphics_item.scene().removeItem(layer.graphics_item)
+                except RuntimeError:
+                    pass  # El objeto C++ subyacente ya fue destruido por Qt (ej. limpieza de escena)
         self.layers = []
         self.active_layer = None
         self.layers_changed.emit()

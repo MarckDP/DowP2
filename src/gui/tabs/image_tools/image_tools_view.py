@@ -846,6 +846,7 @@ class ImageToolsTab(QWidget):
             return
         settings = {
             **self.resize_popover_content.get_settings(),
+            **self.upscale_popover_content.get_settings(),
             **self.convert_panel.get_settings(),
             "output_folder": self.entry_output_folder.text().strip(),
             "conflict_policy": self.combo_conflict_policy.currentData() or "conservar",

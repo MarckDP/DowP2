@@ -699,6 +699,15 @@ UPSCALING_TOOLS = {
 # motores sin build -- ver core/setup/models_setup.py.
 
 # --- MAPEOC DE NOMBRES AMIGABLES PARA UPSCAYL ---
+# Upscayl es deliberadamente "más global" que solo el repo custom-models -- DowP1 ya
+# sumaba modelos de otras 2 fuentes (ver setup.pyc decompilado,
+# check_and_download_upscaling_tools/_UPSCAYL_LEGACY_MODEL_SOURCES en
+# core/setup/models_setup.py): realesrgan-x4plus/-anime vienen del release oficial de
+# xinntao/Real-ESRGAN, DF2K_x4/DF2K_JPEG_x4 del release oficial de nihui/realsr-ncnn-
+# vulkan. NO son parte de custom-models -- por eso "faltaban" ahí. Las variantes
+# realesr-animevideov3-x2/x3 quedan afuera a propósito: DowP1 las purga por
+# inestabilidad conocida (sanitize_upscayl_models -- ver _sanitize_upscayl_models en
+# models_setup.py), solo se ofrece la x4.
 UPSCAYL_MODELS_MAP = {
     "realesrgan-x4plus": "Real-ESRGAN (General / Fotografía)",
     "realesrgan-x4plus-anime": "Real-ESRGAN (Anime / Ilustración)",
@@ -716,7 +725,6 @@ UPSCAYL_MODELS_MAP = {
     "unknown-2.0.1": "The Unknown (Experimental / Nitidez Extrema)",
     "DF2K_x4": "RealSR (Detalle de Texturas)",
     "DF2K_JPEG_x4": "RealSR JPEG (Reduce Compresión)",
-    "x4": "Modelo Genérico x4"
 }
 
 # --- CONSTANTES DE REESCALADO (IA) ---

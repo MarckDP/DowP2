@@ -211,3 +211,20 @@ class UpscalePopoverContent(QFrame):
 
     def current_selection(self) -> tuple[str, str]:
         return self.combo_engine.currentData(), self.combo_model.currentData()
+
+    def get_settings(self) -> dict:
+        """Mismo criterio que ResizePopoverContent.get_settings(): el popover solo
+        junta la configuración, se aplica recién al apretar "Convertir" (ver
+        ImageToolsTab._on_convert_clicked e ImageConverter._apply_ai_upscale).
+        upscale_enabled = is_valid_selection() -- mismo criterio que ya usa
+        _style_upscale_button() para pintar el botón verde/gris."""
+        return {
+            "upscale_enabled": self.is_valid_selection(),
+            "upscale_engine": self.combo_engine.currentData(),
+            "upscale_model": self.combo_model.currentData(),
+            "upscale_scale": self.combo_scale.currentText(),
+            "upscale_tile": self.entry_tile.text(),
+            "upscale_power": self.combo_power.currentText(),
+            "upscale_denoise": self.combo_denoise.currentText(),
+            "upscale_tta": self.check_tta.isChecked(),
+        }

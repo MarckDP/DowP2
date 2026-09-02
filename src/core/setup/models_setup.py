@@ -106,12 +106,20 @@ def _engine_dir(tool_info: dict) -> str:
     return os.path.join(get_models_dir(), tool_info["folder"])
 
 
-def is_upscaling_engine_installed(tool_info: dict) -> bool:
+def get_engine_exe_path(tool_info: dict) -> str | None:
+    """Ruta completa al ejecutable del motor para la plataforma actual, o None si
+    ese motor no tiene build para este SO (ver _platform_value) -- usada tanto para
+    chequear instalación acá como para invocarlo de verdad desde
+    core/tabs/image_tools/upscale_engine.py."""
     exe_name = _platform_value(tool_info["exe"])
     if not exe_name:
-        return False
-    exe_path = os.path.join(_engine_dir(tool_info), exe_name)
-    return os.path.exists(exe_path)
+        return None
+    return os.path.join(_engine_dir(tool_info), exe_name)
+
+
+def is_upscaling_engine_installed(tool_info: dict) -> bool:
+    exe_path = get_engine_exe_path(tool_info)
+    return exe_path is not None and os.path.exists(exe_path)
 
 
 def _download_and_extract_zip(url: str, dest_dir: str, progress_callback=None, weight=(0, 100)):
@@ -157,12 +165,87 @@ def _download_and_extract_zip(url: str, dest_dir: str, progress_callback=None, w
             shutil.move(source_dir, dest_dir)
 
 
+# Upscayl es deliberadamente "más global" que el repo custom-models solo -- estos 2
+# releases oficiales (Real-ESRGAN/RealSR) aportan modelos que custom-models no tiene
+# (ver la nota en UPSCAYL_MODELS_MAP, core/constants.py). Un solo URL por fuente
+# alcanza para los 3 SO: los .bin/.param son datos de pesos, idénticos sin importar
+# qué build (windows/macos/ubuntu) del binario los acompañe -- confirmado contra el
+# árbol real de ambos releases en GitHub, así que no hace falta _platform_value() acá,
+# a diferencia de UPSCALING_TOOLS (que sí baja un ejecutable real por SO).
+_UPSCAYL_LEGACY_MODEL_SOURCES = [
+    ("Real-ESRGAN", "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-windows.zip", "realesrgan-x4plus.bin"),
+    ("RealSR", "https://github.com/nihui/realsr-ncnn-vulkan/releases/download/20220728/realsr-ncnn-vulkan-20220728-windows.zip", "DF2K_x4.bin"),
+]
+
+# Ver sanitize_upscayl_models() en el setup.pyc decompilado de DowP1: purga estos 2
+# modelos por inestabilidad conocida (no se ofrecen ni en UPSCAYL_MODELS_MAP ni acá).
+_UPSCAYL_UNSTABLE_MODELS = ("realesr-animevideov3-x2", "realesr-animevideov3-x3")
+
+
+def _sanitize_upscayl_models(models_dir: str):
+    """Purga modelos conocidos por causar errores/inestabilidad -- mismo criterio que
+    sanitize_upscayl_models() en DowP1."""
+    if not os.path.isdir(models_dir):
+        return
+    for name in _UPSCAYL_UNSTABLE_MODELS:
+        for ext in (".bin", ".param"):
+            path = os.path.join(models_dir, name + ext)
+            if os.path.exists(path):
+                try:
+                    os.remove(path)
+                    logger.info(f"Upscayl: modelo purgado por inestabilidad -- {name}{ext}")
+                except OSError as e:
+                    logger.warning(f"Upscayl: no se pudo purgar {name}{ext}: {e}")
+
+
+def _download_upscayl_legacy_models(models_dir: str, progress_callback=None):
+    """Descarga los modelos de Real-ESRGAN/RealSR que NO vienen en custom-models --
+    mismo criterio que DowP1 (canario: si el archivo ya está, se salta la descarga
+    completa, evita re-bajar ~60-80MB en cada instalación). Se filtran solo .bin/
+    .param del zip completo (que también trae el ejecutable/LICENSE/README de ese
+    proyecto, irrelevantes acá)."""
+    os.makedirs(models_dir, exist_ok=True)
+    for name, url, canary in _UPSCAYL_LEGACY_MODEL_SOURCES:
+        if os.path.exists(os.path.join(models_dir, canary)):
+            logger.info(f"Upscayl: modelos de {name} ya presentes, se omite su descarga.")
+            continue
+        try:
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                extract_dir = os.path.join(tmp_dir, "extracted")
+                logger.info(f"Upscayl: descargando modelos legacy de {name} desde {url}")
+                _download_and_extract_zip(url, extract_dir, progress_callback)
+                for root, _dirs, files in os.walk(extract_dir):
+                    for fname in files:
+                        if not fname.endswith((".bin", ".param")):
+                            continue
+                        dst_name = fname
+                        parent_name = os.path.basename(root)
+                        # El zip de RealSR trae sub-modelos nombrados genéricamente
+                        # "x4.bin"/"x4.param" dentro de subcarpetas "models-DF2K"/
+                        # "models-DF2K_JPEG" -- sin prefijo se pisarían entre sí, así
+                        # que se renombran igual que hacía DowP1 (nombre de la
+                        # subcarpeta sin el prefijo "models-" + "_" + nombre original).
+                        if fname.startswith("x4") and parent_name.startswith("models-"):
+                            dst_name = f"{parent_name[len('models-'):]}_{fname}"
+                        dst_path = os.path.join(models_dir, dst_name)
+                        if not os.path.exists(dst_path):
+                            shutil.copy2(os.path.join(root, fname), dst_path)
+        except Exception as e:
+            logger.warning(f"Upscayl: no se pudieron descargar los modelos legacy de {name}: {e}")
+    _sanitize_upscayl_models(models_dir)
+
+
 def download_upscaling_engine(tool_info: dict, progress_callback=None) -> tuple[bool, str]:
     """Descarga e instala un motor de upscaling NCNN-Vulkan completo (ejecutable +
     modelos que trae el propio zip) en bin/models/{folder}. Si el motor además define
-    `models_url` (ej. Upscayl), descarga ese zip de modelos aparte en {folder}/models.
-    El release de GitHub trae un .zip distinto por SO (windows/macos/linux) -- ver
-    _platform_value()."""
+    `models_url` (ej. Upscayl), descarga ese zip de modelos aparte, directo en
+    {folder}/ -- NO en {folder}/models/: el repo custom-models de Upscayl ya trae su
+    propia carpeta "models/" adentro (una vez desenvuelto el wrapper de GitHub
+    Archive, ver _download_and_extract_zip), así que fusionarlo en {folder}/models/
+    duplicaba el nivel y dejaba los .param en {folder}/models/models/ -- confirmado
+    con una descarga real (ver upscale_engine.py, que espera {folder}/models/*.param
+    directo). El release de GitHub trae un .zip distinto por SO (windows/macos/
+    linux) -- ver _platform_value()."""
     try:
         url = _platform_value(tool_info["url"])
         if not url:
@@ -170,15 +253,19 @@ def download_upscaling_engine(tool_info: dict, progress_callback=None) -> tuple[
 
         dest_dir = _engine_dir(tool_info)
         has_models_zip = bool(tool_info.get("models_url"))
-        engine_weight = (0, 60) if has_models_zip else (0, 100)
+        is_upscayl = tool_info.get("folder") == "upscayl"
+        engine_weight = (0, 40) if has_models_zip else (0, 100)
 
         logger.info(f"Descargando motor de upscaling '{tool_info['name']}' desde {url}")
         _download_and_extract_zip(url, dest_dir, progress_callback, weight=engine_weight)
 
         if has_models_zip:
-            models_dest = os.path.join(dest_dir, "models")
             logger.info(f"Descargando modelos de '{tool_info['name']}' desde {tool_info['models_url']}")
-            _download_and_extract_zip(tool_info["models_url"], models_dest, progress_callback, weight=(60, 100))
+            _download_and_extract_zip(tool_info["models_url"], dest_dir, progress_callback,
+                                       weight=(40, 70) if is_upscayl else (40, 100))
+
+        if is_upscayl:
+            _download_upscayl_legacy_models(os.path.join(dest_dir, "models"), progress_callback)
 
         if not is_upscaling_engine_installed(tool_info):
             return False, f"No se encontró {_platform_value(tool_info['exe'])} tras la instalación."

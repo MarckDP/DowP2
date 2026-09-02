@@ -94,7 +94,16 @@ class ImageConverter:
             if resize_enabled and target_size and input_ext not in _VECTOR_EXTS:
                 img = self._resize_raster_image(img, target_size, maintain_aspect, options)
             if progress_callback:
-                progress_callback(70)
+                progress_callback(60)
+            if cancellation_event and cancellation_event.is_set():
+                return False, "Cancelado por el usuario."
+
+            # Reescalar IA -- mismo orden que usaba DowP1 (Redimensionar primero,
+            # Reescalar IA después): son ejes independientes, no se descartan entre sí.
+            if options.get("upscale_enabled", False):
+                img = self._apply_ai_upscale(img, options, cancellation_event)
+            if progress_callback:
+                progress_callback(80)
 
             if output_format == "NO CONVERTIR":
                 self._save_passthrough(img, input_ext, output_path, options)
@@ -229,6 +238,27 @@ class ImageConverter:
         if new_height > target_height:
             new_height, new_width = target_height, int(target_height * original_aspect)
         return img.resize((new_width, new_height), resampling)
+
+    def _apply_ai_upscale(self, img, options: dict, cancellation_event=None):
+        """Corre el motor de Reescalar IA (Waifu2x/SRMD/Upscayl, ver
+        core/tabs/image_tools/upscale_engine.py) sobre `img` -- los 3 son binarios
+        externos (archivo-a-archivo), así que hay que volcar la imagen a un PNG
+        temporal, invocar el motor, y recargar el resultado como PIL.Image."""
+        import tempfile
+        from core.tabs.image_tools.upscale_engine import run_upscale
+
+        with tempfile.TemporaryDirectory(prefix="dowp_upscale_") as tmp_dir:
+            temp_in = os.path.join(tmp_dir, "in.png")
+            temp_out = os.path.join(tmp_dir, "out.png")
+            img.save(temp_in, "PNG")
+
+            success, message = run_upscale(temp_in, temp_out, options, cancellation_event)
+            if not success:
+                raise Exception(f"Reescalar IA: {message}")
+
+            result = Image.open(temp_out)
+            result.load()
+            return result
 
     # ------------------------------------------------------------------
     # Guardado -- todo Pillow/img2pdf, sin binarios externos.

@@ -41,7 +41,7 @@ class RecodeOptionsWidget(QFrame):
     toggled_collapse = Signal(bool)
     # Emitida cuando cambia si hay una recodificación realmente activa (switch
     # encendido + preset elegido, no "Sin preset") - la usa quick_mode_view.py para
-    # replicar el resaltado en su propia etiqueta "Recodificar" externa (acá el
+    # replicar el resaltado en su propia etiqueta "Recodificar" externa (aquí el
     # header vive oculto, ver show_header=False).
     header_highlight_changed = Signal(bool)
 

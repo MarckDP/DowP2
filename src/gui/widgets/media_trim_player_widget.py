@@ -720,7 +720,7 @@ class _CropOverlayItem(QGraphicsObject):
     zoom/paneo de _TransparentVideoView sin ningún código extra.
 
     El ítem no usa pos()/transform propios (queda siempre en el origen de la escena), así
-    que todas las coordenadas de _video_rect/_crop_rect usadas acá son directamente
+    que todas las coordenadas de _video_rect/_crop_rect usadas aquí son directamente
     coordenadas de escena, sin necesidad de mapToScene/mapFromScene.
     """
 
@@ -1033,9 +1033,9 @@ class _DraggableWatermarkItem(QGraphicsObject):
     fx/fy son la posición de la esquina superior-izquierda como fracción del espacio de
     arrastre disponible (0 = pegado arriba/izquierda, 1 = pegado abajo/derecha) — mismo
     fx/fy que consume watermark_builder.py para armar las expresiones de ffmpeg
-    (w-tw)*fx / (h-th)*fy, así que lo que se ve acá corresponde 1 a 1 con la fórmula
+    (w-tw)*fx / (h-th)*fy, así que lo que se ve aquí corresponde 1 a 1 con la fórmula
     que realmente va a aplicar ffmpeg. El "tamaño" (size_pct de texto, scale_pct de
-    imagen) también se puede arrastrar acá, y se sincroniza en vivo con el slider del
+    imagen) también se puede arrastrar aquí, y se sincroniza en vivo con el slider del
     panel — ver AdvancedRecodePanel.set_text_watermark_size/set_image_watermark_size."""
 
     changed = Signal()  # se emite al final de cada arrastre real (mover o redimensionar)
@@ -1468,7 +1468,7 @@ class MediaTrimPlayerWidget(QWidget):
         prev_layout.addWidget(self.empty_preview_widget, 1)
 
         # Reloj global: franja delgada al pie de la vista previa (antes vivía en ctrl_bar,
-        # abajo del todo, separado del video — se movió acá adentro porque ya hay espacio
+        # abajo del todo, separado del video — se movió aquí adentro porque ya hay espacio
         # y queda junto a lo que representa).
         self.lbl_time_info = QLabel("00:00:00.000 / 00:00:00.000")
         self.lbl_time_info.setAlignment(Qt.AlignCenter)
@@ -1770,7 +1770,7 @@ class MediaTrimPlayerWidget(QWidget):
         self._root_layout.removeItem(self.ctrl_bar)
         timeline_layout.addLayout(self.ctrl_bar)
 
-        # A partir de acá, ctrl_bar/zoom_bar viven en timeline_container (no en self), así
+        # A partir de aquí, ctrl_bar/zoom_bar viven en timeline_container (no en self), así
         # que el recálculo de controles compactos debe seguir SU ancho, no el de self.
         self._timeline_container = timeline_container
         timeline_container.installEventFilter(self)
@@ -1785,7 +1785,7 @@ class MediaTrimPlayerWidget(QWidget):
         controles de audio.
 
         El umbral de volumen (500) es más alto que el de editing_media_view.py (260) a
-        propósito: ctrl_bar acá tiene más contenido fijo a la derecha (botones In/Out +
+        propósito: ctrl_bar aquí tiene más contenido fijo a la derecha (botones In/Out +
         2 campos de tiempo), y ese contenido empezaba a superponerse con el slider de
         volumen bastante antes de los 260px — con el popup vertical de respaldo (ver
         VolumeControlWidget), esconder el slider antes ya no pierde funcionalidad."""
@@ -1824,7 +1824,7 @@ class MediaTrimPlayerWidget(QWidget):
 
         `initial_audio_track_selection` (None/"all"/int) se aplica recién en
         _rebuild_audio_track_menu(), cuando el reproductor termina de detectar las pistas
-        reales de ESTE archivo (es asíncrono) - acá solo se deja pendiente."""
+        reales de ESTE archivo (es asíncrono) - aquí solo se deja pendiente."""
         self.cleanup(stop_only=True)
 
         self.media_path = media_path or ""
@@ -2155,7 +2155,7 @@ class MediaTrimPlayerWidget(QWidget):
         self._reposition_quality_button()
         # Si extract_timeline_container() ya se llamó (VideoToolsTab), ctrl_bar/zoom_bar ya
         # no viven en self — su ancho real se sigue por separado vía eventFilter sobre
-        # _timeline_container (ver más abajo), no acá.
+        # _timeline_container (ver más abajo), no aquí.
         if getattr(self, "_timeline_container", None) is None:
             self._recalculate_compact_controls(self.width())
 
@@ -2262,7 +2262,7 @@ class MediaTrimPlayerWidget(QWidget):
             if self._pending_source_restore is not None:
                 pending = self._pending_source_restore
                 self._pending_source_restore = None
-                # setPosition() justo acá a veces no alcanza: el backend FFmpeg de Qt Multimedia
+                # setPosition() justo aquí a veces no alcanza: el backend FFmpeg de Qt Multimedia
                 # reporta LoadedMedia/BufferedMedia un instante antes de terminar su propia
                 # inicialización interna (tabla de seek, primer frame), y puede pisar nuestro
                 # setPosition() con su propio arranque en 0. Un pequeño delay le da tiempo a
@@ -2306,7 +2306,7 @@ class MediaTrimPlayerWidget(QWidget):
             return
 
         # Selección restaurada por load_media() (ver caché por archivo en
-        # video_tools_view.py) - se aplica una sola vez, acá, que es cuando recién se
+        # video_tools_view.py) - se aplica una sola vez, aquí, que es cuando recién se
         # conocen las pistas REALES de este archivo (tracksChanged es asíncrono).
         pending = self._pending_audio_track_selection
         self._pending_audio_track_selection = None

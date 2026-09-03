@@ -3,7 +3,7 @@
 (core/constants.py) directo con onnxruntime, sin pasar por la librería `rembg` de
 PyPI: DowP1 la importaba (image_converter.pyc, `_load_rembg_lazy`) pero nunca
 llegó a invocar su API real para inferir -- import muerto, confirmado revisando
-el decompilado completo. Todo el trabajo pasaba (y acá también) por
+el decompilado completo. Todo el trabajo pasaba (y aquí también) por
 onnxruntime.InferenceSession crudo con pre/post-procesado manual.
 
 Un solo pipeline para las 4 familias (Standard U2Net, BiRefNet, RMBG 2.0,
@@ -165,7 +165,7 @@ def remove_background(img: Image.Image, options: dict, progress_callback=None) -
     if not os.path.exists(model_path):
         model_name = options.get("rembg_model")
         raise FileNotFoundError(
-            f"El modelo '{model_name}' no está instalado -- andá a Ajustes > Modelos para descargarlo."
+            f"El modelo '{model_name}' no está instalado -- ve a Ajustes > Modelos para descargarlo."
         )
 
     use_gpu = options.get("rembg_gpu", True)

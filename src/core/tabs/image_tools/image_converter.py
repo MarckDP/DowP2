@@ -186,7 +186,7 @@ class ImageConverter:
         img.load()
         if target_size:
             # resvg ya renderiza cerca del tamaño pedido, pero el ancho/alto exacto
-            # (con proporción mantenida) se corrige acá -- mismo criterio que DowP1
+            # (con proporción mantenida) se corrige aquí -- mismo criterio que DowP1
             # aplicaba sobre la salida de CairoSVG.
             img = self._resize_raster_image(img, target_size, maintain_aspect, options)
         return img
@@ -231,10 +231,10 @@ class ImageConverter:
         if not check_ghostscript():
             import platform as _platform
             if _platform.system() == "Windows":
-                hint = "instalalo desde Ajustes > Dependencias, o aceptá la descarga que te ofrece Convertir."
+                hint = "instálalo desde Ajustes > Dependencias, o acepta la descarga que te ofrece Convertir."
             else:
                 label, cmd = get_install_info()
-                hint = f"instalalo desde tu terminal vía {label}: {cmd}"
+                hint = f"instálalo desde tu terminal vía {label}: {cmd}"
             raise UnsupportedFormatError(
                 f"{os.path.splitext(filepath)[1].upper()} necesita Ghostscript -- {hint}"
             )
@@ -307,7 +307,7 @@ class ImageConverter:
 
         Este paso suele ser el más lento de todo convert_file() (inferencia por
         GPU) -- antes quedaba "clavado" en el 70% del progreso general mientras
-        corría, sin ningún indicio de que seguía trabajando. Acá se mapea el
+        corría, sin ningún indicio de que seguía trabajando. Aquí se mapea el
         progreso propio del motor (0-100, ver run_upscale) al tramo 70-85 del
         progreso general (después de Eliminar Fondo, ver _apply_rembg), mismo
         criterio que usaba DowP1 para el reescalado de video (video_upscaler.pyc:
@@ -374,9 +374,9 @@ class ImageConverter:
         puerto directo de _apply_canvas_by_option/_calculate_canvas_position de
         DowP1 (image_converter.pyc decompilado), PIL puro. Cada archivo del lote
         adapta el mismo preset a su propio tamaño nativo -- no es una posición/
-        tamaño fijo, se recalcula acá por imagen. El Canvas editado a mano sobre el
+        tamaño fijo, se recalcula aquí por imagen. El Canvas editado a mano sobre el
         archivo actualmente abierto (clic izquierdo, en vivo) es un concepto
-        separado -- ver la nota de Fase 3 en el plan, no pasa por acá."""
+        separado -- ver la nota de Fase 3 en el plan, no pasa por aquí."""
         img_width, img_height = img.size
         if img.mode != "RGBA":
             img = img.convert("RGBA")

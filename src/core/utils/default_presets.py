@@ -23,7 +23,7 @@ from core.utils.audio_filter_builder import build_loudnorm_filter
 _NAMESPACE = "video_tools/avanzado"
 
 # Versión de ESTE catálogo (no del preset individual): subir cuando se agregue/cambie un
-# preajuste acá, para que PresetManager sepa que hay defaults nuevos para sembrar sin
+# preajuste aquí, para que PresetManager sepa que hay defaults nuevos para sembrar sin
 # resembrar (ni resucitar) los que el usuario ya haya modificado o borrado - ver
 # PresetManager.seed_defaults().
 DEFAULT_PRESETS_VERSION = 1

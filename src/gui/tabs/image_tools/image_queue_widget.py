@@ -12,13 +12,13 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QMenu,
 )
-from PySide6.QtCore import Qt, Signal, QSize, QUrl, QThread, QAbstractTableModel, QModelIndex
+from PySide6.QtCore import Qt, Signal, QSize, QUrl, QThread, QAbstractTableModel, QModelIndex, QEvent
 from PySide6.QtGui import QDragEnterEvent, QDropEvent
 
 from gui.styles import get_theme_token, create_colored_circle_icon
 from gui.tabs.editing_media.editing_media_icons import get_colored_svg_icon
 from core.tabs.editing_media.thumbnail_cache_manager import ThumbnailCacheManager
-from core.tabs.editing_media.editing_media_logic import VALID_IMAGE_EXTS, VALID_VECTOR_EXTS
+from core.tabs.editing_media.editing_media_logic import VALID_IMAGE_EXTS, VALID_VECTOR_EXTS, format_size
 from core.logger.logger_manager import logger
 
 # Copia adaptada de gui/tabs/video_tools/media_queue_widget.py::MediaQueueWidget (misma
@@ -113,7 +113,7 @@ class _QueueTableModel(QAbstractTableModel):
     def update_status(self, path: str, status_text: str):
         """Llamado desde ImageQueueWidget.update_file_status() -- guarda el estado
         (persiste entre resets, a diferencia de _sizes que es solo cache) y emite
-        dataChanged puntual de esa fila nomás, sin tocar el resto del modelo."""
+        dataChanged puntual de esa fila solamente, sin tocar el resto del modelo."""
         self._statuses[path] = status_text
         row = self._path_to_row.get(path)
         if row is not None:
@@ -137,8 +137,9 @@ class _QueueTableModel(QAbstractTableModel):
         if cached is not None:
             return cached
         try:
-            size_mb = os.path.getsize(path) / (1024 * 1024)
-            s = f"{size_mb:.1f} MB"
+            # Mismo formato que el Gestor de Medios (format_size, KB para archivos
+            # chicos en vez de forzar siempre MB, ver editing_media_logic.py).
+            s = format_size(os.path.getsize(path))
         except Exception:
             s = "N/A"
         self._sizes[path] = s
@@ -181,7 +182,7 @@ class _PathScanThread(QThread):
     """Escanea en un hilo de fondo una lista de rutas (archivos y/o carpetas) --
     evita que os.walk() de una carpeta enorme bloquee la UI al arrastrarla o
     elegirla desde "Agregar Carpeta" (mismo espíritu que AsyncIndexerThread del
-    Gestor de Medios, sin todo su aparato de índice persistente -- acá es un uso
+    Gestor de Medios, sin todo su aparato de índice persistente -- aquí es un uso
     único por importación)."""
     finished_scan = Signal(list)
 
@@ -312,6 +313,12 @@ class ImageQueueWidget(QFrame):
         self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._show_context_menu)
         self.tree.selectionModel().selectionChanged.connect(self._on_selection_changed)
+        # Suprimir/Backspace con foco en la lista elimina la selección actual de la
+        # cola (no del disco) -- mismo criterio que "Eliminar de la cola" del menú
+        # contextual (ver remove_selected). QTreeView es una clase de Qt, no una
+        # subclase propia, así que se intercepta vía eventFilter en vez de
+        # sobreescribir keyPressEvent directamente.
+        self.tree.installEventFilter(self)
 
         self.tree.setStyleSheet(f"""
             QTreeView#imageQueueTree {{
@@ -359,13 +366,18 @@ class ImageQueueWidget(QFrame):
         """)
 
         header = self.tree.header()
-        header.setStretchLastSection(False)
+        # Interactive en las 4 columnas para poder redimensionar cada una a mano
+        # (ver comentario equivalente en MediaQueueWidget). stretchLastSection en
+        # True para que Estado (la última) absorba por defecto el espacio horizontal
+        # sobrante en vez de dejarlo vacío -- no bloquea el resize manual, el usuario
+        # igual puede arrastrar el borde entre Peso y Estado para ajustar ambas.
+        header.setStretchLastSection(True)
         header.setSectionResizeMode(0, QHeaderView.Interactive)
         header.setSectionResizeMode(1, QHeaderView.Interactive)
         header.setSectionResizeMode(2, QHeaderView.Interactive)
         header.setSectionResizeMode(3, QHeaderView.Interactive)
         # Anchos por defecto más chicos que MediaQueueWidget (que asumía un panel más
-        # ancho): acá el panel es angosto (~380px) -- estos igual son interactivos,
+        # ancho): aquí el panel es angosto (~380px) -- estos igual son interactivos,
         # el usuario los puede agrandar a mano si hace falta.
         self.tree.setColumnWidth(0, 140)
         self.tree.setColumnWidth(1, 45)
@@ -452,6 +464,13 @@ class ImageQueueWidget(QFrame):
         self._update_counter()
         self.file_selected.emit("")
 
+    def eventFilter(self, obj, event):
+        if obj is self.tree and event.type() == QEvent.KeyPress:
+            if event.key() in (Qt.Key_Delete, Qt.Key_Backspace):
+                self.remove_selected()
+                return True
+        return super().eventFilter(obj, event)
+
     def remove_selected(self):
         rows = sorted({idx.row() for idx in self.tree.selectionModel().selectedRows()})
         removed_paths = [self._model.path_at(r) for r in rows]
@@ -515,7 +534,7 @@ class ImageQueueWidget(QFrame):
         auto-corrige: se limpia el registro interno y la fila vuelve a mostrar
         "Resultado eliminado" en vez de seguir diciendo "Completado" para un
         archivo que ya no está. Único punto de verdad -- todo lo que decide si
-        mostrar Comparar/Copiar pasa por acá (ver ImageToolsTab)."""
+        mostrar Comparar/Copiar pasa por aquí (ver ImageToolsTab)."""
         output_path = self._output_paths.get(filepath)
         if output_path and not os.path.exists(output_path):
             self._output_paths.pop(filepath, None)

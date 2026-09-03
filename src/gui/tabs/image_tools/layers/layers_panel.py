@@ -1,7 +1,7 @@
 # src/gui/tabs/image_tools/layers/layers_panel.py
 """Contenido del panel flotante "Capas" -- SIN fila de herramientas (Seleccionar/
 Rectángulo/Elipse/Línea/Pincel ahora son botones propios en la franja superior de
-image_tools_view.py, ver set_active_tool_ui); acá solo queda el estilo de dibujo
+image_tools_view.py, ver set_active_tool_ui); aquí solo queda el estilo de dibujo
 (relleno/borde/ancho, tamaño de pincel), "+ Fondo" y la lista de capas (LayerRow,
 mismo patrón de fila-con-botones-propios que QueueItemCard en
 gui/widgets/queue_panel.py, con look más compacto/tipo Photoshop: miniatura +
@@ -22,7 +22,7 @@ _KIND_ICON = {"image": "image.svg", "shape": "edit.svg", "raster": "content_cut.
 
 def _ignore_wheel(widget):
     """Evita que la rueda del mouse le cambie el valor a `widget` (comportamiento
-    default de QSlider/QComboBox al pasar el cursor por encima) -- necesario acá
+    default de QSlider/QComboBox al pasar el cursor por encima) -- necesario aquí
     porque este panel flota LIBREMENTE encima de la vista previa (ver
     floating_panel.py); sin esto, intentar hacer zoom con la rueda mientras el
     cursor pasa cerca de un slider (tamaño de pincel, opacidad de una capa) le

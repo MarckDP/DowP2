@@ -45,7 +45,7 @@ class ConvertPanel(QWidget):
     """
     Pestaña "Convertir": selector Rápido/Manual.
 
-    A diferencia de Comprimir (siempre recodifica, el eje es tamaño/calidad), acá el
+    A diferencia de Comprimir (siempre recodifica, el eje es tamaño/calidad), aquí el
     objetivo es cambiar de contenedor preservando calidad y velocidad - si el códec de
     origen ya es compatible con el contenedor destino (confirmado por el matrix, ver
     core/tabs/video_tools/convert_advisor.py), la conversión es un remux (-c copy,
@@ -141,7 +141,7 @@ class ConvertPanel(QWidget):
         combo.setCursor(Qt.PointingHandCursor)
 
     def _populate_container_combo(self, combo: QComboBox):
-        """Lista COMPLETA de contenedores del matrix (a diferencia de Comprimir, acá no
+        """Lista COMPLETA de contenedores del matrix (a diferencia de Comprimir, aquí no
         se filtra por códec de origen: el usuario elige destino libremente, la app decide
         después si hace falta recodificar - ver convert_advisor.plan_conversion), agrupada
         en Video / Solo Audio según advisor.container_accepts_video_for_convert - el
@@ -504,14 +504,14 @@ class ConvertPanel(QWidget):
         if plan["video"] is not None:
             video_choice = self._current_manual_video_choice()
             if video_choice == "copy" and plan["video"] == "recode":
-                reason = self.tr("El video de origen ({0}) no es compatible con {1} — elegí recodificar o cambiá el contenedor.").format(
+                reason = self.tr("El video de origen ({0}) no es compatible con {1} — elige recodificar o cambia el contenedor.").format(
                     (plan["video_codec_source"] or "?").upper(), container_label
                 )
                 self._set_valid(False, reason)
                 self.lbl_manual_status.setText(reason)
                 return
             if video_choice != "copy" and not is_stream_copy_compatible(video_choice, container_id):
-                reason = self.tr("{0} no es un códec de video válido para {1} — elegí otro.").format(
+                reason = self.tr("{0} no es un códec de video válido para {1} — elige otro.").format(
                     video_choice.upper(), container_label
                 )
                 self._set_valid(False, reason)
@@ -521,14 +521,14 @@ class ConvertPanel(QWidget):
         if plan["audio"] is not None:
             audio_choice = self._current_manual_audio_choice()
             if audio_choice == "copy" and plan["audio"] == "recode":
-                reason = self.tr("El audio de origen ({0}) no es compatible con {1} — elegí recodificar o cambiá el contenedor.").format(
+                reason = self.tr("El audio de origen ({0}) no es compatible con {1} — elige recodificar o cambia el contenedor.").format(
                     (plan["audio_codec_source"] or "?").upper(), container_label
                 )
                 self._set_valid(False, reason)
                 self.lbl_manual_status.setText(reason)
                 return
             if audio_choice != "copy" and not is_stream_copy_compatible(audio_choice, container_id):
-                reason = self.tr("{0} no es un códec de audio válido para {1} — elegí otro.").format(
+                reason = self.tr("{0} no es un códec de audio válido para {1} — elige otro.").format(
                     audio_choice.upper(), container_label
                 )
                 self._set_valid(False, reason)

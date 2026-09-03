@@ -119,7 +119,7 @@ class DownloadController(QObject):
 
             # Mientras el job tenga fragmentos, el progreso numérico crudo de
             # yt-dlp (downloading/finished) no representa el avance real del
-            # job completo (se dispara una vez por fragmento) — se ignora acá
+            # job completo (se dispara una vez por fragmento) — se ignora aquí
             # y la barra queda a cargo únicamente de fragment_progress.
             if has_fragments:
                 return
@@ -244,7 +244,7 @@ class DownloadController(QObject):
         """Jobs del QueueManager que le corresponden a ESTA pestaña (Proceso Avanzado).
         El QueueManager es compartido con Herramientas Multimedia (jobs "RECODE") - sin
         este filtro, encolar una recodificación desde la otra pestaña contaminaba el
-        progreso agregado de acá ("X de Y completados" contando recodificaciones ajenas)
+        progreso agregado de aquí ("X de Y completados" contando recodificaciones ajenas)
         y los logs de esta clase (ver conversación: aparecían mensajes "Fallo en
         descarga" para jobs que en realidad eran recodificaciones)."""
         return [j for j in self.queue_mgr.get_all_jobs() if j.job_type in ("DOWNLOAD", "PLAYLIST")]
@@ -412,7 +412,7 @@ class DownloadController(QObject):
                     CleanupManager.deferred_cleanup(output_dir, title, keep_thumbnail=keep_thumb)
 
                 if job.job_type == "DOWNLOAD" and job.request_data.get("recode_enabled"):
-                    # job.final_filepath ya viene resuelto correctamente acá (ver
+                    # job.final_filepath ya viene resuelto correctamente aquí (ver
                     # QueueWorker._execute_download en queue_manager.py, que lo reconstruye
                     # con el título REAL post-conflicto — job.request_data en cambio nunca
                     # se actualiza con ese título, así que NO sirve para reconstruir la ruta).
@@ -465,14 +465,14 @@ class DownloadController(QObject):
         Si se elimina de la cola (botón "X" de la tarjeta) un job DOWNLOAD que todavía
         tiene una recodificación en curso, cancelarla también - QueuePanel conecta el
         botón de borrar directo a queue_mgr.remove_job() (ver queue_panel.py), sin pasar
-        por acá, así que sin esto el job RECODE quedaba huérfano: la tarjeta desaparece
+        por aquí, así que sin esto el job RECODE quedaba huérfano: la tarjeta desaparece
         pero ffmpeg sigue corriendo de fondo sin que nada lo controle (ver conversación,
         reproducido con un GIF grande que tardaba minutos).
 
         queue_mgr.remove_job() en el recode dispara la misma cancelación que ya usa
         cualquier otro cancel (worker.cancel() -> termina el proceso ffmpeg -> termina
         emitiendo job_status_changed CANCELLED), que _on_recode_job_status ya sabe
-        resolver (restaura el .dbak) - no hace falta duplicar esa lógica acá.
+        resolver (restaura el .dbak) - no hace falta duplicar esa lógica aquí.
         """
         orphaned_recode_ids = [
             recode_id for recode_id, target in self._recode_by_download.items()
@@ -610,11 +610,11 @@ class DownloadController(QObject):
             # La cola global nace pausada (ver QueueManager.__init__) y en modo SOLO
             # nada más la despausa (a diferencia de LOTES, cuyo start_download() ya la
             # arranca antes de que un job pueda siquiera completarse y llegar hasta
-            # acá) - sin esto, un job RECODE encolado desde SOLO se quedaba esperando su
+            # aquí) - sin esto, un job RECODE encolado desde SOLO se quedaba esperando su
             # turno indefinidamente si el usuario nunca había tocado LOTES o
             # Herramientas Multimedia en la misma sesión (ver conversación: quedaba en
             # cuarentena ".dbak" para siempre, sin recodificar). No se llama para LOTES:
-            # ahí la cola ya está corriendo por definición, y reanudarla de nuevo acá
+            # ahí la cola ya está corriendo por definición, y reanudarla de nuevo aquí
             # podría reactivar otros jobs que el usuario haya pausado a propósito.
             self.queue_mgr.start_queue()
         else:
@@ -785,7 +785,7 @@ class DownloadController(QObject):
         Con corte de fragmentos, cada uno termina en su propio archivo
         "..._{sufijo}{ext}" (ver downloader_master.py: individual_download y
         _handle_local_cuts nombran así cada fragmento) - a diferencia de una descarga
-        normal, acá NO alcanza con una sola ruta reconstruida (_resolve_final_download_path
+        normal, aquí NO alcanza con una sola ruta reconstruida (_resolve_final_download_path
         solo arma "{título}{ext}", que no matchea ningún fragmento). Se busca cada
         fragmento por PATRÓN de nombre en vez de reconstruir "{título}_{sufijo}{ext}" a
         mano: en modo LOTES, request_data["title"] puede no estar sanitizado (

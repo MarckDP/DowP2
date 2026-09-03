@@ -28,12 +28,12 @@ class PresetBar(QWidget):
     - `show_save_button=True, show_picker=False` (ej. AdvancedRecodePanel): la
       pestaña donde el usuario ARMA la configuración a mano. Solo aparece el
       botón "Guardar como preajuste", que abre un diálogo para nombrarlo y lo
-      guarda vía `get_settings()`. No hay combo acá - esta pestaña nunca
+      guarda vía `get_settings()`. No hay combo aquí - esta pestaña nunca
       "aplica" un preset a sus propios controles.
 
     - `show_picker=True, show_save_button=False` (ej. PresetsPanel, la pestaña
       central "Preajustes"): la pestaña donde el usuario ELIGE qué preset usar
-      para el próximo trabajo, sin pasar por la pestaña que lo creó. Acá
+      para el próximo trabajo, sin pasar por la pestaña que lo creó. Aquí
       aparecen el combo (solo selección, no editable) + Exportar/Importar/
       Eliminar, pero no "Guardar" (esta pestaña no arma configuraciones
       propias, solo administra las que otras pestañas ya guardaron).
@@ -58,7 +58,7 @@ class PresetBar(QWidget):
         # core.utils.preset_manager.PRESET_FUNCTIONS) - default_function precarga (pero
         # no fija) la categoría en el diálogo de guardado cuando esta barra vive en una
         # pestaña con una función fija conocida (ej. una futura Convertir con guardado
-        # propio pasaría "convertir" acá); None (ej. Avanzado, que arma cualquier cosa)
+        # propio pasaría "convertir" aquí); None (ej. Avanzado, que arma cualquier cosa)
         # deja el combo del diálogo sin preseleccionar nada en particular.
         self._default_function = default_function
         self._job_type = job_type

@@ -30,7 +30,7 @@ _MAX_VISIBLE_COMBO_ITEMS = 12
 # edición reconocidas en toda la industria (Premiere/Resolve/Avid/FCP) - confirmadas
 # contra el matrix real de ESTE ffmpeg empaquetado, no adivinadas (ver conversación:
 # CineForm en particular es la trampa típica de builds recortados que solo lo traen como
-# decoder - acá sí tiene encoder que funciona de verdad).
+# decoder - aquí sí tiene encoder que funciona de verdad).
 _EDIT_CODEC_IDS = ["prores", "dnxhd", "cfhd"]
 _EDIT_CODEC_LABELS = {"prores": "Apple ProRes", "dnxhd": "Avid DNxHR", "cfhd": "GoPro CineForm"}
 _EDIT_CODEC_DEFAULT_ENCODER = {"prores": "prores_ks", "dnxhd": "dnxhd", "cfhd": "cfhd"}

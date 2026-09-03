@@ -358,7 +358,7 @@ class QueueWorker(QThread):
             # _resolve_output_conflict/_sanitize_filename en downloader_master.py). El
             # hint de yt-dlp ya cargado en job.final_filepath (arriba, vía el hook de
             # progreso) además apunta al archivo INTERMEDIO de un stream en modos que
-            # fusionan video+audio (ej. HLS) - se reconstruye la ruta real acá, en la
+            # fusionan video+audio (ej. HLS) - se reconstruye la ruta real aquí, en la
             # única capa que tiene la copia mutada a mano, y solo se usa si existe en
             # disco (si no, se deja el hint como estaba).
             title = config_to_use.get("title")
@@ -692,7 +692,7 @@ class QueueWorker(QThread):
         # un solo frame — sin -loop 1 el overlay corta el video entero en el frame 0. Si
         # el archivo se borró/movió después de armar la cola (ej. desde un preajuste
         # viejo), se degrada en silencio a "sin marca de agua" en vez de fallar el job
-        # entero — el aviso real ya debería haber pasado en la UI antes de llegar acá.
+        # entero — el aviso real ya debería haber pasado en la UI antes de llegar aquí.
         watermark_image_path = settings.get("watermark_image_path")
         watermark_overlay_filter = settings.get("watermark_overlay_filter")
         use_watermark_image = bool(watermark_image_path and watermark_overlay_filter)

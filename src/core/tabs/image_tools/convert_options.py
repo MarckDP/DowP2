@@ -1,7 +1,7 @@
 # src/core/tabs/image_tools/convert_options.py
 """Constantes y valores por defecto para "Convertir" (Editor de Imagen) -- sin Qt,
 mismo rol que core/tabs/video_tools/convert_advisor.py para su propio Convertir,
-pero sin lógica de "plan" (acá no hay copy-vs-recode: cada archivo simplemente se
+pero sin lógica de "plan" (aquí no hay copy-vs-recode: cada archivo simplemente se
 re-codifica al formato elegido, ver core/tabs/image_tools/image_converter.py).
 Valores por defecto tomados 1:1 de los que usaba DowP1 (image_converter.pyc
 decompilado) -- único agregado: avif_quality, que DowP1 no exponía en su UI pese a

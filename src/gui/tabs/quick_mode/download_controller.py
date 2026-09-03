@@ -530,7 +530,7 @@ class QuickDownloadController(QObject):
             if success:
                 if fragment_files:
                     # Corte con fragmentos: una sola fila representa TODOS (ver
-                    # open_cut_dialog_and_download), así que acá no hay un único
+                    # open_cut_dialog_and_download), así que aquí no hay un único
                     # actual_path - hay uno por fragmento, acumulado en
                     # task_data['_fragment_files'] por _on_task_progress.
                     ordered = [
@@ -558,7 +558,7 @@ class QuickDownloadController(QObject):
                 # self.last_downloaded_filepath es un rastro GLOBAL (última descarga de
                 # cualquier tarea/fila) - solo sirve de respaldo cuando la tarea tiene una
                 # sola fila. Con una playlist (varias filas por tarea, ver
-                # _resolve_target_rows) usarlo acá terminaría recodificando o marcando
+                # _resolve_target_rows) usarlo aquí terminaría recodificando o marcando
                 # "Completado" con el archivo de OTRA fila si esta nunca recibió su
                 # propio evento "finished" (p. ej. un ítem fallido con
                 # ignoreerrors='only_download', ver downloader_master.py).
@@ -796,7 +796,7 @@ class QuickDownloadController(QObject):
             # _queue_fragment_recodes) - no se resuelve el estado final de la fila
             # hasta que TODAS las recodificaciones del grupo terminen. Las que sigan
             # pendientes van a ir mostrando su propio "Recodificando N de M..." apenas
-            # les toque correr (ver _on_recode_job_progress) - acá no hace falta
+            # les toque correr (ver _on_recode_job_progress) - aquí no hace falta
             # empujar ese texto a mano.
             results = self._row_recode_results.setdefault(row, {"all_ok": True, "final_paths": []})
             results["all_ok"] = results["all_ok"] and ok

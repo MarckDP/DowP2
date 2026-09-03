@@ -11,7 +11,7 @@ instalador se abre como archivo NSIS y expone bin/gswin64c.exe + lib/ +
 Resource/ intactos, la disposición estándar que Ghostscript necesita en tiempo
 de ejecución).
 
-7-Zip en sí no es una dependencia del proyecto (no hay ninguna acá) -- se
+7-Zip en sí no es una dependencia del proyecto (no hay ninguna aquí) -- se
 bootstrapea desde el paquete NuGet "7-Zip.x64" (un ZIP plano, a diferencia de
 la "Extra" del propio 7-zip.org, que es un .7z y sería circular). Se cachea
 una sola vez en bin/dependences/_tools/7zip/ (prefijo "_tools": detalle interno,

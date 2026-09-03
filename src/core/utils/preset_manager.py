@@ -18,7 +18,7 @@ def _get_presets_path() -> str:
 # ej. despues de una descarga en Proceso Avanzado - donde a nadie le importa si el
 # preajuste se armó en Convertir o en Avanzado, sino qué va a hacer). Registro abierto a
 # propósito: agregar una función nueva (ej. "gif", "ia_reescalar", "extraer_fotogramas"
-# el día que existan) es sumar una entrada acá, no reestructurar nada de lo guardado.
+# el día que existan) es sumar una entrada aquí, no reestructurar nada de lo guardado.
 PRESET_FUNCTIONS = {
     "convertir": "Convertir",
     "comprimir": "Comprimir",

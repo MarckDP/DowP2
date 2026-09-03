@@ -4,8 +4,8 @@ CollapsibleSection — sección con header clicable que expande/colapsa su conte
 animación. Mismo patrón de interacción que SubtitleOptionsWidget
 (gui/tabs/advanced_process/subtitle_options.py), pero genérico y con una diferencia clave:
 esa clase anima hacia una EXPANDED_HEIGHT fija porque su contenido es estático, mientras que
-acá el contenido (tarjetas de Video/Audio/Transformación/Marca de agua) puede crecer o
-encogerse en vivo (p.ej. tildar "Normalizar audio" agrega controles) — por eso la altura
+aquí el contenido (tarjetas de Video/Audio/Transformación/Marca de agua) puede crecer o
+encogerse en vivo (p.ej. marcar "Normalizar audio" agrega controles) — por eso la altura
 expandida se recalcula desde el sizeHint() real del contenido en vez de ser una constante,
 y al terminar de expandir se libera la altura máxima en vez de dejarla fija.
 """
@@ -74,10 +74,10 @@ class CollapsibleSection(QFrame):
         body_layout.addWidget(content)
         main_layout.addWidget(self.body_container)
 
-        # `content` puede crecer/encogerse en vivo (p.ej. tildar "Normalizar audio" agrega
+        # `content` puede crecer/encogerse en vivo (p.ej. marcar "Normalizar audio" agrega
         # controles) mucho después de expandirse — un QEvent.LayoutRequest se dispara sobre
         # `content` cada vez que su propio layout invalida su tamaño, así que lo escuchamos
-        # acá para reajustar la altura fija de la sección automáticamente, sin tener que
+        # aquí para reajustar la altura fija de la sección automáticamente, sin tener que
         # instrumentar cada uno de los toggles internos de AdvancedRecodePanel.
         content.installEventFilter(self)
 

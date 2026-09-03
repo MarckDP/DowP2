@@ -109,7 +109,7 @@ class VideoToolsTab(QWidget):
         # Recorte temporal (trim) por archivo: {filepath: (in_sec, out_sec)}. A diferencia
         # del recorte espacial (crop, exclusivo del archivo en preview salvo "Aplicar a
         # todos"), el trim ahora sobrevive a cambiar de archivo en el preview - se guarda
-        # acá en cada range_changed y se restaura al volver a seleccionar ese archivo (ver
+        # aquí en cada range_changed y se restaura al volver a seleccionar ese archivo (ver
         # _on_trim_range_changed / _on_file_selected), y se usa por-archivo al armar el
         # lote (ver _on_start_recoding_clicked), no solo para el que esté en preview.
         self._trim_cache: dict[str, tuple[float, float]] = {}
@@ -131,11 +131,22 @@ class VideoToolsTab(QWidget):
         # terminan bien pero con una salvedad - ej. se forzó una sola pista de audio
         # porque el contenedor/códec de salida no admite multipista (ver
         # container_supports_multi_audio) y el usuario no eligió una pista a mano. Vive
-        # acá (no en el Job de queue_manager.py) porque es pura anotación de UI para esta
+        # aquí (no en el Job de queue_manager.py) porque es pura anotación de UI para esta
         # pestaña - no cambia el comando de ffmpeg ni le interesa a Descargas/Playlists.
         self._recode_job_notes: dict[str, str] = {}
 
         self.init_ui()
+        # Acepta arrastrar archivos desde fuera de la app (o desde otra pestaña de
+        # DowP) en TODA la pestaña -- vista previa, waveform, timeline, etc. -- no
+        # solo sobre la cola. Qt solo entrega eventos de drag al widget exacto bajo
+        # el cursor que acepte drops, no los sube solo a los ancestros con
+        # setAcceptDrops(True) -- por eso no basta con activarlo aquí y ya (ver
+        # WholeAreaDropForwarder). Se excluye self.queue_widget porque ya maneja
+        # sus propios drops correctamente (incluye carpetas vía _start_scan).
+        from gui.widgets.drop_forwarder import WholeAreaDropForwarder
+        self._drop_forwarder = WholeAreaDropForwarder(
+            self, lambda paths: self.queue_widget._start_scan(paths), exclude=[self.queue_widget]
+        )
         self._load_saved_output_dir()
         self.load_labels()
         FFprobeMetadataManager.get_instance().metadata_ready.connect(self._on_metadata_ready)
@@ -283,7 +294,7 @@ class VideoToolsTab(QWidget):
         self.combo_tags.setPlaceholderText(self.tr("Etiqueta"))
         # Se construye con el parent directo al constructor, lo que hace que el ChildAdded del
         # filtro global de cursor (HandCursorInstaller, main.py) nunca se dispare (ver
-        # advanced_recode_panel.py::_setup_fixed_combo) — se fija a mano acá.
+        # advanced_recode_panel.py::_setup_fixed_combo) — se fija a mano aquí.
         self.combo_tags.setCursor(Qt.PointingHandCursor)
         self.combo_tags.currentIndexChanged.connect(self._on_label_changed)
 
@@ -896,7 +907,7 @@ class VideoToolsTab(QWidget):
             # + "Tamaño objetivo (MB)"/"Mismo que el original" dependen de la duración/
             # extensión real de cada uno, y Convertir decide copiar-vs-recodificar según
             # el códec de origen de CADA archivo (no el que está en preview). Recalcular
-            # acá es barato (arma un dict chico, sin I/O) y no cambia nada para los modos
+            # aquí es barato (arma un dict chico, sin I/O) y no cambia nada para los modos
             # que sí dan el mismo resultado en todos los archivos.
             if needs_per_file_recompute:
                 file_settings = self.options_widget.get_encoding_settings(file_meta=meta, filepath=filepath)
@@ -915,7 +926,7 @@ class VideoToolsTab(QWidget):
 
             # Conflicto de nombre de salida (ver combo "Si existe:"): dos fuentes con el
             # mismo nombre base pero distinto contenedor de origen pueden terminar
-            # pidiendo el mismo out_file - se resuelve acá, por archivo, ANTES de crear el
+            # pidiendo el mismo out_file - se resuelve aquí, por archivo, ANTES de crear el
             # job, reusando core/utils/file_conflict_manager.py (mismo mecanismo que ya
             # usa la pestaña de Descarga, backup reversible incluido para "Sobrescribir").
             conflict_policy = self.combo_conflict_policy.currentData() or "conservar"
@@ -979,7 +990,7 @@ class VideoToolsTab(QWidget):
             # El recorte interactivo es exclusivo de Avanzado (Comprimir no tiene UI de
             # recorte, ver compress_panel.py) - si el usuario dejó un recorte dibujado
             # desde una visita anterior a Avanzado pero el lote actual lo está armando
-            # Comprimir, no corresponde reinyectar los video_args de Avanzado acá (son
+            # Comprimir, no corresponde reinyectar los video_args de Avanzado aquí (son
             # de otro códec/perfil, no los que Comprimir acaba de calcular).
             if filepath == self.current_preview_file:
                 if crop_frac is not None and not apply_crop_to_all and not needs_per_file_recompute:

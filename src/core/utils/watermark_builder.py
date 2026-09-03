@@ -93,7 +93,7 @@ def build_image_overlay_filter(scale_pct: float, opacity: float, fx: float, fy: 
     entrada usando las dimensiones de la OTRA como referencia — verificado
     empíricamente el detalle que no está claro en la documentación: dentro de sus
     expresiones w=/h=, 'iw'/'ih' se refieren al input de REFERENCIA (el segundo,
-    [main] acá), no al que se está escalando ('main_w'/'main_h' NO funcionan para
+    [main] aquí), no al que se está escalando ('main_w'/'main_h' NO funcionan para
     esto, a pesar de lo que sugiere el nombre — se probó y no cruzan al segundo input).
 
     'shortest=1' en el overlay final es obligatorio — verificado empíricamente que sin

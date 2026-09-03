@@ -15,7 +15,7 @@ class _ScrollContentWidget(QWidget):
     QScrollArea.setWidgetResizable(True) usa minimumSizeHint() del widget contenido
     como piso DURO para su ancho (vía qSmartMinSize interno de Qt) sin importar cuánto
     se achique la ventana - verificado que, sin este parche, video_details (que antes
-    de vivir acá adentro se comprimía sin problema muy por debajo de su propio
+    de vivir aquí adentro se comprimía sin problema muy por debajo de su propio
     minimumSizeHint) queda clavado en ~884px y el resto se desborda en vez de seguir
     achicándose con texto recortado, que es el comportamiento que tenía antes y se
     quiere conservar (ver conversación). Se fuerza el ancho del hint a 0 - el alto real
@@ -994,7 +994,7 @@ class AdvancedProcessTab(QWidget):
 
         if job.job_type == "PLAYLIST":
             # Los jobs de playlist no usan request_data (van por job.config), pero
-            # el título sí es editable acá y es lo que _execute_playlist usa como
+            # el título sí es editable aquí y es lo que _execute_playlist usa como
             # nombre de la carpeta de destino — hay que guardarlo igual, si no
             # queda descartado al cambiar de tarjeta.
             new_title = self.video_details.title_input.text().strip()
@@ -1006,7 +1006,7 @@ class AdvancedProcessTab(QWidget):
                     card.update_title(new_title)
 
             # Recodificación: una sola config para TODA la playlist (no hay
-            # request_data por hijo acá, ver comentario arriba) - misma tarjeta que
+            # request_data por hijo aquí, ver comentario arriba) - misma tarjeta que
             # una descarga individual, pero lo que junta se guarda en job.config.
             job.config.update(self.recode_controller.collect_recode_data())
             return

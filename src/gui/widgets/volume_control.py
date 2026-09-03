@@ -109,7 +109,7 @@ class VolumeControlWidget(QWidget):
         # 3. Popup flotante con slider vertical: cuando el slider horizontal está oculto
         # (ver set_slider_visible), pasar el mouse sobre el botón de mute (o click) lo
         # muestra — mismo patrón que ya usa Gestor de Medios para el popup de tamaño de
-        # cuadrícula (grid_scale_popup), acá aplicado al volumen.
+        # cuadrícula (grid_scale_popup), aquí aplicado al volumen.
         self._build_popup()
 
         # Aplicar estilo inicial de temas

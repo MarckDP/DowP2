@@ -13,9 +13,9 @@ class ModeSelector(QFrame):
 
     def __init__(self, parent=None, labels: list[str] | None = None, compact_labels: list[str] | None = None):
         super().__init__(parent)
-        # Las etiquetas por defecto se traducen acá (mismo comportamiento de siempre); las
+        # Las etiquetas por defecto se traducen aquí (mismo comportamiento de siempre); las
         # etiquetas pasadas por el llamador ya vienen traducidas por ese widget (su propio
-        # self.tr()) - envolverlas de nuevo acá las buscaría en el contexto de traduccion
+        # self.tr()) - envolverlas de nuevo aquí las buscaría en el contexto de traduccion
         # equivocado (ModeSelector, no el widget que las definio).
         self._labels = list(labels) if labels else [self.tr(l) for l in self._DEFAULT_LABELS]
         if compact_labels:

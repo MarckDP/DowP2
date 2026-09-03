@@ -1442,7 +1442,7 @@ class GhostscriptCardPanel(QFrame):
     """Tarjeta dedicada a Ghostscript -- a diferencia de FFmpeg/yt-dlp/Deno (que
     la app necesita siempre), esta es 100% opcional: solo hace falta si el
     usuario quiere convertir archivos EPS/PS en el Editor de Imagen, y nunca se
-    descarga sola (ni acá ni al intentar convertir uno, ver
+    descarga sola (ni aquí ni al intentar convertir uno, ver
     ImageToolsTab._confirm_ghostscript_if_needed, que siempre pregunta antes).
 
     En Windows, DowP descarga y gestiona el binario (ver _windows_box / botón
@@ -1455,10 +1455,10 @@ class GhostscriptCardPanel(QFrame):
     _TOOLTIP_GS = (
         "Ghostscript es el intérprete de PostScript que permite convertir archivos\n"
         "EPS/PS en el Editor de Imagen -- ningún formato más de DowP lo necesita.\n\n"
-        "Es opcional: si no lo instalás, todo lo demás sigue funcionando igual,\n"
+        "Es opcional: si no lo instalas, todo lo demás sigue funcionando igual,\n"
         "y al intentar convertir un EPS/PS se te va a avisar cómo instalarlo.\n\n"
         "En Windows, DowP lo descarga y gestiona automáticamente. En Mac/Linux no hay\n"
-        "build oficial para empaquetar: se detecta un Ghostscript ya instalado por vos\n"
+        "build oficial para empaquetar: se detecta un Ghostscript ya instalado por ti\n"
         "(vía Homebrew en macOS, o el gestor de paquetes de tu distro en Linux)."
     )
 
@@ -1546,8 +1546,8 @@ class GhostscriptCardPanel(QFrame):
 
         system_desc_lbl = QLabel(self.tr(
             "Opcional -- solo hace falta para convertir archivos EPS/PS. DowP no lo empaqueta "
-            "en este sistema operativo: instalalo desde tu terminal con el comando de abajo y "
-            "después presioná \"Verificar\"."
+            "en este sistema operativo: instálalo desde tu terminal con el comando de abajo y "
+            "después presiona \"Verificar\"."
         ))
         system_desc_lbl.setStyleSheet("color: #888888; font-size: 12px;")
         system_desc_lbl.setWordWrap(True)
@@ -1621,7 +1621,7 @@ class GhostscriptCardPanel(QFrame):
                 self._version_summary.setText(ver_text)
                 self._version_summary.setStyleSheet("color: #AAAAAA; font-size: 12px;")
                 self._system_hint_lbl.setText(self.tr(
-                    "Detectado en el sistema -- DowP no lo gestiona acá, actualizalo con {0} cuando quieras."
+                    "Detectado en el sistema -- DowP no lo gestiona aquí, actualízalo con {0} cuando quieras."
                 ).format(self._pkg_label))
                 self._system_hint_lbl.setStyleSheet("color: #4CAF50; font-size: 11px;")
             else:
@@ -1631,7 +1631,7 @@ class GhostscriptCardPanel(QFrame):
                 self._version_summary.setStyleSheet("color: #F44336; font-size: 12px;")
                 self._system_hint_lbl.setText(self.tr(
                     "No se detectó Ghostscript vía {0}. Copiá el comando, corrélo en tu terminal "
-                    "y después presioná \"Verificar\"."
+                    "y después presiona \"Verificar\"."
                 ).format(self._pkg_label))
                 self._system_hint_lbl.setStyleSheet("color: #FFC107; font-size: 11px;")
             return
@@ -1669,14 +1669,14 @@ class GhostscriptCardPanel(QFrame):
             if not was_installed:
                 QMessageBox.information(
                     self, self.tr("Ghostscript detectado"),
-                    self.tr("Ghostscript {0} detectado correctamente. Ya podés convertir "
+                    self.tr("Ghostscript {0} detectado correctamente. Ya puedes convertir "
                              "archivos EPS/PS en el Editor de Imagen.").format(self.local_ver or "")
                 )
         else:
             QMessageBox.warning(
                 self, self.tr("No detectado"),
-                self.tr("Todavía no se detecta Ghostscript. Verificá que el comando haya "
-                        "terminado sin errores -- si acabás de instalarlo, puede que necesites "
+                self.tr("Todavía no se detecta Ghostscript. Verifica que el comando haya "
+                        "terminado sin errores -- si acabas de instalarlo, puede que necesites "
                         "reiniciar DowP para que tome el PATH actualizado del sistema.")
             )
 

@@ -487,7 +487,7 @@ class PreviewContainerWidget(QFrame):
         else:
             # Caso normal: imagen pesada sin cache todavía -- load_pixmap_for_path
             # ya dejó pedida la generación async (ver _on_heavy_preview_ready, que
-            # completa el display cuando esté lista); acá solo queda avisar mientras
+            # completa el display cuando esté lista); aquí solo queda avisar mientras
             # tanto. (Caso extremo, casi inalcanzable: un EPS/PS totalmente
             # ilegible -- ya quedó loggeado por load_pixmap_for_path.)
             self.placeholder_label.setText(self.tr("Generando vista previa (imagen muy pesada)..."))

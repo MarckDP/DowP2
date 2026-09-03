@@ -9,6 +9,7 @@ from core.logger.logger_manager import logger
 from core.utils.paths import get_src_dir
 from gui.styles import load_stylesheet
 from gui.widgets.title_bar import CustomTitleBar
+from gui.widgets.tab_drag_hover import TabBarDragHoverSwitcher
 from core.utils.i18n import load_language
 from core.utils.config_manager import get_config
 
@@ -602,6 +603,14 @@ class MainWindow(QMainWindow):
         # 5. Gestor de Medios
         self.tab_editing = EditingMediaTab()
         self.tabs.addTab(self.tab_editing, self.tr("Gestor de Medios"))
+
+        # Permite que arrastrar archivos desde Gestor de Medios y sostenerlos sobre la
+        # cabecera de Editor de Imagen / Herramientas Multimedia cambie de pestaña solo,
+        # ya que un QTabWidget solo muestra una pestaña a la vez (ver tab_drag_hover.py).
+        self._tab_drag_hover = TabBarDragHoverSwitcher(
+            self.tabs,
+            hoverable_indices={self.tabs.indexOf(self.tab_image), self.tabs.indexOf(self.tab_video)},
+        )
 
         # Corner Widget (Editor Status & Ajustes)
         self.editor_status_widget = EditorStatusCornerWidget(self)

@@ -507,13 +507,13 @@ GRADIENT_DIRECTIONS = [
 # de file/url/folder (descarga, ver models_setup.py), declara "input_size" (lado
 # del cuadrado NxN que espera el modelo como entrada). Esto es a propósito: el
 # motor de inferencia (core/tabs/image_tools/rembg_engine.py) NO tiene ningún
-# if/elif por nombre de modelo -- lee "input_size" de acá y ya sabe cómo correr
+# if/elif por nombre de modelo -- lee "input_size" de aquí y ya sabe cómo correr
 # cualquier entrada de este diccionario. Agregar un modelo nuevo es agregar una
 # entrada con su input_size correcto, no tocar el motor. Todos comparten el
 # mismo contrato entrada/salida (RGB -> máscara de 1 canal, normalización
 # ImageNet) porque son arquitecturas de segmentación de la misma familia --
 # si algún día entra un modelo con un contrato distinto, es el momento de
-# sumarle un campo nuevo acá, no de volver a bifurcar el motor por nombre.
+# sumarle un campo nuevo aquí, no de volver a bifurcar el motor por nombre.
 REMBG_MODEL_FAMILIES = {
     "Rembg Standard (U2Net)": {
         "isnet-general-use (Recomendado)": {

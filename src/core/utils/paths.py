@@ -130,6 +130,16 @@ def get_subclips_dir() -> str:
     from core.utils.config_manager import get_default_subclip_dir
     return get_default_subclip_dir()
 
+def get_sent_thumbnails_dir() -> str:
+    """Retorna el directorio para miniaturas guardadas al enviarlas a Editor de Imagen
+    desde "Enviar a H.I". Deliberadamente separado de get_thumbnail_cache_dir()/
+    get_remote_thumbnail_cache_dir(): esos son cachés con eviction gestionados por
+    cache_manager.py que el usuario puede vaciar manualmente desde Ajustes > Caché —
+    un archivo ahí podría desaparecer mientras sigue en la cola de Editor de Imagen."""
+    d = os.path.join(get_app_data_dir(), "sent_thumbnails")
+    os.makedirs(d, exist_ok=True)
+    return d
+
 def get_default_download_dir() -> str:
     """Retorna el directorio predeterminado de descargas del usuario."""
     from core.tabs.advanced_process.output_logic import get_default_download_path

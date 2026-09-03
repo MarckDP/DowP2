@@ -170,7 +170,7 @@ class CanvasPopoverContent(QFrame):
         """Deja el combo en "Sin ajuste" sin empujar ningún estado -- se usa al
         cambiar de archivo, ANTES de que ZoomableImageViewer.set_pixmap() cargue la
         imagen nueva y reinicialice el canvas solo (a su tamaño nativo, ver
-        _reset_edit_state ahí); empujar acá usaría el `_ref_w/_ref_h` todavía viejo."""
+        _reset_edit_state ahí); empujar aquí usaría el `_ref_w/_ref_h` todavía viejo."""
         self.combo_option.blockSignals(True)
         self.combo_option.setCurrentText(_NONE_OPTION)
         self.combo_option.blockSignals(False)
@@ -289,10 +289,10 @@ class CanvasPopoverContent(QFrame):
 
     def get_settings(self) -> dict:
         """Mismo criterio que ResizePopoverContent/UpscalePopoverContent: junta la
-        configuración de LOTE (el preset elegido acá) para que ImageConverter la
+        configuración de LOTE (el preset elegido aquí) para que ImageConverter la
         aplique a cada archivo al convertir -- ver _apply_canvas() en
         core/tabs/image_tools/image_converter.py. La edición visual en vivo
-        (state_changed/apply_canvas_state) es un concepto aparte, sin cambios acá."""
+        (state_changed/apply_canvas_state) es un concepto aparte, sin cambios aquí."""
         return {
             "canvas_enabled": self.is_valid_selection(),
             "canvas_option": self.combo_option.currentText(),

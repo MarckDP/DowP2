@@ -15,13 +15,14 @@ from PySide6.QtWidgets import (
     QMenu,
     QSizePolicy,
 )
-from PySide6.QtCore import Qt, Signal, QSize, QUrl, QThread, QAbstractTableModel, QModelIndex
+from PySide6.QtCore import Qt, Signal, QSize, QUrl, QThread, QAbstractTableModel, QModelIndex, QEvent
 from PySide6.QtGui import QIcon, QDragEnterEvent, QDropEvent
 
 from gui.styles import get_theme_token, create_colored_circle_icon
 from gui.tabs.editing_media.editing_media_icons import get_colored_svg_icon
 from core.tabs.editing_media.thumbnail_cache_manager import ThumbnailCacheManager
 from core.tabs.editing_media.waveform_cache_manager import WaveformCacheManager
+from core.tabs.editing_media.editing_media_logic import format_size
 from core.logger.logger_manager import logger
 
 # Backing store: QAbstractTableModel + QTreeView, NO QTreeWidget -- con QTreeWidget,
@@ -144,8 +145,9 @@ class _QueueTableModel(QAbstractTableModel):
         if cached is not None:
             return cached
         try:
-            size_mb = os.path.getsize(path) / (1024 * 1024)
-            s = f"{size_mb:.1f} MB"
+            # Mismo formato que el Gestor de Medios (format_size, KB para archivos
+            # chicos en vez de forzar siempre MB, ver editing_media_logic.py).
+            s = format_size(os.path.getsize(path))
         except Exception:
             s = "N/A"
         self._sizes[path] = s
@@ -326,6 +328,12 @@ class MediaQueueWidget(QFrame):
         self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._show_context_menu)
         self.tree.selectionModel().selectionChanged.connect(self._on_selection_changed)
+        # Suprimir/Backspace con foco en la lista elimina la selección actual de la
+        # cola (no del disco) -- mismo criterio que "Eliminar de la cola" del menú
+        # contextual (ver remove_selected). QTreeView es una clase de Qt, no una
+        # subclase propia, así que se intercepta vía eventFilter en vez de
+        # sobreescribir keyPressEvent directamente.
+        self.tree.installEventFilter(self)
 
         self.tree.setStyleSheet(f"""
             QTreeView#mediaQueueTree {{
@@ -376,10 +384,12 @@ class MediaQueueWidget(QFrame):
         # Medios, editing_media_view.py::media_table, que no fija Stretch/
         # ResizeToContents y deja que el usuario arrastre cada columna a gusto). Antes
         # Nombre estaba en Stretch y el resto en ResizeToContents, así que ninguna se
-        # podía redimensionar a mano (ver conversación) - stretchLastSection en False
-        # para que Estado tampoco quede forzada a ocupar el resto.
+        # podía redimensionar a mano (ver conversación). stretchLastSection en True
+        # para que Estado (la última) absorba por defecto el espacio horizontal
+        # sobrante en vez de dejarlo vacío -- no bloquea el resize manual, el usuario
+        # igual puede arrastrar el borde entre Peso y Estado para ajustar ambas.
         header = self.tree.header()
-        header.setStretchLastSection(False)
+        header.setStretchLastSection(True)
         header.setSectionResizeMode(0, QHeaderView.Interactive)
         header.setSectionResizeMode(1, QHeaderView.Interactive)
         header.setSectionResizeMode(2, QHeaderView.Interactive)
@@ -462,6 +472,13 @@ class MediaQueueWidget(QFrame):
         self._model.set_rows([])
         self._update_counter()
         self.file_selected.emit("")
+
+    def eventFilter(self, obj, event):
+        if obj is self.tree and event.type() == QEvent.KeyPress:
+            if event.key() in (Qt.Key_Delete, Qt.Key_Backspace):
+                self.remove_selected()
+                return True
+        return super().eventFilter(obj, event)
 
     def remove_selected(self):
         rows = sorted({idx.row() for idx in self.tree.selectionModel().selectedRows()})

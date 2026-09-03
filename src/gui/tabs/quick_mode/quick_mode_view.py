@@ -152,7 +152,7 @@ class QuickModeTab(QWidget):
 
     def _on_recode_highlight_changed(self, active: bool):
         """Réplica del resaltado verde de RecodeOptionsWidget.title_label sobre
-        lbl_recode_toggle: acá el header real vive oculto (show_header=False), la
+        lbl_recode_toggle: aquí el header real vive oculto (show_header=False), la
         etiqueta visible es esta otra, fuera del widget."""
         if active:
             accent = get_theme_token('acento_primario', '#B9E640')

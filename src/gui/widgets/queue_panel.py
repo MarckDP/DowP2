@@ -773,7 +773,7 @@ class QueuePanel(QWidget):
         self.scroll_content.setUpdatesEnabled(True)
 
     # ── Arrastrar para reordenar ─────────────────────────────────────────────
-    # Toda la orquestación vive acá (no en QueueItemCard) porque acá ya están
+    # Toda la orquestación vive aquí (no en QueueItemCard) porque aquí ya están
     # scroll_layout, self.cards y queue_mgr. La tarjeta solo detecta cuándo
     # empieza el arrastre (drag_started); a partir de ahí este panel "agarra" el
     # mouse (grabMouse) para recibir todos los eventos sin importar qué widget

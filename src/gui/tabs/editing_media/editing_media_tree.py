@@ -1037,6 +1037,21 @@ class TreeListMixin:
                         
                     act_send.triggered.connect(self._on_send_editor_clicked)
 
+                imagenes = [d for d in item_datas if d.get("tipo") == "imagen"]
+                medios_av = [d for d in item_datas if d.get("tipo") in ("video", "audio")]
+
+                if imagenes:
+                    n = len(imagenes)
+                    label = self.tr(f"Enviar ({n}) a Editor de Imagen") if n > 1 else self.tr("Enviar a Editor de Imagen")
+                    act_send_img = menu.addAction(get_svg_icon("image.svg"), label)
+                    act_send_img.triggered.connect(lambda checked=False, items=imagenes: self._on_send_to_tool_clicked(items, "image"))
+
+                if medios_av:
+                    n = len(medios_av)
+                    label = self.tr(f"Enviar ({n}) a Herramientas Multimedia") if n > 1 else self.tr("Enviar a Herramientas Multimedia")
+                    act_send_vid = menu.addAction(get_svg_icon("movie.svg"), label)
+                    act_send_vid.triggered.connect(lambda checked=False, items=medios_av: self._on_send_to_tool_clicked(items, "video"))
+
                 menu.addSeparator()
 
         # 2. Acciones Generales (Actualizar, Ordenar por, Vista)

@@ -12,7 +12,7 @@ from gui.widgets.mode_selector import ModeSelector
 from gui.dialogs.fragment_dialog import FragmentDialog
 from gui.styles import get_theme_token
 from core.utils.config_manager import get_config
-from core.tabs.advanced_process.video_details_logic import download_thumbnail
+from core.tabs.advanced_process.video_details_logic import download_thumbnail, send_thumbnail_to_image_tools
 from core.tabs.advanced_process.fragment_logic import FragmentState
 from PySide6.QtSvg import QSvgRenderer
 
@@ -66,10 +66,11 @@ class VideoDetailsWidget(QFrame):
         self.btn_download_thumb.setObjectName("secondaryButton")
         self.btn_download_thumb.setEnabled(False)
         self.btn_download_thumb.clicked.connect(lambda: download_thumbnail(self))
-        self.btn_send_hi = QPushButton(self.tr("Enviar a H.I"))
+        self.btn_send_hi = QPushButton(self.tr("Enviar a E.I"))
         self.btn_send_hi.setObjectName("secondaryButton")
         self.btn_send_hi.setEnabled(False)
-        
+        self.btn_send_hi.clicked.connect(lambda: send_thumbnail_to_image_tools(self))
+
         btns_layout.addWidget(self.btn_download_thumb)
         btns_layout.addWidget(self.btn_send_hi)
         col1_layout.addLayout(btns_layout)

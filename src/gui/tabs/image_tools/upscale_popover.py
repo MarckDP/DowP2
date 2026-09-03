@@ -195,7 +195,7 @@ class UpscalePopoverContent(QFrame):
         info = UPSCALING_TOOLS.get(engine_key)
         if info and not is_upscaling_engine_installed(info):
             self.lbl_warning.setText(
-                self.tr("Este motor no está descargado — andá a Ajustes > Modelos para instalarlo.")
+                self.tr("Este motor no está descargado — ve a Ajustes > Modelos para instalarlo.")
             )
             self.lbl_warning.setVisible(True)
         else:

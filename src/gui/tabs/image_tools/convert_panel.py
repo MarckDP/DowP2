@@ -115,7 +115,7 @@ class ConvertPanel(QWidget):
         v = QVBoxLayout(page)
         lbl = QLabel(
             self.tr("Mantiene el formato original de cada archivo -- útil si solo "
-                     "querés aplicar Redimensionar (franja superior) sin cambiar de formato."),
+                     "quieres aplicar Redimensionar (franja superior) sin cambiar de formato."),
             page,
         )
         lbl.setWordWrap(True)
@@ -247,7 +247,7 @@ class ConvertPanel(QWidget):
     def get_status(self) -> tuple[bool, str]:
         if self.is_valid():
             return True, self.tr("Convertir")
-        return False, self.tr("Elegí al menos un tamaño de ícono.")
+        return False, self.tr("Elige al menos un tamaño de ícono.")
 
     def get_settings(self) -> dict:
         """No incluye resize_*/interpolation_method (eso lo aporta

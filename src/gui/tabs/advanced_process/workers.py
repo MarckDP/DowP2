@@ -66,7 +66,7 @@ class DownloadWorker(QThread):
         # ve el último). "finished" y "fragment_progress" son transiciones de estado
         # discretas, no ruido a suavizar - con un fragmento corto (unos pocos segundos)
         # el "fragment_progress" del fragmento N+1 podía llegar a <100ms del "finished"
-        # del fragmento N y quedaba descartado acá, dejando a Modo Rápido sin forma de
+        # del fragmento N y quedaba descartado aquí, dejando a Modo Rápido sin forma de
         # saber a qué fragmento pertenecía cada archivo (ver
         # QuickDownloadController._resolve_target_rows) - "Recodificar" terminaba
         # aplicándose a un fragmento cualquiera y dejando el resto sin recodificar.

@@ -19,7 +19,7 @@ from core.logger.logger_manager import logger
 # DirectML: firmas de error conocidas de cuelgue/timeout del driver de GPU --
 # 887A0007 es el HRESULT de DXGI_ERROR_DEVICE_HUNG. Confirmadas en producción
 # por DowP1 (image_converter.pyc decompilado), que reintentaba por CPU al
-# toparse con cualquiera de estas. Vive acá (no en rembg_engine.py) porque es
+# toparse con cualquiera de estas. Vive aquí (no en rembg_engine.py) porque es
 # una propiedad del provider DirectML, no del motor de Eliminar Fondo en sí --
 # cualquier motor ONNX futuro que use DML puede reusar esta misma lista.
 DML_FAILURE_HINTS = ("DmlFusedNode", "887A0007", "Non-zero status")

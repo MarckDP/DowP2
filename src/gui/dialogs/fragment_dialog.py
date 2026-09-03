@@ -211,10 +211,10 @@ class FragmentDialog(QDialog):
 
     # NOTA: mousePressEvent/keyPressEvent/reject/accept/closeEvent para este diálogo
     # están definidos más abajo (una sola vez cada uno) - ver sección PLAYBACK/CLOSE.
-    # (Antes había una segunda definición de cada uno acá mismo que Python descartaba en
+    # (Antes había una segunda definición de cada uno aquí mismo que Python descartaba en
     # silencio por quedar sombreada por la de más abajo - dead code nunca ejecutado, con
     # el efecto de que win.activateWindow()/win.raise_() sobre la ventana principal
-    # jamás se llegaba a invocar al cerrar este diálogo. Se sacó de acá y se fusionó en
+    # jamás se llegaba a invocar al cerrar este diálogo. Se sacó de aquí y se fusionó en
     # las definiciones reales, ver conversación.)
 
     # ──────────────────────────────────────────────────────────

@@ -43,7 +43,7 @@ class _CompareCache:
     """Cache RAM chico para la vista antes/después (ver PreviewContainerWidget.
     show_compare_preview) -- evita recargar de disco/re-renderizar un vector o RAW
     en cada selección de la misma fila. A diferencia del cache de DowP1 (que solo
-    guardaba el "antes"), acá se guardan ambos lados -- el "después" también se
+    guardaba el "antes"), aquí se guardan ambos lados -- el "después" también se
     recargaba de disco en cada click en DowP1, un desperdicio real ya que el
     proceso mismo lo acaba de escribir. FIFO simple, tope 5 (mismo tamaño que
     DowP1), suficiente para un flujo de "comparar unas pocas filas por sesión"."""
@@ -111,6 +111,17 @@ class ImageToolsTab(QWidget):
         self._files_with_ai_edit: dict[str, bool] = {}
         self._active_convert_settings: dict | None = None
         self._build_ui()
+        # Acepta arrastrar archivos desde fuera de la app (o desde otra pestaña de
+        # DowP) en TODA la pestaña -- vista previa, toolbar, etc. -- no solo sobre
+        # la cola. Qt solo entrega eventos de drag al widget exacto bajo el cursor
+        # que acepte drops, no los sube solo a los ancestros con setAcceptDrops(True)
+        # -- por eso no basta con activarlo aquí y ya (ver WholeAreaDropForwarder).
+        # Se excluye self.image_queue porque ya maneja sus propios drops
+        # correctamente (incluye carpetas vía _start_scan) sin necesitar esto.
+        from gui.widgets.drop_forwarder import WholeAreaDropForwarder
+        self._drop_forwarder = WholeAreaDropForwarder(
+            self, lambda paths: self.image_queue._start_scan(paths), exclude=[self.image_queue]
+        )
 
     def _build_ui(self):
         outer_layout = QVBoxLayout(self)
@@ -346,8 +357,8 @@ class ImageToolsTab(QWidget):
             self.tr("Capas"), self.layers_panel, host=self.body_row, width=300, preferred_side="left",
         )
         self.layers_floating_panel.closed.connect(lambda: self.btn_layers_panel.setChecked(False))
-        # Oculto por defecto -- self.btn_layers_panel ya nace destildado (ver arriba),
-        # así que no hace falta forzar nada acá; alcanza con no mostrarlo.
+        # Oculto por defecto -- self.btn_layers_panel ya nace desmarcado (ver arriba),
+        # así que no hace falta forzar nada aquí; alcanza con no mostrarlo.
 
         # Puente popover <-> visor para la edición visual de Canvas (ver
         # canvas_popover.py y ZoomableImageViewer.apply_canvas_state/margin_dragged/
@@ -593,7 +604,7 @@ class ImageToolsTab(QWidget):
     def _reset_to_select_tool(self):
         """Conectado a Reescalar/Eliminar Fondo -- abrir esos popovers te devuelve a
         Seleccionar (sea cual sea la herramienta que tuvieras, incluido Canvas), para
-        que un clic mientras mirás ese popover no dibuje/redimensione nada solo."""
+        que un clic mientras miras ese popover no dibuje/redimensione nada solo."""
         if not self._tool_buttons["select"].isChecked():
             self._tool_buttons["select"].setChecked(True)
 
@@ -787,14 +798,14 @@ class ImageToolsTab(QWidget):
         # Fase 3 -- antes de tocar nada, guardar las formas/trazos (capas no-
         # "image") que tuviera el archivo que se estaba mirando hasta ahora.
         # El Canvas manual ya quedó guardado al vuelo en _on_canvas_edited, no
-        # hace falta repetirlo acá.
+        # hace falta repetirlo aquí.
         self._snapshot_layers_for(old_filepath)
         self.layer_stack.clear()
 
         # A diferencia del diseño anterior (y de DowP1), un archivo ya convertido
         # NO pasa a mostrar la comparación antes/después de forma permanente --
         # el editor (con las formas/pincel/Canvas del usuario) sigue siendo la
-        # vista por defecto, como en Photoshop: convertís y podés seguir editando.
+        # vista por defecto, como en Photoshop: conviertes y puedes seguir editando.
         # Comparar es una acción explícita (ver btn_compare_result/
         # _on_compare_toggled)... EXCEPTO si el resultado de este archivo incluyó
         # IA (reescalado por ahora, ver _files_with_ai_edit/
@@ -816,7 +827,7 @@ class ImageToolsTab(QWidget):
 
     def _show_editable_view(self, filepath: str):
         """Carga el editor normal (imagen + formas/pincel/Canvas restaurados) para
-        `filepath` -- llamado desde _on_file_selected y también al destildar
+        `filepath` -- llamado desde _on_file_selected y también al desmarcar
         Comparar (_on_compare_toggled) para volver desde la vista de comparación
         sin perder nada de lo ya restaurado."""
         if not filepath:
@@ -828,7 +839,7 @@ class ImageToolsTab(QWidget):
         # show_image_preview() vuelve a cargar el pixmap del visor -- eso ya deja
         # el canvas inicializado a su tamaño nativo (como borde de referencia) y
         # el modo en "pan" por su cuenta (ver ZoomableImageViewer._reset_edit_state);
-        # acá solo hace falta reaplicar la herramienta que estuviera activa.
+        # aquí solo hace falta reaplicar la herramienta que estuviera activa.
         current_tool = self._current_tool_key()
         if current_tool == "canvas":
             viewer.set_interaction_mode("canvas_edit")
@@ -839,7 +850,7 @@ class ImageToolsTab(QWidget):
         size = viewer.image_size()
         if size is not None:
             self.canvas_popover_content.set_reference_image_size(size.width(), size.height())
-        # El Canvas NO se resetea a un estado fijo acá a propósito: desde que un
+        # El Canvas NO se resetea a un estado fijo aquí a propósito: desde que un
         # preset del menú (clic derecho) pasó a ser una configuración de LOTE (ver
         # canvas_popover_content.get_settings(), usada por Convertir para TODOS los
         # archivos), resetearlo al cambiar de fila borraba esa elección apenas se
@@ -870,7 +881,7 @@ class ImageToolsTab(QWidget):
         disco (se movió/borró después de convertir, ej. desde el explorador) --
         image_queue.get_output_path() ya se auto-corrigió del lado de la cola
         (limpia el registro y pone "Resultado eliminado" en la fila, ver
-        image_queue_widget.py); acá solo se refleja en estos botones y se avisa
+        image_queue_widget.py); aquí solo se refleja en estos botones y se avisa
         -- sin esto fallaba en silencio (Comparar mostraba cualquier cosa,
         Copiar no copiaba nada) sin que quede claro por qué."""
         QMessageBox.information(
@@ -900,7 +911,7 @@ class ImageToolsTab(QWidget):
 
     def _on_compare_toggled(self, checked: bool):
         """Comparar (título/botones, ver _build_ui) -- vista bajo demanda, no
-        permanente: destildar vuelve al editor tal cual estaba (_show_editable_view
+        permanente: desmarcar vuelve al editor tal cual estaba (_show_editable_view
         reaplica las formas/Canvas restauradas, no se pierde nada)."""
         filepath = self._current_filepath
         if not filepath:
@@ -908,7 +919,7 @@ class ImageToolsTab(QWidget):
         if checked:
             if not self._show_compare_view(filepath):
                 # Resultado eliminado (ver _warn_result_missing) -- revertir el
-                # toggle en vez de dejarlo tildado mostrando cualquier cosa.
+                # toggle en vez de dejarlo marcado mostrando cualquier cosa.
                 self.btn_compare_result.blockSignals(True)
                 self.btn_compare_result.setChecked(False)
                 self.btn_compare_result.blockSignals(False)
@@ -1115,7 +1126,7 @@ class ImageToolsTab(QWidget):
 
     def _update_convert_button_state(self):
         """Habilita "Iniciar Proceso" solo si la cola tiene archivos y las opciones
-        actuales son válidas (ej. ICO necesita al menos un tamaño tildado, ver
+        actuales son válidas (ej. ICO necesita al menos un tamaño marcado, ver
         ConvertPanel.is_valid()). Si hay una conversión en curso, el botón actúa
         como "Cancelar" y permanece habilitado."""
         if not hasattr(self, "btn_convert"):
@@ -1146,7 +1157,7 @@ class ImageToolsTab(QWidget):
         (self._canvas_overrides) -- ImageConvertWorker leerá de ahí en vez del
         archivo original para ESE archivo (ver source_overrides en
         image_convert_worker.py); el resto de la cola sigue el camino normal, sin
-        pasar por acá. El pixmap base se recarga con preview.load_pixmap_for_path()
+        pasar por aquí. El pixmap base se recarga con preview.load_pixmap_for_path()
         usando el mismo tamaño disponible que usó show_image_preview() al mostrar
         cada archivo -- mismas coordenadas en las que quedaron dibujadas las formas."""
         to_flatten = [
@@ -1202,7 +1213,7 @@ class ImageToolsTab(QWidget):
     def _download_ghostscript_blocking(self) -> bool:
         """Diálogo modal chico con barra de progreso mientras se descarga
         Ghostscript -- mismo download_ghostscript() que usa la tarjeta de
-        Ajustes > Dependencias, acá bloqueante porque no tiene sentido arrancar
+        Ajustes > Dependencias, aquí bloqueante porque no tiene sentido arrancar
         Convertir sin saber si terminó bien. Simplificación aceptada: sin
         cancelación real a mitad de descarga (es una descarga única y chica),
         mismo criterio que las tarjetas de Ajustes."""
@@ -1262,7 +1273,7 @@ class ImageToolsTab(QWidget):
 
         # Fase 3 -- el archivo que se está mirando en este momento puede tener
         # ediciones sin "confirmar" (nunca se cambió de fila para disparar el
-        # snapshot automático de _on_file_selected); se fuerza acá para que
+        # snapshot automático de _on_file_selected); se fuerza aquí para que
         # tampoco quede afuera del aplanado de abajo.
         self._snapshot_layers_for(self._current_filepath)
 

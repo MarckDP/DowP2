@@ -29,7 +29,7 @@ class SubtitleOptionsWidget(QFrame):
         self.setAttribute(Qt.WA_StyledBackground, True)
         # COMPACT_WIDTH ya NO es ni ancho fijo ni mínimo: junto a la tarjeta de
         # Recodificar (ver conversación), esta tarjeta se estira Y se achica con la
-        # ventana igual que video_details, sin piso propio - un setMinimumWidth acá
+        # ventana igual que video_details, sin piso propio - un setMinimumWidth aquí
         # (aunque fuera el mismo 350 "de siempre") le gana al ancho disponible en
         # ventanas chicas y hace desbordar todo el bloque en vez de comprimirse con
         # texto recortado, que es el comportamiento que tenía antes y se quiere

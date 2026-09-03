@@ -170,7 +170,7 @@ def _safe_filename(name: str) -> str:
 
 def import_custom_rembg_model(display_name: str, source_path: str, input_size: tuple[int, int]) -> tuple[bool, str]:
     """Copia un .onnx externo a bin/models/rembg_custom/ y lo registra en
-    config.json bajo CUSTOM_REMBG_FAMILY -- a partir de acá se comporta como
+    config.json bajo CUSTOM_REMBG_FAMILY -- a partir de aquí se comporta como
     cualquier otro modelo del catálogo (aparece en el popover de Eliminar Fondo,
     lo puede usar rembg_engine.py, se puede borrar desde Ajustes > Modelos)."""
     from core.utils.config_manager import get_config, save_config
@@ -251,7 +251,7 @@ def _engine_dir(tool_info: dict) -> str:
 def get_engine_exe_path(tool_info: dict) -> str | None:
     """Ruta completa al ejecutable del motor para la plataforma actual, o None si
     ese motor no tiene build para este SO (ver _platform_value) -- usada tanto para
-    chequear instalación acá como para invocarlo de verdad desde
+    chequear instalación aquí como para invocarlo de verdad desde
     core/tabs/image_tools/upscale_engine.py."""
     exe_name = _platform_value(tool_info["exe"])
     if not exe_name:
@@ -312,7 +312,7 @@ def _download_and_extract_zip(url: str, dest_dir: str, progress_callback=None, w
 # (ver la nota en UPSCAYL_MODELS_MAP, core/constants.py). Un solo URL por fuente
 # alcanza para los 3 SO: los .bin/.param son datos de pesos, idénticos sin importar
 # qué build (windows/macos/ubuntu) del binario los acompañe -- confirmado contra el
-# árbol real de ambos releases en GitHub, así que no hace falta _platform_value() acá,
+# árbol real de ambos releases en GitHub, así que no hace falta _platform_value() aquí,
 # a diferencia de UPSCALING_TOOLS (que sí baja un ejecutable real por SO).
 _UPSCAYL_LEGACY_MODEL_SOURCES = [
     ("Real-ESRGAN", "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-windows.zip", "realesrgan-x4plus.bin"),
@@ -320,7 +320,7 @@ _UPSCAYL_LEGACY_MODEL_SOURCES = [
 ]
 
 # Ver sanitize_upscayl_models() en el setup.pyc decompilado de DowP1: purga estos 2
-# modelos por inestabilidad conocida (no se ofrecen ni en UPSCAYL_MODELS_MAP ni acá).
+# modelos por inestabilidad conocida (no se ofrecen ni en UPSCAYL_MODELS_MAP ni aquí).
 _UPSCAYL_UNSTABLE_MODELS = ("realesr-animevideov3-x2", "realesr-animevideov3-x3")
 
 
@@ -345,7 +345,7 @@ def _download_upscayl_legacy_models(models_dir: str, progress_callback=None):
     mismo criterio que DowP1 (canario: si el archivo ya está, se salta la descarga
     completa, evita re-bajar ~60-80MB en cada instalación). Se filtran solo .bin/
     .param del zip completo (que también trae el ejecutable/LICENSE/README de ese
-    proyecto, irrelevantes acá)."""
+    proyecto, irrelevantes aquí)."""
     os.makedirs(models_dir, exist_ok=True)
     for name, url, canary in _UPSCAYL_LEGACY_MODEL_SOURCES:
         if os.path.exists(os.path.join(models_dir, canary)):
@@ -414,7 +414,7 @@ def download_upscaling_engine(tool_info: dict, progress_callback=None) -> tuple[
 
         if _current_platform() != "windows":
             # Los binarios de macOS/Linux necesitan el bit +x -- zipfile no siempre
-            # preserva los permisos unix del zip al extraer, así que se fuerza acá
+            # preserva los permisos unix del zip al extraer, así que se fuerza aquí
             # en vez de depender de eso.
             exe_path = os.path.join(dest_dir, _platform_value(tool_info["exe"]))
             os.chmod(exe_path, 0o755)

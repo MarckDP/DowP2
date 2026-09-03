@@ -10,7 +10,7 @@ Rembg Standard/BiRefNet/RMBG 2.0/InSPyReNet), Modelo, Suavizado (difumina el bor
 Sin checkbox propio de "activar/desactivar" -- mismo criterio que upscale_popover.py:
 mientras Motor y/o Modelo sigan en su placeholder, la función no se aplica (botón
 gris); al elegir ambos, se aplica (botón verde). Sin botones Abrir/Borrar inline --
-esos ya viven en Ajustes > Modelos (ver models_page.py); acá solo se avisa si el
+esos ya viven en Ajustes > Modelos (ver models_page.py); aquí solo se avisa si el
 modelo elegido no está instalado o requiere descarga manual.
 
 Aceleración GPU: encendida por defecto en Windows, APAGADA por defecto en
@@ -19,11 +19,11 @@ macOS, y directamente OCULTA en Linux. No son limitaciones arbitrarias:
   CoreMLExecutionProvider puede crashear la app de golpe con estos modelos
   (RMBG 2.0/BiRefNet/InSPyReNet, todos con backbone Swin-Transformer). Ya se
   investigó la causa: son dos bugs de Apple sin arreglar en macOS 26.x
-  (Tahoe), a nivel CoreML/Metal, no algo que se pueda mitigar desde acá -- no
+  (Tahoe), a nivel CoreML/Metal, no algo que se pueda mitigar desde aquí -- no
   hay opción de provider (tipo MLComputeUnits) que lo resuelva del todo. En
   Mac la CPU sola ya rinde bien para esto, así que el default seguro es
   apagado. No se lo bloqueamos al usuario si lo quiere prender igual -- "no
-  impedimos, avisamos": tildarlo en macOS dispara un aviso, no lo deshabilita
+  impedimos, avisamos": marcarlo en macOS dispara un aviso, no lo deshabilita
   (ver _on_gpu_toggled).
 - Linux: el checkbox ni se muestra. onnx_providers.py solo devuelve un
   provider de GPU real en Windows (DirectML) y macOS (CoreML) -- en Linux
@@ -32,7 +32,7 @@ macOS, y directamente OCULTA en Linux. No son limitaciones arbitrarias:
   el paquete CUDA pesa cientos de MB y solo beneficiaría a usuarios Nvidia,
   dejando a todos los demás pagando el peso sin beneficio). Mostrar un
   checkbox que no hace nada distinto sería engañoso, así que se oculta en vez
-  de dejarlo tildado sin efecto.
+  de dejarlo marcado sin efecto.
 
 Solo selección: no dispara ningún procesamiento todavía, eso se conecta en un paso
 aparte."""
@@ -54,8 +54,8 @@ _GPU_MACOS_WARNING = (
     "que pueden hacer que la app se cierre de golpe sin aviso al usar GPU con "
     "estos modelos (confirmado con RMBG 2.0/BiRefNet/InSPyReNet), no solo que "
     "tarde más o se quede colgada. La CPU sola ya rinde bien en Mac para esto.\n\n"
-    "Podés dejarla activada igual si querés probar, pero si la app se cierra "
-    "sola o se cuelga, volvé a destildar esta opción."
+    "Puedes dejarla activada igual si quieres probar, pero si la app se cierra "
+    "sola o se cuelga, vuelve a desmarcar esta opción."
 )
 
 _GPU_TOOLTIP = (
@@ -65,7 +65,7 @@ _GPU_TOOLTIP = (
     "La primera vez que se usa un modelo en esta sesión de DowP, la GPU compila "
     "el modelo antes de correr -- con modelos grandes (RMBG 2.0, InSPyReNet) esto "
     "puede tardar varios segundos y trabar la pantalla brevemente, es normal. "
-    "En Ajustes > Modelos podés tildar \"Mantener los modelos de IA cargados en "
+    "En Ajustes > Modelos puedes marcar \"Mantener los modelos de IA cargados en "
     "memoria\" para pagar ese costo una sola vez por sesión en vez de en cada lote."
 )
 _SMOOTH_TOOLTIP = (
@@ -187,7 +187,7 @@ class RembgPopoverContent(QFrame):
         """Repuebla el combo de familias desde get_all_rembg_families() -- se llama
         en __init__ y cada vez que se abre el popover (ver showEvent), así un
         modelo importado en Ajustes > Modelos mientras DowP ya está corriendo
-        aparece acá sin tener que reiniciar la app."""
+        aparece aquí sin tener que reiniciar la app."""
         current = self.combo_family.currentData()
         self.combo_family.blockSignals(True)
         self.combo_family.clear()
@@ -217,7 +217,7 @@ class RembgPopoverContent(QFrame):
             w.setFixedWidth(width)
 
     def _on_gpu_toggled(self, checked: bool):
-        """No impedimos, avisamos: tildar GPU en macOS no se bloquea, solo se
+        """No impedimos, avisamos: marcar GPU en macOS no se bloquea, solo se
         advierte una vez por click (ver _GPU_MACOS_WARNING) -- el usuario decide."""
         if checked and platform.system() == "Darwin":
             QMessageBox.warning(self, self.tr("Aceleración por GPU en macOS"), self.tr(_GPU_MACOS_WARNING))
@@ -263,14 +263,14 @@ class RembgPopoverContent(QFrame):
             )
         elif is_rembg_model_gated(model_info):
             self.lbl_status.setText(
-                self.tr("🔒 Requiere descarga manual — andá a Ajustes > Modelos.")
+                self.tr("🔒 Requiere descarga manual — ve a Ajustes > Modelos.")
             )
             self.lbl_status.setStyleSheet(
                 f"font-size: 11px; color: {get_theme_token('estado_aviso', '#e6a23c')};"
             )
         else:
             self.lbl_status.setText(
-                self.tr("⚠️ No instalado — andá a Ajustes > Modelos para descargarlo.")
+                self.tr("⚠️ No instalado — ve a Ajustes > Modelos para descargarlo.")
             )
             self.lbl_status.setStyleSheet(
                 f"font-size: 11px; color: {get_theme_token('estado_aviso', '#e6a23c')};"

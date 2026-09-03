@@ -287,11 +287,11 @@ class AdvancedRecodePanel(QWidget):
         combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
         combo.setMinimumContentsLength(1)
         combo.setItemDelegate(CheckmarkComboDelegate(combo))
-        # El filtro global de cursor (HandCursorInstaller, main.py) escucha ChildAdded, pero acá
+        # El filtro global de cursor (HandCursorInstaller, main.py) escucha ChildAdded, pero aquí
         # todos los combos se construyen pasando el parent directo al constructor
         # (AutoPopupComboBox(frame)) en vez de agregarlos después vía layout.addWidget() — con eso
         # el evento ChildAdded nunca llega a dispararse (verificado), así que el filtro global no
-        # los alcanza nunca. Se fija a mano acá, mismo patrón que ya usan los QRadioButton/
+        # los alcanza nunca. Se fija a mano aquí, mismo patrón que ya usan los QRadioButton/
         # QCheckBox de este archivo.
         combo.setCursor(Qt.PointingHandCursor)
 
@@ -746,7 +746,7 @@ class AdvancedRecodePanel(QWidget):
         self._setup_fixed_combo(self.combo_cfr_fps)
         self.combo_cfr_fps.setEditable(True)
         # _setup_fixed_combo deja el ancho "Ignored" + mínimo de 1 caracter (pensado para combos
-        # de solo lectura en columnas angostas) — acá hace falta lugar real para escribir/leer un
+        # de solo lectura en columnas angostas) — aquí hace falta lugar real para escribir/leer un
         # valor como "29.97 fps" sin que la caja quede achicada a una estampilla.
         self.combo_cfr_fps.setMinimumWidth(100)
         self.combo_cfr_fps.setToolTip(self.tr("Elige un valor común o escribe el FPS que prefieras."))
@@ -795,7 +795,7 @@ class AdvancedRecodePanel(QWidget):
         self.spin_custom_width.setSingleStep(2)
         self.spin_custom_width.setValue(1920)
         # Sin esto, valueChanged (y con él el redondeo a par + recálculo del alto vinculado)
-        # dispara en cada tecla que escribís, no solo al terminar — por eso "19" saltaba a "20"
+        # dispara en cada tecla que escribes, no solo al terminar — por eso "19" saltaba a "20"
         # a mitad de escritura en vez de esperar a que sueltes el campo.
         self.spin_custom_width.setKeyboardTracking(False)
         w_col.addWidget(self.spin_custom_width)
@@ -868,7 +868,7 @@ class AdvancedRecodePanel(QWidget):
         return frame
 
     def _build_watermark_section(self, parent=None) -> QFrame:
-        """Texto y/o imagen combinables. La posición NO se elige acá — se arrastra sobre
+        """Texto y/o imagen combinables. La posición NO se elige aquí — se arrastra sobre
         la vista previa (ver media_trim_player_widget.py::_DraggableWatermarkItem); este
         panel solo controla estilo (texto/fuente/tamaño/color/opacidad para texto,
         archivo/escala/opacidad para imagen)."""
@@ -1063,7 +1063,7 @@ class AdvancedRecodePanel(QWidget):
             self._watermark_image_path = file_path
             self.txt_watermark_image_path.setText(file_path)
             # A diferencia de un cambio de estilo cualquiera, la ruta del archivo sí
-            # puede afectar la validez (aviso de "no existe") — revalidar acá.
+            # puede afectar la validez (aviso de "no existe") — revalidar aquí.
             self.image_watermark_style_changed.emit()
             self._evaluate_and_render()
 
@@ -1435,7 +1435,7 @@ class AdvancedRecodePanel(QWidget):
     def _relayout_cards(self):
         """Muestra/oculta las secciones (acordeones de Video/Audio/Transformación/Marca de
         agua) según el modo activo. El orden vertical es siempre el mismo (ver cards_column
-        en _init_ui); acá solo cambia qué secciones quedan visibles, no su posición."""
+        en _init_ui); aquí solo cambia qué secciones quedan visibles, no su posición."""
         if not hasattr(self, "cards_column") or not hasattr(self, "frame_container") or not hasattr(self, "frame_size"):
             return
 
@@ -1815,7 +1815,7 @@ class AdvancedRecodePanel(QWidget):
 
     def _update_fit_mode_enabled(self):
         """El selector Crop/Ajustar/Deformar solo importa cuando el aspecto conservado está
-        desactivado. Se habilita apenas se destilda "Conservar relación de aspecto", sin
+        desactivado. Se habilita apenas se desmarca "Conservar relación de aspecto", sin
         esperar a que además cambie algún valor de Ancho/Alto — al desactivarlo, W×H todavía
         coinciden con el aspecto real (eso es justamente lo que mantenía activado), así que
         exigir además un "mismatch" actual dejaba los radios apagados hasta el primer cambio,
@@ -2211,7 +2211,7 @@ class AdvancedRecodePanel(QWidget):
     def _format_playback_risk_message(self, risk: dict) -> str:
         """Arma el texto final del warning de "riesgo de reproducción" (ver
         recode_guard._check_playback_risk, que solo devuelve datos estructurados).
-        Vive acá y no en recode_guard.py porque necesita self.tr() para ser
+        Vive aquí y no en recode_guard.py porque necesita self.tr() para ser
         traducible — ese módulo es lógica pura, no un QObject.
 
         level="none"/"planned" es un caso distinto de los demás: ahí ffmpeg logró

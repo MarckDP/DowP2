@@ -199,7 +199,7 @@ def has_hardware_encoder(codec_id: str | None) -> bool:
 
 # Mapeo contenedor -> extensión de archivo real, para los pocos casos donde el id de
 # contenedor no coincide con su extensión (ej. "qtff" produce un .mov, no un .qtff).
-# Cualquier contenedor no listado acá usa su propio id como extensión tal cual. Unica
+# Cualquier contenedor no listado aquí usa su propio id como extensión tal cual. Unica
 # fuente para esto (antes vivía duplicado dentro de video_tools_view.py).
 CONTAINER_TO_EXTENSION = {
     "qtff": "mov",
@@ -283,7 +283,7 @@ def is_stream_copy_compatible(codec_id: str | None, container_id: str) -> bool:
     contenedor sin necesidad de remux (-c copy, sin pérdida de calidad).
 
     A diferencia de get_compatible_containers() -que a propósito es permisivo con
-    códecs no verificados, para no ocultarle opciones al usuario en Avanzado- acá
+    códecs no verificados, para no ocultarle opciones al usuario en Avanzado- aquí
     conviene ser estricto: esto es la base para decidir si Convertir puede prometerle al
     usuario "esto se copia tal cual, sin pérdida" - un falso positivo ahí es mucho peor
     que un falso negativo (recodificar de más cuando en realidad hubiera andado igual)."""
@@ -358,7 +358,7 @@ def get_dimension_alignment(codec_id: str | None) -> dict:
     ffmpeg_codec_matrix.json (ver tools/codec_matrix/run_matrix.py::_probe_dimension_alignment,
     que prueba directo contra el encoder si acepta ancho/alto impar).
 
-    A diferencia de get_channel_support(), acá el faltante de dato NO es permisivo: si el
+    A diferencia de get_channel_support(), aquí el faltante de dato NO es permisivo: si el
     códec no está verificado o no tiene este campo relevado, se asume que hace falta par en
     los dos ejes (el caso más común, YUV 4:2:0) — al revés de "permitir todo por defecto"
     sería dejar pasar una resolución que en la práctica hace fallar el export.

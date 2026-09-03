@@ -10,7 +10,7 @@ from core.tabs.image_tools.image_converter import ImageConverter
 from core.utils.config_manager import get_config
 from core.utils.file_conflict_manager import resolve_conflict, commit_backup, rollback_backup
 
-# Extensión de salida por formato -- "No Convertir" no está acá a propósito, se
+# Extensión de salida por formato -- "No Convertir" no está aquí a propósito, se
 # resuelve en _desired_output_path() mirando la extensión de cada archivo de origen.
 _EXT_BY_FORMAT = {
     "PNG": ".png", "JPG": ".jpg", "WEBP": ".webp", "AVIF": ".avif",
@@ -46,7 +46,7 @@ class ImageConvertWorker(QThread):
         # ImageToolsTab._build_source_overrides (input_path original -> PNG con las
         # ediciones "horneadas"); ese PNG es lo que en realidad se lee/convierte
         # para esos archivos puntuales, el resto de la cola sigue leyendo del
-        # archivo original sin pasar por acá.
+        # archivo original sin pasar por aquí.
         self.source_overrides = source_overrides or {}
         self.cancellation_event = threading.Event()
         self._converter = ImageConverter()
@@ -86,8 +86,8 @@ class ImageConvertWorker(QThread):
         # Ajustes > Modelos, queda cargada para el próximo lote también -- evita
         # repetir la compilación inicial del grafo en GPU (la parte que más tarda
         # y más traba la pantalla) en cada conversión. Ver rembg_engine.py y
-        # models_page.py::_on_persist_sessions_toggled (ese destildado libera al
-        # toque, no hace falta esperar acá a que corra otro lote).
+        # models_page.py::_on_persist_sessions_toggled (ese desmarcado libera al
+        # toque, no hace falta esperar aquí a que corra otro lote).
         rembg_engine.prepare_session(self.options)
         try:
             self._run_batch()
@@ -123,7 +123,7 @@ class ImageConvertWorker(QThread):
             # Caso "sobrescribir" cuando la salida cae justo en el mismo path que el
             # ORIGEN (ej. "No Convertir" con destino = misma carpeta y mismo formato):
             # resolve_conflict() ya renombró ese archivo a backup_path antes de que
-            # lleguemos acá -- filepath ya no existe en ese momento, así que hay que
+            # lleguemos aquí -- filepath ya no existe en ese momento, así que hay que
             # leer desde el backup en vez de desde filepath.
             read_path = self.source_overrides.get(filepath, filepath)
             if backup_path and os.path.normpath(desired_path) == os.path.normpath(filepath):

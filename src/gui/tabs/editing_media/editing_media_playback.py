@@ -483,6 +483,33 @@ class PlaybackMixin:
             on_done=lambda resolved: self._finalize_batch_send([item_data], resolved, editor_mgr, self._send_editor_state, captured_subs)
         )
 
+    def _on_send_to_tool_clicked(self, item_datas, target):
+        """target: 'image' -> Editor de Imagen, 'video' -> Herramientas Multimedia.
+        item_datas ya viene filtrado por tipo desde el menú contextual (ver
+        _show_media_context_menu), así que cada llamada es de un solo tipo -- nunca
+        hay ambigüedad sobre a qué pestaña cambiar."""
+        if not item_datas:
+            return
+        main_win = self.window()
+        if not main_win:
+            return
+
+        def _on_all_resolved(resolved):
+            paths = [p for p in (resolved.get(d.get("ruta")) for d in item_datas) if p]
+            if not paths:
+                logger.error("[EditingMedia] Envío cancelado: no se pudo resolver ningún medio.")
+                return
+            if target == "image":
+                main_win.tab_image.image_queue.add_files(paths)
+                main_win.tabs.setCurrentWidget(main_win.tab_image)
+            else:
+                main_win.tab_video.queue_widget.add_files(paths)
+                main_win.tabs.setCurrentWidget(main_win.tab_video)
+            destino = "Editor de Imagen" if target == "image" else "Herramientas Multimedia"
+            logger.info(f"[EditingMedia] {len(paths)} archivo(s) enviados a {destino}.")
+
+        self._resolve_items_then_send(item_datas, on_done=_on_all_resolved)
+
     def _on_open_subclip_dialog(self):
         path = getattr(self, "last_selected_media_path", None)
         if not path:

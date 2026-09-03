@@ -1,7 +1,7 @@
 # src/core/tabs/video_tools/convert_advisor.py
 """
 Logica de decision para la pestana "Convertir": a diferencia de Comprimir (que siempre
-recodifica, el eje es tamano/calidad), acá el objetivo es cambiar de contenedor
+recodifica, el eje es tamano/calidad), aquí el objetivo es cambiar de contenedor
 preservando calidad y velocidad cuando se pueda - si el codec de origen ya es compatible
 con el contenedor destino (confirmado por el matrix, ver
 recode_guard.is_stream_copy_compatible), la conversion correcta es un remux (-c copy,
@@ -25,7 +25,7 @@ from core.tabs.video_tools.codec_profiles import build_custom_quality_args, buil
 # Orden de preferencia cuando el matrix confirma VARIOS códecs válidos para el mismo
 # contenedor (ej. WAV acepta pcm/aac/mp3/vorbis/...): no hay un "correcto" único, es una
 # eleccion editorial entre opciones YA verificadas como validas - a diferencia de la
-# version anterior, acá nunca se elige algo que el matrix no haya confirmado.
+# version anterior, aquí nunca se elige algo que el matrix no haya confirmado.
 _VIDEO_CODEC_PREFERENCE = ["h264", "hevc", "vp9", "av1", "vp8", "mpeg4", "theora"]
 _AUDIO_CODEC_PREFERENCE = ["aac", "mp3", "opus", "vorbis", "flac", "alac", "ac3", "pcm_s16le"]
 

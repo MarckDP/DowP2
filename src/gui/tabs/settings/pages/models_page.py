@@ -98,7 +98,7 @@ class ImportOnnxDialog(QDialog):
 
         hint = QLabel(self.tr(
             "Si no se detecta solo, dejalo en 1024 (el más común en modelos "
-            "modernos de Eliminar Fondo) o revisá la página de donde bajaste el "
+            "modernos de Eliminar Fondo) o revisa la página de donde bajaste el "
             "modelo -- los legacy tipo U2Net suelen usar 320."
         ))
         hint.setWordWrap(True)
@@ -284,24 +284,24 @@ class ModelsPage(QWidget):
         line.setFrameShadow(QFrame.Sunken)
         self.main_layout.addWidget(line)
 
-        # Persistencia de sesiones ONNX -- por defecto (destildado) el modelo se
+        # Persistencia de sesiones ONNX -- por defecto (desmarcado) el modelo se
         # carga al empezar un lote de "Convertir" y se libera apenas termina (ver
         # ImageConvertWorker.run/rembg_engine.prepare_session/clear_sessions): la
         # carga inicial de un modelo ONNX en GPU (DirectML compila el grafo la
         # primera vez que corre, puede tardar varios segundos y frena la pantalla
         # entera mientras la GPU está saturada) se vuelve a pagar en cada lote.
-        # Con esto tildado, la sesión queda cargada en memoria entre lotes -- se
+        # Con esto marcado, la sesión queda cargada en memoria entre lotes -- se
         # paga esa carga inicial una sola vez por sesión de DowP, hasta que se
-        # cierre la app o el usuario destilde esta opción (ahí se libera al toque).
+        # cierre la app o el usuario desmarque esta opción (ahí se libera al toque).
         self.chk_persist_sessions = QCheckBox(
             self.tr("Mantener los modelos de IA cargados en memoria entre conversiones")
         )
         self.chk_persist_sessions.setToolTip(self.tr(
-            "Si está tildado, el modelo de IA (Eliminar Fondo) queda cargado en memoria "
-            "desde el primer uso hasta que cierres DowP o destildes esta opción -- evita "
+            "Si está marcado, el modelo de IA (Eliminar Fondo) queda cargado en memoria "
+            "desde el primer uso hasta que cierres DowP o desmarques esta opción -- evita "
             "pagar de nuevo la carga inicial (que puede tardar varios segundos y frenar "
             "la pantalla) en cada conversión.\n\n"
-            "Si está destildado (por defecto), el modelo se carga al empezar un lote y "
+            "Si está desmarcado (por defecto), el modelo se carga al empezar un lote y "
             "se libera apenas termina -- usa menos memoria en reposo, pero cada lote "
             "nuevo vuelve a pagar la carga inicial."
         ))
@@ -366,7 +366,7 @@ class ModelsPage(QWidget):
         logger.info(f"Modelos IA: 'Mantener en memoria' cambiado a {checked}")
         if not checked:
             # Apagar la opción libera lo que haya quedado cargado ahora mismo, no
-            # recién en la próxima conversión -- si no, el usuario destilda la
+            # recién en la próxima conversión -- si no, el usuario desmarca la
             # opción pensando que ya liberó memoria y en realidad sigue cargada
             # hasta el próximo lote.
             rembg_engine.clear_sessions()

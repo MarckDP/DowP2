@@ -371,12 +371,12 @@ class ZoomableImageViewer(QGraphicsView):
     # Modo de interacción
     # ------------------------------------------------------------------
     def set_interaction_mode(self, mode: str):
-        """"pan" (default -- navegación normal; el canvas se ve como borde de
-        referencia nomás, sin handles) | "canvas_edit" (control de Canvas abierto:
+        """"pan" (default -- navegación normal; el canvas se ve solo como borde de
+        referencia, sin handles) | "canvas_edit" (control de Canvas abierto:
         handles/arrastre de imagen activos) | "layers_draw" (herramienta Capas).
         Quien active canvas_edit/layers_draw es responsable de empujar el estado real
         justo después (canvas: CanvasPopoverContent.sync(); capas: set_active_tool/
-        set_draw_style) -- no hay geometría nueva por defecto acá."""
+        set_draw_style) -- no hay geometría nueva por defecto aquí."""
         assert mode in ("pan", "canvas_edit", "layers_draw")
         if mode == self._interaction_mode:
             return
@@ -570,9 +570,9 @@ class ZoomableImageViewer(QGraphicsView):
         if self._interaction_mode == "canvas_edit" and (self._active_handle is not None or self._dragging_image):
             self._active_handle = None
             self._dragging_image = False
-            # Un solo disparo acá (no en cada _apply_canvas_resize/_resize_margin,
+            # Un solo disparo aquí (no en cada _apply_canvas_resize/_resize_margin,
             # que corren en cada mouseMove mientras se arrastra) -- "la interacción
-            # manual terminó, andá a leer el estado completo con get_canvas_state()".
+            # manual terminó, ve a leer el estado completo con get_canvas_state()".
             self.canvas_edited.emit()
             return
         if self._interaction_mode == "layers_draw":

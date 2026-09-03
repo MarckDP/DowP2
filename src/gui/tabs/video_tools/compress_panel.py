@@ -35,7 +35,7 @@ _MAX_VISIBLE_COMBO_ITEMS = 12
 
 # Familias de codec ofrecidas en Comprimir: solo las orientadas a distribución/compresión
 # real (h264/hevc/av1/vp9) — ProRes/DNxHR/GIF/lossless etc. quedan exclusivos de Avanzado,
-# donde tienen sentido (mezcla/edición), no acá.
+# donde tienen sentido (mezcla/edición), no aquí.
 _VIDEO_CODEC_IDS = ["h264", "hevc", "av1", "vp9"]
 _AUDIO_CODEC_IDS = ["aac", "opus", "mp3"]
 

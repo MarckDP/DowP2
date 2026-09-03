@@ -15,9 +15,9 @@ class PresetsPanel(QWidget):
     """
     Pestaña 'Preajustes' de Herramientas Multimedia.
 
-    Acá el usuario ELIGE qué preset usar para el próximo trabajo, sin pasar
+    Aquí el usuario ELIGE qué preset usar para el próximo trabajo, sin pasar
     por la pestaña que lo creó (ej. guardaste "422 Proxy" en Avanzado una vez;
-    de ahí en más solo entrás acá, lo elegís, y mandás "Iniciar
+    de ahí en más solo entras aquí, lo eliges, y presionas "Iniciar
     Recodificación" directo). Por eso expone get_settings()/is_valid() con la
     misma forma que AdvancedRecodePanel - EncodingOptionsWidget los trata
     igual sea cual sea la pestaña activa.
@@ -29,7 +29,7 @@ class PresetsPanel(QWidget):
 
     Cada preajuste puede pedir container="same" (ver core.utils.default_presets, ej.
     los de normalizar audio: no tiene sentido forzar un contenedor fijo si solo se está
-    tocando el audio) - se resuelve acá por archivo, igual que ya hacía
+    tocando el audio) - se resuelve aquí por archivo, igual que ya hacía
     compress_panel.py en Manual ("Mismo que el original"), porque get_settings() recibe
     meta_override/filepath_override por archivo cuando video_tools_view.py arma el lote
     (ver needs_per_file_recompute).

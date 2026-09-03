@@ -6,7 +6,7 @@ generalizado para reusar en los botones de la franja superior del Editor de Imag
 (Reescalar IA, Eliminar Fondo IA, Canvas, etc.).
 
 Quien use este botón es responsable de dos cosas que varían demasiado entre pantallas
-como para meterlas acá:
+como para meterlas aquí:
   1. Llamar a `reposition()` en el resizeEvent del host, si el popover puede estar abierto.
   2. Cerrar el popover en clicks afuera -- instalar un eventFilter en QApplication como
      ya hace quick_mode_view.py, chequeando `not btn.geometry_contains_global(pos)`.

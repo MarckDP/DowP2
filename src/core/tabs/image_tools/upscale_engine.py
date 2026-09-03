@@ -3,7 +3,7 @@
 SRMD/Upscayl) ya descargados vía Ajustes > Modelos (ver core/setup/models_setup.py).
 Comandos exactos portados de DowP1 (video_upscaler.pyc decompilado, método
 _build_ncnn_cmd) -- los 3 motores son binarios standalone que hacen todo el trabajo
-solos, acá solo se arma la línea de comandos correcta y se corre el proceso."""
+solos, aquí solo se arma la línea de comandos correcta y se corre el proceso."""
 import os
 import re
 import subprocess
@@ -68,7 +68,7 @@ def _build_cmd(exe: str, input_path: str, output_path: str, options: dict) -> li
     if engine == "Upscayl":
         model_key = options.get("upscale_model") or ""
         # UPSCAYL_MODELS_MAP: clave = nombre crudo del archivo, valor = etiqueta
-        # amigable -- el popover guarda la clave cruda en currentData(), así que acá
+        # amigable -- el popover guarda la clave cruda en currentData(), así que aquí
         # ya viene resuelto (no hace falta invertir el mapa).
         # "models" RELATIVO a propósito -- a diferencia de Waifu2x/SRMD (que sí
         # aceptan -m absoluto, confirmado con una corrida real), upscayl-bin resuelve
@@ -120,7 +120,7 @@ def run_upscale(input_path: str, output_path: str, options: dict, cancellation_e
 
     exe = get_engine_exe_path(tool_info)
     if not exe or not os.path.exists(exe):
-        return False, f"'{tool_info['name']}' no está instalado -- andá a Ajustes > Modelos para descargarlo."
+        return False, f"'{tool_info['name']}' no está instalado -- ve a Ajustes > Modelos para descargarlo."
 
     cmd = _build_cmd(exe, input_path, output_path, options)
     logger.info(f"Reescalar IA: {' '.join(cmd)}")
@@ -186,7 +186,7 @@ def run_upscale(input_path: str, output_path: str, options: dict, cancellation_e
         tail = stderr_output[-500:]
         if any(hint in stderr_output for hint in _VULKAN_OOM_HINTS):
             return False, (
-                f"'{tool_info['name']}' se quedó sin memoria de GPU -- probá bajar el "
+                f"'{tool_info['name']}' se quedó sin memoria de GPU -- prueba bajar el "
                 f"Tile Size a 128 o 64. Detalle: {tail}"
             )
         return False, f"'{tool_info['name']}' falló (código {proc.returncode}): {tail}"

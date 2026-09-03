@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QCheckBox,
 )
-from PySide6.QtCore import Qt, QSize, QUrl, QTimer
+from PySide6.QtCore import Qt, QSize, QUrl, QTimer, QThread, Signal
 from PySide6.QtGui import QIcon, QDesktopServices
 
 from gui.widgets.animated_button import AnimatedButton
@@ -32,6 +32,34 @@ from core.utils.file_conflict_manager import resolve_conflict, commit_backup, ro
 from core.utils.recode_guard import container_supports_multi_audio, CONTAINER_TO_EXTENSION
 
 AUDIO_ONLY_EXTENSIONS = {".mp3", ".wav", ".aac", ".flac", ".ogg", ".m4a", ".opus", ".wma"}
+
+
+class _QueueMetadataThread(QThread):
+    """Recalcula la metadata agregada de TODA la cola (ver
+    VideoToolsTab._on_queue_changed) en un hilo de fondo. get_metadata_instant()
+    es "instantánea" por archivo (0ms, ver su docstring), pero sumada a miles de
+    archivos -- un os.path.exists()+os.stat()+lock por cada uno, en un loop
+    síncrono -- alcanza a notarse igual en el hilo de UI en una importación
+    grande, sobre todo si el disco es lento o hay un antivirus interceptando
+    cada apertura de archivo."""
+    finished_computing = Signal(list, list)  # entries, entries_with_paths
+
+    def __init__(self, filepaths: list[str], parent=None):
+        super().__init__(parent)
+        self._filepaths = filepaths
+
+    def run(self):
+        entries = []
+        entries_with_paths = []
+        mgr = FFprobeMetadataManager.get_instance()
+        for filepath in self._filepaths:
+            ext = os.path.splitext(filepath)[1].lower()
+            media_type = "audio" if ext in AUDIO_ONLY_EXTENSIONS else "video"
+            meta = mgr.get_metadata_instant(filepath, media_type)
+            entries.append(meta)
+            entries_with_paths.append((filepath, meta))
+        self.finished_computing.emit(entries, entries_with_paths)
+
 
 class VideoToolsTab(QWidget):
     """
@@ -90,6 +118,11 @@ class VideoToolsTab(QWidget):
         # del preview_widget incluso para archivos que no eran el actual, lo que podía
         # aplicarle a un archivo la pista elegida en OTRO (ver conversación).
         self._audio_track_cache: dict[str, str | int] = {}
+        # Cálculo de metadata agregada de la cola (ver _on_queue_changed) -- corre en
+        # un hilo aparte; request_id descarta el resultado si ya quedó obsoleto por
+        # un cambio de cola más nuevo mientras el hilo anterior seguía corriendo.
+        self._queue_meta_thread = None
+        self._queue_meta_request_id = 0
         # job_id -> backup_path pendiente (o None) para la política "Sobrescribir" - ver
         # file_conflict_manager.py: se confirma (se borra el .dbak) si el job termina bien,
         # se revierte (se restaura el original) si falla o se cancela.
@@ -519,20 +552,29 @@ class VideoToolsTab(QWidget):
         por-archivo, que ya cubre set_source_media con el archivo en preview. También
         poda los cachés por-archivo (recorte y selección de pista de audio) de archivos
         que ya no están en la cola - si no, un archivo distinto que reutilice la misma
-        ruta más tarde heredaría ajustes que no le corresponden."""
+        ruta más tarde heredaría ajustes que no le corresponden.
+
+        El cálculo de metadata en sí (un get_metadata_instant() por archivo) corre en
+        un hilo aparte (_QueueMetadataThread) -- con miles de archivos recién
+        importados, ese loop síncrono en el hilo de UI alcanzaba a notarse (ver
+        conversación: "se cuelga por varios segundos... con 4000 archivos")."""
         current_files = set(self.queue_widget.get_all_filepaths())
         for cache in (self._trim_cache, self._audio_track_cache):
             for filepath in set(cache.keys()) - current_files:
                 del cache[filepath]
 
-        entries = []
-        entries_with_paths = []
-        for filepath in current_files:
-            ext = os.path.splitext(filepath)[1].lower()
-            media_type = "audio" if ext in AUDIO_ONLY_EXTENSIONS else "video"
-            meta = FFprobeMetadataManager.get_instance().get_metadata_instant(filepath, media_type)
-            entries.append(meta)
-            entries_with_paths.append((filepath, meta))
+        self._queue_meta_request_id += 1
+        request_id = self._queue_meta_request_id
+        self._queue_meta_thread = _QueueMetadataThread(list(current_files), self)
+        self._queue_meta_thread.finished_computing.connect(
+            lambda entries, entries_with_paths, rid=request_id:
+                self._on_queue_metadata_computed(rid, entries, entries_with_paths)
+        )
+        self._queue_meta_thread.start()
+
+    def _on_queue_metadata_computed(self, request_id: int, entries: list, entries_with_paths: list):
+        if request_id != self._queue_meta_request_id:
+            return  # Una importación más nueva ya disparó otro cálculo -- este quedó obsoleto.
         self.options_widget.tab_compress.set_queue_entries(entries)
         self.options_widget.tab_convert.set_queue_entries(entries_with_paths)
 

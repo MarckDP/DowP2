@@ -5,9 +5,9 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
     QPushButton, QFrame, QScrollArea, QProgressBar, QMessageBox,
     QRadioButton, QButtonGroup, QFileDialog, QLineEdit, QToolButton,
-    QSizePolicy, QGroupBox, QCheckBox
+    QSizePolicy, QGroupBox, QCheckBox, QApplication
 )
-from PySide6.QtCore import Qt, Signal, QThread, QUrl
+from PySide6.QtCore import Qt, Signal, QThread, QUrl, QTimer
 from PySide6.QtGui import QDesktopServices, QIcon
 from core.utils.i18n import logger
 from gui.styles import get_theme_token, set_button_variant, apply_folder_browse_button_style, apply_folder_open_button_style
@@ -32,6 +32,7 @@ from core.setup.wpc_setup import (
 )
 from core.setup.ghostscript_setup import (
     check_ghostscript, download_ghostscript, get_local_version as gs_local,
+    get_install_info as gs_install_info,
 )
 
 
@@ -1434,7 +1435,7 @@ class DenoCardPanel(QFrame):
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# TARJETA 4: GHOSTSCRIPT (EPS/PS del Editor de Imagen -- opcional, solo Windows)
+# TARJETA 4: GHOSTSCRIPT (EPS/PS del Editor de Imagen -- opcional)
 # ═════════════════════════════════════════════════════════════════════════════
 
 class GhostscriptCardPanel(QFrame):
@@ -1442,24 +1443,35 @@ class GhostscriptCardPanel(QFrame):
     la app necesita siempre), esta es 100% opcional: solo hace falta si el
     usuario quiere convertir archivos EPS/PS en el Editor de Imagen, y nunca se
     descarga sola (ni acá ni al intentar convertir uno, ver
-    ImageToolsTab._confirm_ghostscript_if_needed, que siempre pregunta antes)."""
+    ImageToolsTab._confirm_ghostscript_if_needed, que siempre pregunta antes).
+
+    En Windows, DowP descarga y gestiona el binario (ver _windows_box / botón
+    Descargar-Reinstalar). En Mac/Linux no hay build bundleable -- la tarjeta
+    detecta un `gs` ya instalado por el usuario y le sugiere el comando de su
+    gestor de paquetes (ver _system_box / ghostscript_setup.get_install_info),
+    con un botón para copiarlo y otro para re-verificar tras instalarlo a mano."""
     download_requested = Signal(str, object)  # "ghostscript", None
 
     _TOOLTIP_GS = (
         "Ghostscript es el intérprete de PostScript que permite convertir archivos\n"
         "EPS/PS en el Editor de Imagen -- ningún formato más de DowP lo necesita.\n\n"
         "Es opcional: si no lo instalás, todo lo demás sigue funcionando igual,\n"
-        "y al intentar convertir un EPS/PS se te va a ofrecer descargarlo en ese momento.\n\n"
-        "Disponible solo en Windows por ahora."
+        "y al intentar convertir un EPS/PS se te va a avisar cómo instalarlo.\n\n"
+        "En Windows, DowP lo descarga y gestiona automáticamente. En Mac/Linux no hay\n"
+        "build oficial para empaquetar: se detecta un Ghostscript ya instalado por vos\n"
+        "(vía Homebrew en macOS, o el gestor de paquetes de tu distro en Linux)."
     )
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("ghostscriptCardPanel")
+        self.setProperty("variant", "card")
         self.dep_id = "ghostscript"
         self.is_installed = False
         self.local_ver = None
         self._is_windows = platform.system() == "Windows"
+        self._pkg_label = ""
+        self._install_cmd = ""
         self._build_ui()
         self.check_status()
 
@@ -1503,23 +1515,78 @@ class GhostscriptCardPanel(QFrame):
         sep.setStyleSheet("color: #333;")
         root.addWidget(sep)
 
-        bottom_row = QHBoxLayout()
-        bottom_row.setSpacing(12)
+        # ── Rama Windows: descarga gestionada por DowP ──────────────────────────
+        self._windows_box = QWidget()
+        windows_layout = QHBoxLayout(self._windows_box)
+        windows_layout.setContentsMargins(0, 0, 0, 0)
+        windows_layout.setSpacing(12)
 
         desc_lbl = QLabel(self.tr(
             "Opcional -- solo hace falta para convertir archivos EPS/PS. El resto del Editor de Imagen no lo necesita."
         ))
         desc_lbl.setStyleSheet("color: #888888; font-size: 12px;")
         desc_lbl.setWordWrap(True)
-        bottom_row.addWidget(desc_lbl, 1)
+        windows_layout.addWidget(desc_lbl, 1)
 
         self._btn_action = QPushButton(self.tr("Descargar"))
         self._btn_action.setCursor(Qt.PointingHandCursor)
         self._btn_action.setMinimumWidth(110)
         self._btn_action.clicked.connect(self._on_action_clicked)
-        bottom_row.addWidget(self._btn_action, 0, Qt.AlignVCenter)
+        windows_layout.addWidget(self._btn_action, 0, Qt.AlignVCenter)
 
-        root.addLayout(bottom_row)
+        root.addWidget(self._windows_box)
+
+        # ── Rama Mac/Linux: no hay build bundleable, se detecta un `gs` ya ──────
+        # instalado por el usuario y se sugiere el comando de su gestor de
+        # paquetes (Homebrew en macOS, apt/dnf/pacman/zypper detectado en Linux).
+        self._system_box = QWidget()
+        system_layout = QVBoxLayout(self._system_box)
+        system_layout.setContentsMargins(0, 0, 0, 0)
+        system_layout.setSpacing(6)
+
+        system_desc_lbl = QLabel(self.tr(
+            "Opcional -- solo hace falta para convertir archivos EPS/PS. DowP no lo empaqueta "
+            "en este sistema operativo: instalalo desde tu terminal con el comando de abajo y "
+            "después presioná \"Verificar\"."
+        ))
+        system_desc_lbl.setStyleSheet("color: #888888; font-size: 12px;")
+        system_desc_lbl.setWordWrap(True)
+        system_layout.addWidget(system_desc_lbl)
+
+        command_row = QHBoxLayout()
+        command_row.setSpacing(8)
+
+        self._command_field = QLineEdit()
+        self._command_field.setReadOnly(True)
+        self._command_field.setCursorPosition(0)
+        self._command_field.setStyleSheet(
+            "QLineEdit { background: #1e1e1e; color: #DDD; border: 1px solid #444;"
+            " border-radius: 4px; padding: 4px 8px; font-family: Consolas, monospace; }"
+        )
+        command_row.addWidget(self._command_field, 1)
+
+        self._btn_copy = QPushButton(self.tr("Copiar"))
+        self._btn_copy.setCursor(Qt.PointingHandCursor)
+        self._btn_copy.setFixedWidth(90)
+        self._btn_copy.setToolTip(self.tr("Copiar el comando al portapapeles"))
+        self._btn_copy.clicked.connect(self._on_copy_command_clicked)
+        command_row.addWidget(self._btn_copy)
+
+        self._btn_verify = QPushButton(self.tr("Verificar"))
+        self._btn_verify.setCursor(Qt.PointingHandCursor)
+        self._btn_verify.setFixedWidth(90)
+        self._btn_verify.setToolTip(self.tr("Volver a comprobar si Ghostscript ya está instalado"))
+        self._btn_verify.clicked.connect(self._on_verify_clicked)
+        command_row.addWidget(self._btn_verify)
+
+        system_layout.addLayout(command_row)
+
+        self._system_hint_lbl = QLabel("")
+        self._system_hint_lbl.setStyleSheet("font-size: 11px;")
+        self._system_hint_lbl.setWordWrap(True)
+        system_layout.addWidget(self._system_hint_lbl)
+
+        root.addWidget(self._system_box)
 
         self._progress_bar = QProgressBar()
         self._progress_bar.setTextVisible(False)
@@ -1536,17 +1603,37 @@ class GhostscriptCardPanel(QFrame):
     def check_status(self):
         self.is_installed = check_ghostscript()
         self.local_ver = gs_local() if self.is_installed else None
+        if not self._is_windows:
+            self._pkg_label, self._install_cmd = gs_install_info()
         self._update_ui_state()
 
     def _update_ui_state(self):
+        self._windows_box.setVisible(self._is_windows)
+        self._system_box.setVisible(not self._is_windows)
+
         if not self._is_windows:
-            self._status_badge.setText(self.tr("No disponible"))
-            self._status_badge.setStyleSheet("color: #888888; font-weight: bold; font-size: 12px;")
-            self._version_summary.setText(self.tr("Solo Windows por ahora"))
-            self._version_summary.setStyleSheet("color: #888888; font-size: 12px;")
-            self._btn_action.setText(self.tr("No disponible"))
-            self._btn_action.setDisabled(True)
-            self._btn_action.setStyleSheet("")
+            self._command_field.setText(self._install_cmd)
+            self._command_field.setCursorPosition(0)
+            if self.is_installed:
+                self._status_badge.setText(self.tr("✓ Instalado (Sistema)"))
+                self._status_badge.setStyleSheet("color: #4CAF50; font-weight: bold; font-size: 12px;")
+                ver_text = f"Versión: {self.local_ver}" if self.local_ver else self.tr("Versión: Desconocida")
+                self._version_summary.setText(ver_text)
+                self._version_summary.setStyleSheet("color: #AAAAAA; font-size: 12px;")
+                self._system_hint_lbl.setText(self.tr(
+                    "Detectado en el sistema -- DowP no lo gestiona acá, actualizalo con {0} cuando quieras."
+                ).format(self._pkg_label))
+                self._system_hint_lbl.setStyleSheet("color: #4CAF50; font-size: 11px;")
+            else:
+                self._status_badge.setText(self.tr("✗ Falta"))
+                self._status_badge.setStyleSheet("color: #F44336; font-weight: bold; font-size: 12px;")
+                self._version_summary.setText(self.tr("No instalado"))
+                self._version_summary.setStyleSheet("color: #F44336; font-size: 12px;")
+                self._system_hint_lbl.setText(self.tr(
+                    "No se detectó Ghostscript vía {0}. Copiá el comando, corrélo en tu terminal "
+                    "y después presioná \"Verificar\"."
+                ).format(self._pkg_label))
+                self._system_hint_lbl.setStyleSheet("color: #FFC107; font-size: 11px;")
             return
 
         if self.is_installed:
@@ -1569,6 +1656,29 @@ class GhostscriptCardPanel(QFrame):
     def _on_action_clicked(self):
         self.set_downloading_state(True)
         self.download_requested.emit(self.dep_id, None)
+
+    def _on_copy_command_clicked(self):
+        QApplication.clipboard().setText(self._install_cmd)
+        self._btn_copy.setText(self.tr("¡Copiado!"))
+        QTimer.singleShot(1500, lambda: self._btn_copy.setText(self.tr("Copiar")))
+
+    def _on_verify_clicked(self):
+        was_installed = self.is_installed
+        self.check_status()
+        if self.is_installed:
+            if not was_installed:
+                QMessageBox.information(
+                    self, self.tr("Ghostscript detectado"),
+                    self.tr("Ghostscript {0} detectado correctamente. Ya podés convertir "
+                             "archivos EPS/PS en el Editor de Imagen.").format(self.local_ver or "")
+                )
+        else:
+            QMessageBox.warning(
+                self, self.tr("No detectado"),
+                self.tr("Todavía no se detecta Ghostscript. Verificá que el comando haya "
+                        "terminado sin errores -- si acabás de instalarlo, puede que necesites "
+                        "reiniciar DowP para que tome el PATH actualizado del sistema.")
+            )
 
     def set_downloading_state(self, is_downloading, message=""):
         self._btn_action.setDisabled(is_downloading)

@@ -22,13 +22,18 @@ from PySide6.QtCore import Signal, Qt
 from PySide6.QtGui import QFontMetrics
 
 from gui.styles import get_theme_token
-from core.constants import REMBG_MODEL_FAMILIES, AI_ENGINE_HOLDER, AI_MODEL_HOLDER
-from core.setup.models_setup import is_rembg_model_installed, is_rembg_model_gated
+from core.constants import AI_ENGINE_HOLDER, AI_MODEL_HOLDER
+from core.setup.models_setup import get_all_rembg_families, is_rembg_model_installed, is_rembg_model_gated
 
 _GPU_TOOLTIP = (
     "Si está activo, usa la tarjeta gráfica (GPU).\n"
     "Si se desactiva, usará el procesador (CPU) a máxima potencia.\n"
-    "Desactívalo si tienes problemas de drivers o cuelgues."
+    "Desactívalo si tienes problemas de drivers o cuelgues.\n\n"
+    "La primera vez que se usa un modelo en esta sesión de DowP, la GPU compila "
+    "el modelo antes de correr -- con modelos grandes (RMBG 2.0, InSPyReNet) esto "
+    "puede tardar varios segundos y trabar la pantalla brevemente, es normal. "
+    "En Ajustes > Modelos podés tildar \"Mantener los modelos de IA cargados en "
+    "memoria\" para pagar ese costo una sola vez por sesión en vez de en cada lote."
 )
 _SMOOTH_TOOLTIP = (
     "Difumina el borde del recorte para una transición más suave.\n"
@@ -80,8 +85,6 @@ class RembgPopoverContent(QFrame):
         family_row.addWidget(self._label("Motor:"))
         self.combo_family = QComboBox()
         self.combo_family.addItem(AI_ENGINE_HOLDER, None)
-        for family_name in REMBG_MODEL_FAMILIES.keys():
-            self.combo_family.addItem(family_name, family_name)
         self.combo_family.currentIndexChanged.connect(self._on_family_changed)
         family_row.addWidget(self.combo_family, 1)
         layout.addLayout(family_row)
@@ -138,6 +141,27 @@ class RembgPopoverContent(QFrame):
         expand_row.addWidget(self.lbl_expand_value)
         layout.addLayout(expand_row)
 
+        self._refresh_family_list()
+
+    def _refresh_family_list(self):
+        """Repuebla el combo de familias desde get_all_rembg_families() -- se llama
+        en __init__ y cada vez que se abre el popover (ver showEvent), así un
+        modelo importado en Ajustes > Modelos mientras DowP ya está corriendo
+        aparece acá sin tener que reiniciar la app."""
+        current = self.combo_family.currentData()
+        self.combo_family.blockSignals(True)
+        self.combo_family.clear()
+        self.combo_family.addItem(AI_ENGINE_HOLDER, None)
+        for family_name in get_all_rembg_families().keys():
+            self.combo_family.addItem(family_name, family_name)
+        idx = self.combo_family.findData(current) if current else -1
+        self.combo_family.setCurrentIndex(idx if idx >= 0 else 0)
+        self.combo_family.blockSignals(False)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._refresh_family_list()
+
         self._resize_label_column()
 
     def _label(self, text: str) -> QLabel:
@@ -164,7 +188,7 @@ class RembgPopoverContent(QFrame):
         self.combo_model.blockSignals(True)
         self.combo_model.clear()
         self.combo_model.addItem(AI_MODEL_HOLDER, None)
-        models = REMBG_MODEL_FAMILIES.get(family_key, {})
+        models = get_all_rembg_families().get(family_key, {})
         for model_name, model_info in models.items():
             label = model_name
             if is_rembg_model_gated(model_info):
@@ -181,7 +205,7 @@ class RembgPopoverContent(QFrame):
     def _update_status(self):
         family_key = self._current_family_key()
         model_key = self.combo_model.currentData()
-        models = REMBG_MODEL_FAMILIES.get(family_key, {})
+        models = get_all_rembg_families().get(family_key, {})
         model_info = models.get(model_key)
         if not model_info:
             self.lbl_status.setVisible(False)
@@ -226,3 +250,18 @@ class RembgPopoverContent(QFrame):
 
     def expand_value(self) -> int:
         return self.slider_expand.value()
+
+    def get_settings(self) -> dict:
+        """Mismo criterio que UpscalePopoverContent.get_settings(): el popover
+        solo junta la configuración, se aplica recién al apretar "Convertir" (ver
+        ImageToolsTab._on_convert_clicked e ImageConverter._apply_rembg).
+        rembg_enabled = is_valid_selection() -- mismo criterio que ya usa
+        _style_rembg_button() para pintar el botón verde/gris."""
+        return {
+            "rembg_enabled": self.is_valid_selection(),
+            "rembg_family": self.combo_family.currentData(),
+            "rembg_model": self.combo_model.currentData(),
+            "rembg_gpu": self.gpu_enabled(),
+            "rembg_smooth": self.smooth_value(),
+            "rembg_expand": self.expand_value(),
+        }

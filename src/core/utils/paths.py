@@ -24,6 +24,25 @@ def get_src_dir() -> str:
     return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 
+def get_bin_root_dir() -> str:
+    """Carpeta que contiene bin/ (dependencias gestionadas -- ffmpeg/ghostscript/
+    deno/yt-dlp/WPC -- y modelos de IA descargados): junto al .exe/.app en modo
+    congelado, NO adentro de _internal/, o la raíz del repo en modo fuente.
+
+    A propósito NO reutiliza sys._MEIPASS (eso es lo que usa get_src_dir(), y
+    está bien ahí): en un --onedir moderno de PyInstaller (desde que separó
+    --contents-directory en la 6.0), _MEIPASS apunta a _internal/ -- el árbol
+    interno reemplazable del bundle, correcto para assets read-only (iconos,
+    temas, .qm) pero NO para datos que el usuario descarga (pueden pesar varios
+    GB) y espera encontrar junto al ejecutable, sobreviviendo a una reinstalación
+    que pise _internal/ entero. sys.executable sigue apuntando al .exe/.app, un
+    nivel arriba de _internal/ -- confirmado simulando el modo congelado contra
+    un build real de este repo (dist/DowP)."""
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(get_src_dir())
+
+
 def get_app_data_dir() -> str:
     r"""
     Retorna la ruta absoluta del directorio AppData del sistema para DowP2.
@@ -47,7 +66,7 @@ def get_models_dir() -> str:
     """Retorna bin/models (junto a bin/dependences), donde se instalan los modelos de
     IA (rembg, motores de upscaling). A diferencia de las dependencias, los modelos
     NUNCA se descargan solos al abrir la app -- solo cuando el usuario los pide."""
-    models_dir = os.path.join(os.path.dirname(get_src_dir()), "bin", "models")
+    models_dir = os.path.join(get_bin_root_dir(), "bin", "models")
     os.makedirs(models_dir, exist_ok=True)
     return models_dir
 

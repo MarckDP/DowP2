@@ -4,6 +4,7 @@ import sys
 import requests
 from core.logger.logger_manager import logger
 from core.utils.config_manager import get_config, save_config
+from core.utils.paths import get_bin_root_dir
 
 YTDLP_STABLE_URL = "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest"
 YTDLP_NIGHTLY_URL = "https://api.github.com/repos/yt-dlp/yt-dlp-nightly-builds/releases/latest"
@@ -11,8 +12,7 @@ FILENAME = "yt-dlp.zip"
 
 def get_ytdlp_dir():
     """Returns the directory path for yt-dlp."""
-    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-    ytdlp_dir = os.path.join(base_dir, "bin", "dependences", "ytdlp")
+    ytdlp_dir = os.path.join(get_bin_root_dir(), "bin", "dependences", "ytdlp")
     if not os.path.exists(ytdlp_dir):
         logger.info(f"Creating directory: {ytdlp_dir}")
         os.makedirs(ytdlp_dir)

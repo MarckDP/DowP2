@@ -7,11 +7,13 @@ desde Ajustes > Modelos (o, más adelante, desde el Editor de Imagen). Mismo pat
 descarga que el resto de core/setup/*.py (requests streamed + callback de porcentaje,
 sin checksum -- DowP 1 tampoco lo hacía)."""
 import os
+import re
 import shutil
 import sys
 import tempfile
 import zipfile
 import requests
+from core.constants import REMBG_MODEL_FAMILIES
 from core.logger.logger_manager import logger
 from core.utils.paths import get_models_dir
 
@@ -100,6 +102,146 @@ def delete_rembg_model(model_info: dict) -> bool:
     except Exception as e:
         logger.error(f"Error eliminando modelo rembg '{model_info.get('file')}': {e}")
         return False
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# MODELOS PERSONALIZADOS -- .onnx que el usuario importa a mano (Ajustes >
+# Modelos > Importar modelo personalizado), para modelos que no vienen en el
+# catálogo de REMBG_MODEL_FAMILIES (constants.py, parte del código fuente --
+# no editable en runtime). Viven en su propia carpeta ("rembg_custom") y su
+# propio registro en config.json, con la MISMA forma que una familia de
+# REMBG_MODEL_FAMILIES ({nombre: {file, folder, input_size}}) -- así ni la UI
+# (rembg_popover.py/models_page.py) ni el motor (rembg_engine.py) necesitan
+# distinguir "modelo de catálogo" de "modelo importado", ver
+# get_all_rembg_families() más abajo.
+# ═════════════════════════════════════════════════════════════════════════════
+
+CUSTOM_REMBG_FAMILY = "Personalizados (Importados)"
+_CUSTOM_REMBG_FOLDER = "rembg_custom"
+_CUSTOM_REMBG_CONFIG_KEY = "custom_rembg_models"
+
+
+def get_custom_rembg_models() -> dict:
+    """Modelos .onnx importados a mano, tal como quedaron guardados en config.json."""
+    from core.utils.config_manager import get_config
+    return dict(get_config().get(_CUSTOM_REMBG_CONFIG_KEY, {}))
+
+
+def get_all_rembg_families() -> dict:
+    """REMBG_MODEL_FAMILIES (catálogo fijo del código) + una familia sintética con
+    los modelos importados, si hay alguno -- fuente única de verdad para listar
+    familias/modelos en toda la app (UI y motor de inferencia)."""
+    families = dict(REMBG_MODEL_FAMILIES)
+    custom = get_custom_rembg_models()
+    if custom:
+        families[CUSTOM_REMBG_FAMILY] = custom
+    return families
+
+
+def probe_onnx_input_size(onnx_path: str) -> tuple[int, int] | None:
+    """Intenta inferir el input_size (alto, ancho) leyendo la forma declarada del
+    primer input del grafo -- best-effort: si el modelo tiene ejes dinámicos
+    (dimensión simbólica en vez de un entero fijo, común en arquitecturas con
+    atención deformable como RMBG 2.0) no hay nada concreto que leer, devuelve
+    None y el usuario completa el tamaño a mano en el diálogo de importación."""
+    try:
+        import onnxruntime as ort
+        session = ort.InferenceSession(onnx_path, providers=["CPUExecutionProvider"])
+        shape = session.get_inputs()[0].shape
+        # Las dos dimensiones espaciales (alto/ancho) son, en cualquier layout
+        # (NCHW o NHWC), las dos más grandes entre los ejes con valor entero fijo
+        # -- batch es 1, canales es 1/3/4, alto/ancho de un modelo de segmentación
+        # típico son >= 224.
+        spatial = sorted((d for d in shape if isinstance(d, int) and d > 4), reverse=True)
+        if len(spatial) >= 2:
+            return spatial[0], spatial[1]
+        return None
+    except Exception as e:
+        logger.debug(f"Modelos IA: no se pudo sondear input_size de '{onnx_path}': {e}")
+        return None
+
+
+def _safe_filename(name: str) -> str:
+    base = re.sub(r"[^A-Za-z0-9._-]+", "_", name).strip("_") or "modelo"
+    if not base.lower().endswith(".onnx"):
+        base += ".onnx"
+    return base
+
+
+def import_custom_rembg_model(display_name: str, source_path: str, input_size: tuple[int, int]) -> tuple[bool, str]:
+    """Copia un .onnx externo a bin/models/rembg_custom/ y lo registra en
+    config.json bajo CUSTOM_REMBG_FAMILY -- a partir de acá se comporta como
+    cualquier otro modelo del catálogo (aparece en el popover de Eliminar Fondo,
+    lo puede usar rembg_engine.py, se puede borrar desde Ajustes > Modelos)."""
+    from core.utils.config_manager import get_config, save_config
+
+    display_name = (display_name or "").strip()
+    if not display_name:
+        return False, "El modelo necesita un nombre."
+    if not source_path or not os.path.isfile(source_path):
+        return False, f"No se encontró el archivo: {source_path}"
+    if not source_path.lower().endswith(".onnx"):
+        return False, "El archivo elegido no es un .onnx."
+
+    target_dir = os.path.join(get_models_dir(), _CUSTOM_REMBG_FOLDER)
+    os.makedirs(target_dir, exist_ok=True)
+
+    filename = _safe_filename(os.path.splitext(os.path.basename(source_path))[0])
+    target_path = os.path.join(target_dir, filename)
+    # Evita pisar un archivo ya importado con otro nombre visible -- suma un
+    # sufijo numérico hasta encontrar uno libre, mismo criterio simple que usa
+    # file_conflict_manager para archivos de salida.
+    stem, ext = os.path.splitext(filename)
+    counter = 1
+    while os.path.exists(target_path) and os.path.abspath(target_path) != os.path.abspath(source_path):
+        filename = f"{stem}_{counter}{ext}"
+        target_path = os.path.join(target_dir, filename)
+        counter += 1
+
+    try:
+        if os.path.abspath(target_path) != os.path.abspath(source_path):
+            shutil.copy2(source_path, target_path)
+    except Exception as e:
+        logger.error(f"Modelos IA: no se pudo copiar el modelo personalizado: {e}")
+        return False, f"No se pudo copiar el archivo: {e}"
+
+    height, width = input_size
+    cfg = get_config()
+    custom = dict(cfg.get(_CUSTOM_REMBG_CONFIG_KEY, {}))
+    custom[display_name] = {
+        "file": filename,
+        "folder": _CUSTOM_REMBG_FOLDER,
+        "input_size": (height, width),
+        "url": "",  # importado a mano -- nunca se descarga solo, no aplica get_install_info/gated.
+    }
+    cfg[_CUSTOM_REMBG_CONFIG_KEY] = custom
+    save_config(cfg)
+    logger.info(f"Modelos IA: modelo personalizado importado '{display_name}' ({filename}, input_size={input_size})")
+    return True, "Modelo importado correctamente."
+
+
+def delete_custom_rembg_model(display_name: str) -> bool:
+    """Borra el archivo y la entrada del registro de un modelo importado."""
+    from core.utils.config_manager import get_config, save_config
+
+    cfg = get_config()
+    custom = dict(cfg.get(_CUSTOM_REMBG_CONFIG_KEY, {}))
+    model_info = custom.pop(display_name, None)
+    if model_info is None:
+        return False
+
+    try:
+        path = _model_path(model_info)
+        if os.path.exists(path):
+            os.remove(path)
+    except Exception as e:
+        logger.error(f"Modelos IA: no se pudo borrar el archivo de '{display_name}': {e}")
+        return False
+
+    cfg[_CUSTOM_REMBG_CONFIG_KEY] = custom
+    save_config(cfg)
+    logger.info(f"Modelos IA: modelo personalizado eliminado '{display_name}'")
+    return True
 
 
 def _engine_dir(tool_info: dict) -> str:

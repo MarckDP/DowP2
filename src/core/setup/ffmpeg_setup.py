@@ -10,6 +10,7 @@ import subprocess
 import re
 from core.logger.logger_manager import logger
 from core.utils.config_manager import get_config, save_config
+from core.utils.paths import get_bin_root_dir
 
 # Versión fija recomendada de FFmpeg para DowP (máxima estabilidad con yt-dlp)
 FFMPEG_RECOMMENDED_VERSION = "9.0.1"
@@ -30,8 +31,7 @@ def get_ffmpeg_config() -> dict:
 
 def get_managed_ffmpeg_dir() -> str:
     """Retorna el directorio donde DowP almacena los binarios gestionados de FFmpeg."""
-    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-    ffmpeg_dir = os.path.join(base_dir, "bin", "dependences", "ffmpeg")
+    ffmpeg_dir = os.path.join(get_bin_root_dir(), "bin", "dependences", "ffmpeg")
     if not os.path.exists(ffmpeg_dir):
         logger.info(f"Creating directory: {ffmpeg_dir}")
         os.makedirs(ffmpeg_dir, exist_ok=True)

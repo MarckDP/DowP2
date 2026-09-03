@@ -3,7 +3,7 @@ import os
 import json
 import datetime
 import subprocess
-from PySide6.QtCore import QObject, Signal, QRunnable, QThreadPool, QMutex, QMutexLocker
+from PySide6.QtCore import QObject, Signal, QRunnable, QThreadPool, QMutex, QMutexLocker, QTimer
 from core.logger.logger_manager import logger
 from core.utils.paths import get_cache_dir
 from core.setup.ffmpeg_setup import get_ffprobe_path, get_ffmpeg_dir, get_platform_info, check_ffmpeg
@@ -34,8 +34,33 @@ class FFprobeTask(QRunnable):
         except Exception as e:
             logger.error(f"FFprobeTask: Error procesando {self.file_path}: {e}")
 
+class _CacheSaveTask(QRunnable):
+    """Escribe un snapshot de la caché a disco en un hilo de QThreadPool -- nunca en
+    el de UI. Recibe una copia (dict) en vez de la referencia viva de
+    FFprobeMetadataManager.cache justo para no necesitar el mutex durante el I/O
+    (ver _flush_cache)."""
+
+    def __init__(self, cache_snapshot: dict):
+        super().__init__()
+        self._snapshot = cache_snapshot
+
+    def run(self):
+        try:
+            os.makedirs(os.path.dirname(CACHE_FILE), exist_ok=True)
+            with open(CACHE_FILE, 'w', encoding='utf-8') as f:
+                json.dump(self._snapshot, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.error(f"FFprobeMetadataManager: Error al guardar caché: {e}")
+
+
 class FFprobeMetadataManager(QObject):
     metadata_ready = Signal(str, dict)  # file_path, metadata_dict
+    # Señal interna -- ver _on_task_completed/_flush_cache. Se emite desde CUALQUIER
+    # hilo (los workers de self.pool), pero como el receptor (_save_timer.start) vive
+    # en el hilo dueño de este QObject, Qt la entrega en cola automáticamente ahí --
+    # es la forma segura de reiniciar un QTimer desde otro hilo (QTimer.start() no es
+    # thread-safe llamado directo).
+    _save_requested = Signal()
 
     _instance = None
 
@@ -52,8 +77,34 @@ class FFprobeMetadataManager(QObject):
         self.pending_tasks: set[str] = set()
         self.pool = QThreadPool()
         self.pool.setMaxThreadCount(4)
-        
+
+        # Guardado de caché DEBOUNCED y fuera del hilo de UI -- antes, cada ffprobe
+        # individual que terminaba reescribía el archivo de caché COMPLETO a disco
+        # (self._save_cache(), ver git blame) mientras tenía tomado self.mutex. Con
+        # una importación grande (miles de archivos nuevos, ej. 4000 videos) eso es
+        # I/O que crece cuadráticamente (se reescribe TODA la caché en cada una de
+        # las 4000 finalizaciones) más el hilo de UI bloqueándose cada vez que
+        # get_metadata_instant() (llamado en loop por _on_queue_changed,
+        # video_tools_view.py) pisaba el mismo mutex mientras un hilo de fondo
+        # estaba en medio de esa escritura -- eso era el cuelgue de varios segundos
+        # (o directamente sin reaccionar) reportado con 4000 videos. Ahora: cada
+        # archivo terminado solo actualiza el dict en memoria (rápido, ver
+        # _on_task_completed) y pide un guardado; el guardado real se dispara una
+        # sola vez tras 1.5s de inactividad (se reinicia en cada pedido nuevo) y
+        # corre en un QRunnable aparte (_CacheSaveTask), nunca en el hilo de UI ni
+        # reteniendo el mutex durante el I/O.
+        self._save_timer = QTimer(self)
+        self._save_timer.setSingleShot(True)
+        self._save_timer.setInterval(1500)
+        self._save_timer.timeout.connect(self._flush_cache)
+        self._save_requested.connect(self._save_timer.start)
+
         self._load_cache()
+
+    def _flush_cache(self):
+        with QMutexLocker(self.mutex):
+            snapshot = dict(self.cache)
+        self.pool.start(_CacheSaveTask(snapshot))
 
     def _load_cache(self):
         if os.path.exists(CACHE_FILE):
@@ -63,14 +114,6 @@ class FFprobeMetadataManager(QObject):
             except Exception as e:
                 logger.error(f"FFprobeMetadataManager: Error al cargar caché: {e}")
                 self.cache = {}
-
-    def _save_cache(self):
-        try:
-            os.makedirs(os.path.dirname(CACHE_FILE), exist_ok=True)
-            with open(CACHE_FILE, 'w', encoding='utf-8') as f:
-                json.dump(self.cache, f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            logger.error(f"FFprobeMetadataManager: Error al guardar caché: {e}")
 
     def clear_cache(self) -> int:
         """Limpia la caché de metadatos en memoria y disco, retornando la cantidad de entradas eliminadas."""
@@ -150,7 +193,7 @@ class FFprobeMetadataManager(QObject):
             with QMutexLocker(self.mutex):
                 self.cache[path] = entry
                 self.pending_tasks.discard(path)
-                self._save_cache()
+            self._save_requested.emit()
         except Exception as e:
             logger.error(f"FFprobeMetadataManager: Error al guardar entrada de caché: {e}")
 

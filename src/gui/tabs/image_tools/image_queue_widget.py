@@ -5,15 +5,14 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QGridLayout,
     QPushButton,
-    QTreeWidget,
-    QTreeWidgetItem,
+    QTreeView,
     QHeaderView,
     QLabel,
     QFrame,
     QAbstractItemView,
     QMenu,
 )
-from PySide6.QtCore import Qt, Signal, QSize, QUrl
+from PySide6.QtCore import Qt, Signal, QSize, QUrl, QThread, QAbstractTableModel, QModelIndex
 from PySide6.QtGui import QDragEnterEvent, QDropEvent
 
 from gui.styles import get_theme_token, create_colored_circle_icon
@@ -26,6 +25,16 @@ from core.logger.logger_manager import logger
 # estructura/estilo tal cual pidió el usuario) -- sin lo específico de video/audio
 # (waveforms, distinción video/audio) y con el set de extensiones de imagen que ya
 # soporta el Gestor de Medios (raster + RAW + vectoriales, ver editing_media_logic.py).
+#
+# Backing store: QAbstractTableModel + QTreeView, NO QTreeWidget -- con QTreeWidget,
+# add_files() creaba un QTreeWidgetItem POR ARCHIVO, en vivo (con el árbol ya como
+# padre), más un os.path.getsize() y un chequeo de caché de miniatura síncronos por
+# archivo, todo en el hilo de UI -- con miles de archivos (reportado: ~6000) eso
+# colgaba la app por minutos. El modelo/vista es perezoso de verdad (miniatura/tamaño
+# se calculan recién cuando ESA fila se pinta, no al agregarla) y una importación
+# grande termina en un solo beginResetModel()/endResetModel() -- mismo principio que
+# ya prueba el Gestor de Medios con decenas de miles de archivos sin colgarse, ver
+# gui/tabs/editing_media/media_model.py::MediaTableModel.
 
 _STATUS_COLOR_MAP = {
     "completado (": "estado_aviso",
@@ -61,6 +70,141 @@ SUPPORTED_EXTENSIONS = VALID_IMAGE_EXTS | VALID_VECTOR_EXTS
 _IMAGE_ICON_COLOR = "#2ecc71"
 _ROW_THUMB_SIZE = 18  # px, cuadrado
 
+_HEADERS = ("Nombre", "Tipo", "Tamaño", "Estado")
+
+
+class _QueueTableModel(QAbstractTableModel):
+    """Lista de paths (strings) -- nunca un widget por fila. `data()` es perezoso
+    (miniatura/tamaño se calculan/cachean recién la primera vez que Qt pinta esa
+    fila -- Qt solo llama a data() para las filas visibles en el viewport, no hace
+    falta ninguna lógica propia de "qué fila está visible"). `set_rows()` es un
+    solo reset para todo el lote en vez de insertar de a una fila."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._paths: list[str] = []
+        self._path_to_row: dict[str, int] = {}
+        self._sizes: dict[str, str] = {}     # cache perezoso: path -> "x.y MB"
+        self._statuses: dict[str, str] = {}  # path -> texto de estado (sobrevive a los resets, ver set_rows)
+        self._icon_cache = {}
+
+    def rowCount(self, parent=QModelIndex()):
+        return 0 if parent.isValid() else len(self._paths)
+
+    def columnCount(self, parent=QModelIndex()):
+        return 0 if parent.isValid() else len(_HEADERS)
+
+    def headerData(self, section, orientation, role=Qt.DisplayRole):
+        if orientation == Qt.Horizontal and role == Qt.DisplayRole and 0 <= section < len(_HEADERS):
+            return self.tr(_HEADERS[section])
+        return None
+
+    def set_rows(self, paths: list[str]):
+        self.beginResetModel()
+        self._paths = list(paths)
+        self._path_to_row = {p: i for i, p in enumerate(self._paths)}
+        self.endResetModel()
+
+    def path_at(self, row: int) -> str | None:
+        if 0 <= row < len(self._paths):
+            return self._paths[row]
+        return None
+
+    def update_status(self, path: str, status_text: str):
+        """Llamado desde ImageQueueWidget.update_file_status() -- guarda el estado
+        (persiste entre resets, a diferencia de _sizes que es solo cache) y emite
+        dataChanged puntual de esa fila nomás, sin tocar el resto del modelo."""
+        self._statuses[path] = status_text
+        row = self._path_to_row.get(path)
+        if row is not None:
+            idx = self.index(row, 3)
+            self.dataChanged.emit(idx, idx, [Qt.DisplayRole, Qt.DecorationRole])
+
+    def on_thumbnail_loaded(self, file_path: str):
+        row = self._path_to_row.get(file_path)
+        if row is not None:
+            idx = self.index(row, 0)
+            self.dataChanged.emit(idx, idx, [Qt.DecorationRole])
+
+    def _fallback_icon(self, svg_name: str, color: str, size: int = 18):
+        key = (svg_name, color, size)
+        if key not in self._icon_cache:
+            self._icon_cache[key] = get_colored_svg_icon(svg_name, color, size=size)
+        return self._icon_cache[key]
+
+    def _size_str(self, path: str) -> str:
+        cached = self._sizes.get(path)
+        if cached is not None:
+            return cached
+        try:
+            size_mb = os.path.getsize(path) / (1024 * 1024)
+            s = f"{size_mb:.1f} MB"
+        except Exception:
+            s = "N/A"
+        self._sizes[path] = s
+        return s
+
+    def data(self, index, role=Qt.DisplayRole):
+        if not index.isValid():
+            return None
+        row, col = index.row(), index.column()
+        path = self._paths[row]
+
+        if col == 0:
+            if role == Qt.DisplayRole:
+                return os.path.basename(path)
+            if role == Qt.DecorationRole:
+                thumb_mgr = ThumbnailCacheManager.get_instance()
+                cached = thumb_mgr.get_cached_qicon(path, _ROW_THUMB_SIZE)
+                if cached is not None:
+                    return cached
+                thumb_mgr.request_thumbnail(path, "imagen", _ROW_THUMB_SIZE)
+                return self._fallback_icon("image.svg", _IMAGE_ICON_COLOR)
+            if role == Qt.UserRole:
+                return path
+        elif col == 1:
+            if role == Qt.DisplayRole:
+                return os.path.splitext(path)[1].upper().replace(".", "")
+        elif col == 2:
+            if role == Qt.DisplayRole:
+                return self._size_str(path)
+        elif col == 3:
+            status = self._statuses.get(path) or self.tr("Pendiente")
+            if role == Qt.DisplayRole:
+                return status
+            if role == Qt.DecorationRole:
+                return _get_status_icon(status)
+        return None
+
+
+class _PathScanThread(QThread):
+    """Escanea en un hilo de fondo una lista de rutas (archivos y/o carpetas) --
+    evita que os.walk() de una carpeta enorme bloquee la UI al arrastrarla o
+    elegirla desde "Agregar Carpeta" (mismo espíritu que AsyncIndexerThread del
+    Gestor de Medios, sin todo su aparato de índice persistente -- acá es un uso
+    único por importación)."""
+    finished_scan = Signal(list)
+
+    def __init__(self, paths: list[str], parent=None):
+        super().__init__(parent)
+        self._paths = paths
+
+    def run(self):
+        valid_paths = []
+        for p in self._paths:
+            if os.path.isdir(p):
+                for root, _, files in os.walk(p):
+                    for f in files:
+                        ext = os.path.splitext(f)[1].lower()
+                        if ext in SUPPORTED_EXTENSIONS:
+                            valid_paths.append(os.path.join(root, f))
+            else:
+                ext = os.path.splitext(p)[1].lower()
+                if ext in SUPPORTED_EXTENSIONS:
+                    valid_paths.append(p)
+        self.finished_scan.emit(valid_paths)
+
+
 class ImageQueueWidget(QFrame):
     """
     Cola de archivos de imagen (panel izquierdo del Editor de Imagen). Permite
@@ -76,8 +220,8 @@ class ImageQueueWidget(QFrame):
         self.setObjectName("imageQueueWidget")
         self.setAcceptDrops(True)
         self.files_list = []
-        self._items_by_path = {}
-        self._icon_cache = {}
+        self._path_set = set()
+        self._scan_thread = None
         # filepath -> ruta del archivo ya convertido (ver set_output_path/
         # get_output_path) -- lo usa ImageToolsTab para saber si mostrar la vista
         # de comparación antes/después al seleccionar una fila.
@@ -88,7 +232,7 @@ class ImageQueueWidget(QFrame):
         self._titles = {}
         self._init_ui()
 
-        ThumbnailCacheManager.get_instance().thumbnail_loaded.connect(self._on_thumbnail_loaded)
+        ThumbnailCacheManager.get_instance().thumbnail_loaded.connect(self._model.on_thumbnail_loaded)
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -153,25 +297,24 @@ class ImageQueueWidget(QFrame):
         btn_layout.addWidget(self.btn_clear)
         layout.addLayout(btn_layout)
 
-        self.tree = QTreeWidget()
+        self._model = _QueueTableModel(self)
+
+        self.tree = QTreeView()
         self.tree.setObjectName("imageQueueTree")
+        self.tree.setModel(self._model)
         self.tree.setRootIsDecorated(False)
         self.tree.setIndentation(0)
-        self.tree.setHeaderLabels([
-            self.tr("Nombre"),
-            self.tr("Tipo"),
-            self.tr("Tamaño"),
-            self.tr("Estado")
-        ])
+        self.tree.setUniformRowHeights(True)
         self.tree.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.tree.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.tree.setAlternatingRowColors(True)
         self.tree.setIconSize(QSize(18, 18))
         self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._show_context_menu)
-        self.tree.itemSelectionChanged.connect(self._on_selection_changed)
+        self.tree.selectionModel().selectionChanged.connect(self._on_selection_changed)
 
         self.tree.setStyleSheet(f"""
-            QTreeWidget#imageQueueTree {{
+            QTreeView#imageQueueTree {{
                 background-color: {get_theme_token('fondo_principal', '#0a0a0a')};
                 border: 1px solid {border_color};
                 padding: 0px;
@@ -180,18 +323,18 @@ class ImageQueueWidget(QFrame):
                 alternate-background-color: {get_theme_token('fondo_secundario', '#121212')};
                 outline: none;
             }}
-            QTreeWidget#imageQueueTree::branch {{
+            QTreeView#imageQueueTree::branch {{
                 background: transparent;
             }}
-            QTreeWidget#imageQueueTree::item {{
+            QTreeView#imageQueueTree::item {{
                 padding: 4px 8px;
                 border-bottom: 1px solid {get_theme_token('borde_normal', '#1f1f23')};
                 color: {get_theme_token('texto_principal', '#cdd6f4')};
             }}
-            QTreeWidget#imageQueueTree::item:hover {{
+            QTreeView#imageQueueTree::item:hover {{
                 background-color: {_accent_rgba(22)};
             }}
-            QTreeWidget#imageQueueTree::item:selected {{
+            QTreeView#imageQueueTree::item:selected {{
                 background-color: {_accent_rgba(60)};
                 border-top: 1px solid {get_theme_token('acento_primario', '#B9E640')};
                 border-bottom: 1px solid {get_theme_token('acento_primario', '#B9E640')};
@@ -257,21 +400,8 @@ class ImageQueueWidget(QFrame):
     def dropEvent(self, event: QDropEvent):
         urls = event.mimeData().urls()
         paths = [url.toLocalFile() for url in urls if url.isLocalFile()]
-        valid_paths = []
-        for p in paths:
-            if os.path.isdir(p):
-                for root, _, files in os.walk(p):
-                    for f in files:
-                        ext = os.path.splitext(f)[1].lower()
-                        if ext in SUPPORTED_EXTENSIONS:
-                            valid_paths.append(os.path.join(root, f))
-            else:
-                ext = os.path.splitext(p)[1].lower()
-                if ext in SUPPORTED_EXTENSIONS:
-                    valid_paths.append(p)
-
-        if valid_paths:
-            self.add_files(valid_paths)
+        if paths:
+            self._start_scan(paths)
             event.acceptProposedAction()
 
     def _on_add_files_clicked(self):
@@ -286,91 +416,55 @@ class ImageQueueWidget(QFrame):
         from PySide6.QtWidgets import QFileDialog
         folder = QFileDialog.getExistingDirectory(self, self.tr("Seleccionar Carpeta con Imágenes"))
         if folder:
-            valid_paths = []
-            for root, _, files in os.walk(folder):
-                for f in files:
-                    ext = os.path.splitext(f)[1].lower()
-                    if ext in SUPPORTED_EXTENSIONS:
-                        valid_paths.append(os.path.join(root, f))
-            if valid_paths:
-                self.add_files(valid_paths)
+            self._start_scan([folder])
+
+    def _start_scan(self, paths: list[str]):
+        """Enumera archivos/carpetas en un hilo de fondo (ver _PathScanThread) --
+        ni siquiera el os.walk() de una carpeta enorme debe bloquear la UI."""
+        self._scan_thread = _PathScanThread(paths, self)
+        self._scan_thread.finished_scan.connect(self._on_scan_finished)
+        self._scan_thread.start()
+
+    def _on_scan_finished(self, valid_paths: list[str]):
+        if valid_paths:
+            self.add_files(valid_paths)
 
     def add_files(self, paths):
-        for p in paths:
-            if p in self.files_list:
-                continue
-            self.files_list.append(p)
-
-            filename = os.path.basename(p)
-            ext = os.path.splitext(p)[1].upper().replace(".", "")
-
-            try:
-                size_mb = os.path.getsize(p) / (1024 * 1024)
-                size_str = f"{size_mb:.1f} MB"
-            except Exception:
-                size_str = "N/A"
-
-            item = QTreeWidgetItem(self.tree)
-            item.setText(0, filename)
-            item.setText(1, ext)
-            item.setText(2, size_str)
-            item.setText(3, self.tr("Pendiente"))
-            item.setIcon(3, _get_status_icon("pendiente"))
-            item.setData(0, Qt.UserRole, p)
-            item.setIcon(0, self._get_icon_for_file(p))
-
-            self._items_by_path[p] = item
-
+        new_paths = [p for p in paths if p not in self._path_set]
+        if not new_paths:
+            return
+        self.files_list.extend(new_paths)
+        self._path_set.update(new_paths)
+        # Un solo reset para todo el lote -- nada de construir un item por
+        # archivo (ver _QueueTableModel, esto es lo que evita el colgado con
+        # miles de archivos).
+        self._model.set_rows(self.files_list)
         self._update_counter()
-        if self.tree.topLevelItemCount() > 0 and not self.tree.selectedItems():
-            self.tree.setCurrentItem(self.tree.topLevelItem(0))
+        if self.files_list and not self.tree.selectionModel().hasSelection():
+            self.tree.setCurrentIndex(self._model.index(0, 0))
 
     def clear_queue(self):
         self.files_list.clear()
-        self.tree.clear()
-        self._items_by_path.clear()
+        self._path_set.clear()
+        self._model.set_rows([])
         self._output_paths.clear()
         self._titles.clear()
         self._update_counter()
         self.file_selected.emit("")
 
     def remove_selected(self):
-        selected = self.tree.selectedItems()
-        for item in selected:
-            path = item.data(0, Qt.UserRole)
-            if path in self.files_list:
+        rows = sorted({idx.row() for idx in self.tree.selectionModel().selectedRows()})
+        removed_paths = [self._model.path_at(r) for r in rows]
+        for path in removed_paths:
+            if path is None:
+                continue
+            if path in self._path_set:
                 self.files_list.remove(path)
-            self._items_by_path.pop(path, None)
+                self._path_set.discard(path)
             self._output_paths.pop(path, None)
             self._titles.pop(path, None)
-            index = self.tree.indexOfTopLevelItem(item)
-            self.tree.takeTopLevelItem(index)
+        self._model.set_rows(self.files_list)
         self._update_counter()
-
-    def _fallback_icon(self, svg_name: str, color: str, size: int = 18):
-        key = (svg_name, color, size)
-        if key not in self._icon_cache:
-            self._icon_cache[key] = get_colored_svg_icon(svg_name, color, size=size)
-        return self._icon_cache[key]
-
-    def _get_icon_for_file(self, path: str):
-        """Ícono por defecto de la fila (placeholder inmediato), sustituido por una
-        miniatura real en cuanto termina de generarse en segundo plano (igual que en
-        el Gestor de Medios)."""
-        thumb_mgr = ThumbnailCacheManager.get_instance()
-        cached = thumb_mgr.get_cached_qicon(path, _ROW_THUMB_SIZE)
-        if cached is not None:
-            return cached
-        thumb_mgr.request_thumbnail(path, "imagen", _ROW_THUMB_SIZE)
-        return self._fallback_icon("image.svg", _IMAGE_ICON_COLOR)
-
-    def _on_thumbnail_loaded(self, file_path: str, thumbnail_path: str):
-        item = self._items_by_path.get(file_path)
-        if item is None:
-            return
-        icon = ThumbnailCacheManager.get_instance().get_cached_qicon(file_path, _ROW_THUMB_SIZE)
-        if icon is not None:
-            item.setIcon(0, icon)
 
     def get_all_filepaths(self):
         return list(self.files_list)
@@ -381,18 +475,18 @@ class ImageQueueWidget(QFrame):
         self.queue_updated.emit(count)
         self.lbl_drop_hint.setVisible(count == 0)
 
-    def _on_selection_changed(self):
-        selected = self.tree.selectedItems()
-        if selected:
-            filepath = selected[0].data(0, Qt.UserRole)
-            self.file_selected.emit(filepath)
+    def _on_selection_changed(self, *_args):
+        indexes = self.tree.selectionModel().selectedRows()
+        if indexes:
+            self.file_selected.emit(self._model.path_at(indexes[0].row()) or "")
         else:
             self.file_selected.emit("")
 
     def _show_context_menu(self, pos):
-        item = self.tree.itemAt(pos)
-        if not item:
+        index = self.tree.indexAt(pos)
+        if not index.isValid():
             return
+        path = self._model.path_at(index.row())
         menu = QMenu(self)
         action_remove = menu.addAction(self.tr("Eliminar de la cola"))
         action_open_loc = menu.addAction(self.tr("Abrir ubicación del archivo"))
@@ -401,16 +495,12 @@ class ImageQueueWidget(QFrame):
         if action == action_remove:
             self.remove_selected()
         elif action == action_open_loc:
-            path = item.data(0, Qt.UserRole)
             if path and os.path.exists(path):
                 from PySide6.QtGui import QDesktopServices
                 QDesktopServices.openUrl(QUrl.fromLocalFile(os.path.dirname(path)))
 
     def update_file_status(self, filepath: str, status_text: str):
-        item = self._items_by_path.get(filepath)
-        if item:
-            item.setText(3, status_text)
-            item.setIcon(3, _get_status_icon(status_text))
+        self._model.update_status(filepath, status_text)
 
     def set_output_path(self, filepath: str, output_path: str):
         """Registra el archivo de salida de una conversión completada -- ver

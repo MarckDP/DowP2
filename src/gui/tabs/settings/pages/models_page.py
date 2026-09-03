@@ -2,19 +2,23 @@
 import os
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QScrollArea,
-    QPushButton, QMessageBox, QProgressBar
+    QPushButton, QMessageBox, QProgressBar, QCheckBox, QFileDialog, QDialog,
+    QLineEdit, QSpinBox, QDialogButtonBox, QFormLayout,
 )
 from PySide6.QtCore import Qt, QThread, Signal, QUrl
 from PySide6.QtGui import QDesktopServices
 from core.utils.i18n import logger
 from core.utils.cache_manager import format_bytes
 from core.utils.paths import get_models_dir
+from core.utils.config_manager import get_config, save_config
 from core.constants import REMBG_MODEL_FAMILIES, UPSCALING_TOOLS
 from core.setup.models_setup import (
     is_rembg_model_installed, is_rembg_model_gated, download_rembg_model, delete_rembg_model,
     is_upscaling_engine_installed, download_upscaling_engine, delete_upscaling_engine,
-    get_folder_size,
+    get_folder_size, get_custom_rembg_models, import_custom_rembg_model,
+    delete_custom_rembg_model, probe_onnx_input_size,
 )
+from core.tabs.image_tools import rembg_engine
 
 
 class ModelDownloadWorker(QThread):
@@ -40,16 +44,113 @@ class ModelDownloadWorker(QThread):
             self.finished_signal.emit(False, str(e), self.row_id)
 
 
+class _ProbeInputSizeWorker(QThread):
+    """Sondea el input_size de un .onnx en segundo plano (ver
+    models_setup.probe_onnx_input_size) -- crear la InferenceSession para leer la
+    forma del input puede tardar unos segundos con modelos grandes, no se puede
+    hacer en el hilo de la UI sin trabar el diálogo de importación."""
+    finished_signal = Signal(object)  # tuple[int, int] | None
+
+    def __init__(self, onnx_path: str, parent=None):
+        super().__init__(parent)
+        self.onnx_path = onnx_path
+
+    def run(self):
+        self.finished_signal.emit(probe_onnx_input_size(self.onnx_path))
+
+
+class ImportOnnxDialog(QDialog):
+    """Diálogo de "Importar modelo ONNX" -- pide nombre visible y tamaño de
+    entrada (NxN, mismo formato que "input_size" en REMBG_MODEL_FAMILIES),
+    con un intento de auto-detección en segundo plano que el usuario siempre
+    puede corregir a mano antes de confirmar."""
+
+    def __init__(self, onnx_path: str, parent=None):
+        super().__init__(parent)
+        self.onnx_path = onnx_path
+        self.setWindowTitle(self.tr("Importar modelo ONNX"))
+        self.setMinimumWidth(380)
+
+        layout = QVBoxLayout(self)
+
+        info_lbl = QLabel(self.tr("Archivo: {0}").format(os.path.basename(onnx_path)))
+        info_lbl.setStyleSheet("color: #AAAAAA; font-size: 11px;")
+        info_lbl.setWordWrap(True)
+        layout.addWidget(info_lbl)
+
+        form = QFormLayout()
+        default_name = os.path.splitext(os.path.basename(onnx_path))[0]
+        self.entry_name = QLineEdit(default_name)
+        form.addRow(self.tr("Nombre:"), self.entry_name)
+
+        self.spin_size = QSpinBox()
+        self.spin_size.setRange(64, 4096)
+        self.spin_size.setSingleStep(32)
+        self.spin_size.setValue(1024)
+        self.spin_size.setSuffix(" px")
+        form.addRow(self.tr("Tamaño de entrada (NxN):"), self.spin_size)
+        layout.addLayout(form)
+
+        self.lbl_probe = QLabel(self.tr("Detectando tamaño de entrada..."))
+        self.lbl_probe.setStyleSheet("color: #888888; font-size: 11px; font-style: italic;")
+        self.lbl_probe.setWordWrap(True)
+        layout.addWidget(self.lbl_probe)
+
+        hint = QLabel(self.tr(
+            "Si no se detecta solo, dejalo en 1024 (el más común en modelos "
+            "modernos de Eliminar Fondo) o revisá la página de donde bajaste el "
+            "modelo -- los legacy tipo U2Net suelen usar 320."
+        ))
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: #666666; font-size: 10px;")
+        layout.addWidget(hint)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        self._probe_worker = _ProbeInputSizeWorker(onnx_path)
+        self._probe_worker.finished_signal.connect(self._on_probe_done)
+        self._probe_worker.start()
+
+    def _on_probe_done(self, result):
+        if result:
+            height, width = result
+            self.spin_size.setValue(max(height, width))
+            self.lbl_probe.setText(self.tr("Tamaño detectado: {0}x{1}").format(height, width))
+            self.lbl_probe.setStyleSheet("color: #4CAF50; font-size: 11px;")
+        else:
+            self.lbl_probe.setText(self.tr("No se pudo detectar el tamaño -- confirmalo a mano."))
+            self.lbl_probe.setStyleSheet("color: #FFC107; font-size: 11px;")
+
+    def get_values(self) -> tuple[str, int]:
+        return self.entry_name.text().strip(), self.spin_size.value()
+
+    def closeEvent(self, event):
+        # El sondeo corre en un QThread aparte -- si el usuario cierra el diálogo
+        # antes de que termine, hay que esperarlo un toque para no destruirlo
+        # mientras sigue corriendo (Qt tira warning/crash con eso).
+        if self._probe_worker.isRunning():
+            self._probe_worker.wait(2000)
+        super().closeEvent(event)
+
+
 class ModelRow(QFrame):
     """Fila para un modelo rembg o un motor de upscaling. `gated=True` lo muestra
     bloqueado (sin acciones) para variantes que necesitan cuenta/login externo."""
     download_requested = Signal(str)  # row_id
 
-    def __init__(self, row_id: str, title: str, path_for_size: str, gated: bool = False, parent=None):
+    def __init__(self, row_id: str, title: str, path_for_size: str, gated: bool = False,
+                 no_download: bool = False, parent=None):
         super().__init__(parent)
         self.row_id = row_id
         self.path_for_size = path_for_size
         self.gated = gated
+        # no_download: modelos importados a mano (ver _add_custom_row) -- ya están
+        # instalados por definición (se copiaron al importar), no tiene sentido
+        # ofrecer "Descargar"/"Reinstalar" para algo que no viene de una URL.
+        self.no_download = no_download
         self.setObjectName("settingsCard")
         self._build_ui(title)
         self.refresh_status()
@@ -106,7 +207,8 @@ class ModelRow(QFrame):
         # callback de borrado, porque necesita saber si es un modelo rembg o un motor
         # de upscaling completo para llamar a la función de borrado correcta.
 
-        layout.addWidget(self.btn_download, 0, Qt.AlignVCenter)
+        if not self.no_download:
+            layout.addWidget(self.btn_download, 0, Qt.AlignVCenter)
         layout.addWidget(self.btn_folder, 0, Qt.AlignVCenter)
         layout.addWidget(self.btn_delete, 0, Qt.AlignVCenter)
 
@@ -182,6 +284,31 @@ class ModelsPage(QWidget):
         line.setFrameShadow(QFrame.Sunken)
         self.main_layout.addWidget(line)
 
+        # Persistencia de sesiones ONNX -- por defecto (destildado) el modelo se
+        # carga al empezar un lote de "Convertir" y se libera apenas termina (ver
+        # ImageConvertWorker.run/rembg_engine.prepare_session/clear_sessions): la
+        # carga inicial de un modelo ONNX en GPU (DirectML compila el grafo la
+        # primera vez que corre, puede tardar varios segundos y frena la pantalla
+        # entera mientras la GPU está saturada) se vuelve a pagar en cada lote.
+        # Con esto tildado, la sesión queda cargada en memoria entre lotes -- se
+        # paga esa carga inicial una sola vez por sesión de DowP, hasta que se
+        # cierre la app o el usuario destilde esta opción (ahí se libera al toque).
+        self.chk_persist_sessions = QCheckBox(
+            self.tr("Mantener los modelos de IA cargados en memoria entre conversiones")
+        )
+        self.chk_persist_sessions.setToolTip(self.tr(
+            "Si está tildado, el modelo de IA (Eliminar Fondo) queda cargado en memoria "
+            "desde el primer uso hasta que cierres DowP o destildes esta opción -- evita "
+            "pagar de nuevo la carga inicial (que puede tardar varios segundos y frenar "
+            "la pantalla) en cada conversión.\n\n"
+            "Si está destildado (por defecto), el modelo se carga al empezar un lote y "
+            "se libera apenas termina -- usa menos memoria en reposo, pero cada lote "
+            "nuevo vuelve a pagar la carga inicial."
+        ))
+        self.chk_persist_sessions.setChecked(bool(get_config().get("rembg_persist_sessions", False)))
+        self.chk_persist_sessions.toggled.connect(self._on_persist_sessions_toggled)
+        self.main_layout.addWidget(self.chk_persist_sessions)
+
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setFrameShape(QFrame.NoFrame)
@@ -203,12 +330,46 @@ class ModelsPage(QWidget):
                 self._add_rembg_row(model_name, model_info)
 
         self.content_layout.addSpacing(8)
+        self._add_section_header(self.tr("Modelos Personalizados (Importados)"))
+
+        import_row = QHBoxLayout()
+        import_desc = QLabel(self.tr(
+            "Para modelos ONNX de Eliminar Fondo que no están en el catálogo de arriba "
+            "(por ejemplo, descargados a mano desde HuggingFace)."
+        ))
+        import_desc.setStyleSheet("color: #888888; font-size: 11px;")
+        import_desc.setWordWrap(True)
+        import_row.addWidget(import_desc, 1)
+        self.btn_import_custom = QPushButton(self.tr("Importar modelo ONNX..."))
+        self.btn_import_custom.setCursor(Qt.PointingHandCursor)
+        self.btn_import_custom.clicked.connect(self._on_import_custom_clicked)
+        import_row.addWidget(self.btn_import_custom, 0, Qt.AlignVCenter)
+        self.content_layout.addLayout(import_row)
+
+        self.custom_rows_container = QVBoxLayout()
+        self.custom_rows_container.setSpacing(10)
+        self.content_layout.addLayout(self.custom_rows_container)
+        self._refresh_custom_rows()
+
+        self.content_layout.addSpacing(8)
         self._add_section_header(self.tr("Motores de Reescalado (Upscaling)"))
         for engine_key, tool_info in UPSCALING_TOOLS.items():
             self._add_upscaling_row(engine_key, tool_info)
 
         scroll_area.setWidget(scroll_content)
         self.main_layout.addWidget(scroll_area)
+
+    def _on_persist_sessions_toggled(self, checked: bool):
+        cfg = get_config()
+        cfg["rembg_persist_sessions"] = checked
+        save_config(cfg)
+        logger.info(f"Modelos IA: 'Mantener en memoria' cambiado a {checked}")
+        if not checked:
+            # Apagar la opción libera lo que haya quedado cargado ahora mismo, no
+            # recién en la próxima conversión -- si no, el usuario destilda la
+            # opción pensando que ya liberó memoria y en realidad sigue cargada
+            # hasta el próximo lote.
+            rembg_engine.clear_sessions()
 
     def _add_section_header(self, text: str):
         lbl = QLabel(text)
@@ -237,6 +398,70 @@ class ModelsPage(QWidget):
         self.row_info[row_id] = model_info
         self.row_kind[row_id] = "rembg"
         self.content_layout.addWidget(row)
+
+    # ── Modelos personalizados (importados) ─────────────────────────────────
+    def _refresh_custom_rows(self):
+        while self.custom_rows_container.count():
+            item = self.custom_rows_container.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+
+        custom = get_custom_rembg_models()
+        if not custom:
+            lbl = QLabel(self.tr("Todavía no importaste ningún modelo."))
+            lbl.setStyleSheet("color: #666666; font-size: 11px; font-style: italic;")
+            self.custom_rows_container.addWidget(lbl)
+            return
+
+        for model_name, model_info in custom.items():
+            self._add_custom_row(model_name, model_info)
+
+    def _add_custom_row(self, model_name: str, model_info: dict):
+        row_id = f"custom::{model_name}"
+        path = os.path.join(get_models_dir(), model_info["folder"], model_info["file"])
+        row = ModelRow(row_id, model_name, path, gated=False, no_download=True)
+        row.btn_delete.clicked.connect(lambda: self._on_delete_custom(model_name))
+        self.custom_rows_container.addWidget(row)
+
+    def _on_import_custom_clicked(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, self.tr("Seleccionar modelo ONNX"), "", self.tr("Modelos ONNX (*.onnx)")
+        )
+        if not path:
+            return
+
+        dialog = ImportOnnxDialog(path, parent=self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+
+        name, size = dialog.get_values()
+        if not name:
+            QMessageBox.warning(self, self.tr("Error"), self.tr("El modelo necesita un nombre."))
+            return
+
+        if name in get_custom_rembg_models():
+            if QMessageBox.question(
+                self, self.tr("Reemplazar modelo"),
+                self.tr("Ya existe un modelo importado llamado '{0}'. ¿Reemplazarlo?").format(name)
+            ) != QMessageBox.Yes:
+                return
+
+        success, msg = import_custom_rembg_model(name, path, (size, size))
+        if success:
+            self._refresh_custom_rows()
+            QMessageBox.information(self, self.tr("Modelo importado"), msg)
+        else:
+            QMessageBox.warning(self, self.tr("Error al importar"), msg)
+
+    def _on_delete_custom(self, model_name: str):
+        if QMessageBox.question(
+            self, self.tr("Eliminar modelo"),
+            self.tr("¿Eliminar el modelo importado '{0}'?").format(model_name)
+        ) != QMessageBox.Yes:
+            return
+        if delete_custom_rembg_model(model_name):
+            self._refresh_custom_rows()
 
     def _add_upscaling_row(self, engine_key: str, tool_info: dict):
         row_id = f"upscaling::{engine_key}"

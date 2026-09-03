@@ -5,7 +5,9 @@ import threading
 from PySide6.QtCore import QThread, Signal
 
 from core.logger.logger_manager import logger
+from core.tabs.image_tools import rembg_engine
 from core.tabs.image_tools.image_converter import ImageConverter
+from core.utils.config_manager import get_config
 from core.utils.file_conflict_manager import resolve_conflict, commit_backup, rollback_backup
 
 # Extensión de salida por formato -- "No Convertir" no está acá a propósito, se
@@ -27,6 +29,12 @@ class ImageConvertWorker(QThread):
     la conversión de ESE archivo salió bien, o se revierte si falló/se canceló."""
 
     file_progress = Signal(str, int)          # filepath, %
+    # filepath, True/False -- "no hay porcentaje real que mostrar ahora" (ver
+    # ImageConverter._apply_ai_upscale/upscale_engine.run_upscale: Waifu2x/SRMD no
+    # imprimen progreso, a diferencia de Upscayl). Señal separada de file_progress
+    # (que es Signal(str, int), no puede llevar None) para no forzar un porcentaje
+    # inventado -- quien la escuche debe mostrar un estado "trabajando" indeterminado.
+    busy_indeterminate = Signal(str, bool)
     file_status_changed = Signal(str, str)    # filepath, texto de estado
     file_completed = Signal(str, str)         # input_path, output_path -- solo en éxito
     finished_signal = Signal(int, int)        # completados, total
@@ -74,6 +82,23 @@ class ImageConvertWorker(QThread):
         return os.path.join(os.path.dirname(input_path), filename)
 
     def run(self):
+        # Precarga la sesión ONNX de Eliminar Fondo antes del lote (si aplica) --
+        # así la primera imagen no paga sola el costo de inicialización. Por
+        # defecto se libera al terminar el lote (éxito, error o cancelación); si
+        # el usuario tildó "Mantener los modelos de IA cargados en memoria" en
+        # Ajustes > Modelos, queda cargada para el próximo lote también -- evita
+        # repetir la compilación inicial del grafo en GPU (la parte que más tarda
+        # y más traba la pantalla) en cada conversión. Ver rembg_engine.py y
+        # models_page.py::_on_persist_sessions_toggled (ese destildado libera al
+        # toque, no hace falta esperar acá a que corra otro lote).
+        rembg_engine.prepare_session(self.options)
+        try:
+            self._run_batch()
+        finally:
+            if not get_config().get("rembg_persist_sessions", False):
+                rembg_engine.clear_sessions()
+
+    def _run_batch(self):
         total = len(self.filepaths)
         completed = 0
         policy = self.options.get("conflict_policy", "conservar")
@@ -108,7 +133,11 @@ class ImageConvertWorker(QThread):
                 read_path = backup_path
 
             def progress_cb(pct, _filepath=filepath):
-                self.file_progress.emit(_filepath, pct)
+                if pct is None:
+                    self.busy_indeterminate.emit(_filepath, True)
+                else:
+                    self.busy_indeterminate.emit(_filepath, False)
+                    self.file_progress.emit(_filepath, int(round(pct)))
 
             try:
                 success, message = self._converter.convert_file(

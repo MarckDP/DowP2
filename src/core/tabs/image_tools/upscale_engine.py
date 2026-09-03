@@ -5,7 +5,10 @@ Comandos exactos portados de DowP1 (video_upscaler.pyc decompilado, método
 _build_ncnn_cmd) -- los 3 motores son binarios standalone que hacen todo el trabajo
 solos, acá solo se arma la línea de comandos correcta y se corre el proceso."""
 import os
+import re
 import subprocess
+import threading
+import time
 import multiprocessing
 
 from core.logger.logger_manager import logger
@@ -22,6 +25,13 @@ _POWER_THREADS = {
 _VULKAN_OOM_HINTS = ("vkQueueSubmit failed", "vkAllocateMemory failed", "invalid gpu device", "out of gpu memory")
 
 _POLL_INTERVAL_SEC = 0.2
+
+# Upscayl (realesrgan-ncnn-vulkan) imprime "NN,NN%"/"NN.NN%" por stderr, una línea
+# por mosaico procesado -- confirmado corriéndolo en vivo contra los 3 motores.
+# Waifu2x y SRMD NO imprimen nada (solo el banner de la GPU al arrancar, después
+# silencio hasta terminar) -- ahí no hay ninguna señal real que leer.
+_UPSCAYL_PROGRESS_ENGINE = "Upscayl"
+_PERCENT_RE = re.compile(r"(\d{1,3}[.,]\d{1,2})\s*%")
 
 
 def _auto_threads() -> str:
@@ -92,10 +102,17 @@ def _build_cmd(exe: str, input_path: str, output_path: str, options: dict) -> li
     return cmd
 
 
-def run_upscale(input_path: str, output_path: str, options: dict, cancellation_event=None) -> tuple[bool, str]:
+def run_upscale(input_path: str, output_path: str, options: dict, cancellation_event=None,
+                 progress_callback=None) -> tuple[bool, str]:
     """Corre el motor de "upscale_engine" (Waifu2x/SRMD/Upscayl) sobre UNA imagen.
     Siempre escribe PNG (-f png, igual que DowP1) -- quien llame se encarga de volver
-    a cargar el resultado y seguir el pipeline de guardado al formato final."""
+    a cargar el resultado y seguir el pipeline de guardado al formato final.
+
+    `progress_callback(pct)` se llama con un float 0-100 mientras Upscayl (el único
+    de los 3 motores que imprime progreso real, confirmado corriéndolo en vivo) va
+    terminando mosaicos -- o con `None` para Waifu2x/SRMD (sin ninguna señal real
+    que leer: no hay que inventar un número, es responsabilidad de quien llama
+    mostrar un estado "trabajando" indeterminado en ese caso)."""
     engine = options.get("upscale_engine")
     tool_info = UPSCALING_TOOLS.get(engine)
     if tool_info is None:
@@ -107,6 +124,8 @@ def run_upscale(input_path: str, output_path: str, options: dict, cancellation_e
 
     cmd = _build_cmd(exe, input_path, output_path, options)
     logger.info(f"Reescalar IA: {' '.join(cmd)}")
+
+    reports_progress = engine == _UPSCAYL_PROGRESS_ENGINE
 
     try:
         proc = subprocess.Popen(
@@ -121,25 +140,51 @@ def run_upscale(input_path: str, output_path: str, options: dict, cancellation_e
     except Exception as e:
         return False, f"No se pudo iniciar el motor '{tool_info['name']}': {e}"
 
-    stderr_output = ""
+    if progress_callback:
+        progress_callback(0.0 if reports_progress else None)
+
+    # stderr se lee en un hilo aparte, continuamente, mientras el proceso corre --
+    # antes se leía todo de golpe con communicate() recién cuando el proceso ya
+    # había terminado, así que cualquier progreso que Upscayl fuera imprimiendo en
+    # el camino (confirmado que lo hace, ver _PERCENT_RE) se perdía por completo.
+    # De paso, evita el riesgo clásico de deadlock de no drenar stderr mientras el
+    # hijo puede estar bloqueado esperando que alguien lea su buffer.
+    stderr_lines: list[str] = []
+
+    def _read_stderr():
+        try:
+            for line in proc.stderr:
+                stderr_lines.append(line)
+                if reports_progress and progress_callback:
+                    match = _PERCENT_RE.search(line)
+                    if match:
+                        pct = float(match.group(1).replace(",", "."))
+                        logger.info(f"Progreso Upscayl: {pct}%")
+                        progress_callback(pct)
+        except Exception as e:
+            logger.error(f"Reescalar IA: error leyendo stderr en vivo: {e}")
+
+    reader_thread = threading.Thread(target=_read_stderr, daemon=True)
+    reader_thread.start()
+
     try:
-        while True:
+        while proc.poll() is None:
             if cancellation_event and cancellation_event.is_set():
                 proc.kill()
                 proc.wait(timeout=2.0)
                 return False, "Cancelado por el usuario."
-            try:
-                _, stderr_output = proc.communicate(timeout=_POLL_INTERVAL_SEC)
-                break
-            except subprocess.TimeoutExpired:
-                continue
+            time.sleep(_POLL_INTERVAL_SEC)
     except Exception as e:
         proc.kill()
         return False, f"Error esperando al motor '{tool_info['name']}': {e}"
 
+    proc.wait()
+    reader_thread.join(timeout=2.0)
+    stderr_output = "".join(stderr_lines)
+
     if proc.returncode != 0:
-        tail = (stderr_output or "")[-500:]
-        if any(hint in (stderr_output or "") for hint in _VULKAN_OOM_HINTS):
+        tail = stderr_output[-500:]
+        if any(hint in stderr_output for hint in _VULKAN_OOM_HINTS):
             return False, (
                 f"'{tool_info['name']}' se quedó sin memoria de GPU -- probá bajar el "
                 f"Tile Size a 128 o 64. Detalle: {tail}"
@@ -148,5 +193,8 @@ def run_upscale(input_path: str, output_path: str, options: dict, cancellation_e
 
     if not os.path.exists(output_path) or os.path.getsize(output_path) < 100:
         return False, f"'{tool_info['name']}' no generó una salida válida."
+
+    if progress_callback and reports_progress:
+        progress_callback(100.0)
 
     return True, "Reescalado completado."

@@ -6,6 +6,7 @@ import shutil
 import platform
 import stat
 from core.logger.logger_manager import logger
+from core.utils.paths import get_bin_root_dir
 
 DENO_API_URL = "https://api.github.com/repos/denoland/deno/releases/latest"
 
@@ -40,8 +41,7 @@ def get_platform_info():
 
 def get_deno_dir():
     """Returns the directory path for Deno."""
-    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-    deno_dir = os.path.join(base_dir, "bin", "dependences", "deno")
+    deno_dir = os.path.join(get_bin_root_dir(), "bin", "dependences", "deno")
     if not os.path.exists(deno_dir):
         logger.info(f"Creating directory: {deno_dir}")
         os.makedirs(deno_dir)

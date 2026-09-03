@@ -95,23 +95,34 @@ class ImageConverter:
             if resize_enabled and target_size and input_ext not in _VECTOR_EXTS:
                 img = self._resize_raster_image(img, target_size, maintain_aspect, options)
             if progress_callback:
-                progress_callback(60)
+                progress_callback(55)
             if cancellation_event and cancellation_event.is_set():
                 return False, "Cancelado por el usuario."
 
-            # Reescalar IA -- mismo orden que usaba DowP1 (Redimensionar primero,
-            # Reescalar IA después): son ejes independientes, no se descartan entre sí.
-            if options.get("upscale_enabled", False):
-                img = self._apply_ai_upscale(img, options, cancellation_event)
+            # Eliminar Fondo IA -- mismo orden que usaba DowP1 (Redimensionar ->
+            # Eliminar Fondo -> Reescalar IA): se corta el fondo ANTES de reescalar,
+            # así el reescalado IA trabaja sobre el recorte, no sobre fondo que se
+            # va a tirar.
+            if options.get("rembg_enabled", False):
+                img = self._apply_rembg(img, options, progress_callback)
             if progress_callback:
-                progress_callback(80)
+                progress_callback(70)
+            if cancellation_event and cancellation_event.is_set():
+                return False, "Cancelado por el usuario."
+
+            # Reescalar IA -- son ejes independientes de Eliminar Fondo, no se
+            # descartan entre sí (se puede recortar Y reescalar en el mismo lote).
+            if options.get("upscale_enabled", False):
+                img = self._apply_ai_upscale(img, options, cancellation_event, progress_callback)
+            if progress_callback:
+                progress_callback(85)
 
             # Canvas (preset del menú, ajuste de lote) -- último paso antes de
             # guardar, mismo orden que DowP1 (resize -> upscale IA -> canvas).
             if options.get("canvas_enabled", False):
                 img = self._apply_canvas(img, options)
             if progress_callback:
-                progress_callback(90)
+                progress_callback(92)
 
             if output_format == "NO CONVERTIR":
                 self._save_passthrough(img, input_ext, output_path, options)
@@ -210,14 +221,17 @@ class ImageConverter:
         Windows por ahora -- ver core/setup/ghostscript_setup.py), reusando
         _load_pdf_like para el renderizado en sí -- mismo comando que usaba
         DowP1 (image_converter.pyc decompilado, líneas 592-594)."""
-        from core.setup.ghostscript_setup import check_ghostscript, get_gs_exe_path
+        from core.setup.ghostscript_setup import check_ghostscript, get_gs_exe_path, get_install_info
 
         if not check_ghostscript():
+            import platform as _platform
+            if _platform.system() == "Windows":
+                hint = "instalalo desde Ajustes > Dependencias, o aceptá la descarga que te ofrece Convertir."
+            else:
+                label, cmd = get_install_info()
+                hint = f"instalalo desde tu terminal vía {label}: {cmd}"
             raise UnsupportedFormatError(
-                f"{os.path.splitext(filepath)[1].upper()} necesita Ghostscript -- "
-                "instalalo desde Ajustes > Dependencias (Windows) o, si ya estás en "
-                "Windows, aceptá la descarga que te ofrece Convertir. No disponible "
-                "todavía en Mac/Linux."
+                f"{os.path.splitext(filepath)[1].upper()} necesita Ghostscript -- {hint}"
             )
 
         import subprocess
@@ -280,26 +294,61 @@ class ImageConverter:
             new_height, new_width = target_height, int(target_height * original_aspect)
         return img.resize((new_width, new_height), resampling)
 
-    def _apply_ai_upscale(self, img, options: dict, cancellation_event=None):
+    def _apply_ai_upscale(self, img, options: dict, cancellation_event=None, progress_callback=None):
         """Corre el motor de Reescalar IA (Waifu2x/SRMD/Upscayl, ver
         core/tabs/image_tools/upscale_engine.py) sobre `img` -- los 3 son binarios
         externos (archivo-a-archivo), así que hay que volcar la imagen a un PNG
-        temporal, invocar el motor, y recargar el resultado como PIL.Image."""
+        temporal, invocar el motor, y recargar el resultado como PIL.Image.
+
+        Este paso suele ser el más lento de todo convert_file() (inferencia por
+        GPU) -- antes quedaba "clavado" en el 70% del progreso general mientras
+        corría, sin ningún indicio de que seguía trabajando. Acá se mapea el
+        progreso propio del motor (0-100, ver run_upscale) al tramo 70-85 del
+        progreso general (después de Eliminar Fondo, ver _apply_rembg), mismo
+        criterio que usaba DowP1 para el reescalado de video (video_upscaler.pyc:
+        `pct = 15 + done/total*70`, un sub-rango del progreso total). run_upscale()
+        llama con `None` en vez de un número cuando el motor no imprime progreso
+        real (Waifu2x/SRMD, confirmado corriéndolos) -- se reenvía tal cual, es
+        responsabilidad de quien consume el progress_callback general mostrar un
+        estado indeterminado en ese caso en vez de inventar un porcentaje."""
         import tempfile
         from core.tabs.image_tools.upscale_engine import run_upscale
+
+        def upscale_progress(pct):
+            if not progress_callback:
+                return
+            if pct is None:
+                progress_callback(None)
+            else:
+                progress_callback(70 + (pct / 100.0) * 15)
 
         with tempfile.TemporaryDirectory(prefix="dowp_upscale_") as tmp_dir:
             temp_in = os.path.join(tmp_dir, "in.png")
             temp_out = os.path.join(tmp_dir, "out.png")
             img.save(temp_in, "PNG")
 
-            success, message = run_upscale(temp_in, temp_out, options, cancellation_event)
+            success, message = run_upscale(
+                temp_in, temp_out, options, cancellation_event,
+                progress_callback=upscale_progress,
+            )
             if not success:
                 raise Exception(f"Reescalar IA: {message}")
 
             result = Image.open(temp_out)
             result.load()
             return result
+
+    def _apply_rembg(self, img, options: dict, progress_callback=None):
+        """Corre Eliminar Fondo IA (ver core/tabs/image_tools/rembg_engine.py) sobre
+        `img` y aplica el post-procesado de borde (suavizado/expansión) si el
+        usuario configuró alguno en el popover -- mismo orden que DowP1
+        (remove_background, después _apply_alpha_postprocess)."""
+        from core.tabs.image_tools.rembg_engine import apply_alpha_postprocess, remove_background
+
+        img = remove_background(img, options, progress_callback=progress_callback)
+        smooth = int(options.get("rembg_smooth", 0) or 0)
+        expand = int(options.get("rembg_expand", 0) or 0)
+        return apply_alpha_postprocess(img, smooth, expand)
 
     def _apply_canvas(self, img, options: dict):
         """Canvas como ajuste de LOTE (preset elegido en el popover, clic derecho) --

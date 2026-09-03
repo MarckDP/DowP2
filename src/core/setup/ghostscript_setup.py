@@ -3,18 +3,26 @@
 Dependencias, ver gui/tabs/settings/pages/deps_page.py) que habilita EPS/PS en
 el Editor de Imagen (ver core/tabs/image_tools/image_converter.py::_load_eps_ps).
 
-Windows-only por ahora: el único release oficial (ArtifexSoftware/ghostpdl-
-downloads) es un instalador NSIS, sin build portable ni instalación silenciosa
-desde la 10.01.0 -- así que en vez de correr el instalador, se lo EXTRAE con
-7-Zip sin ejecutarlo (confirmado que funciona: el instalador se abre como
-archivo NSIS y expone bin/gswin64c.exe + lib/ + Resource/ intactos, la
-disposición estándar que Ghostscript necesita en tiempo de ejecución).
+Descarga gestionada por DowP: solo en Windows. El único release oficial
+(ArtifexSoftware/ghostpdl-downloads) es un instalador NSIS, sin build portable
+ni instalación silenciosa desde la 10.01.0 -- así que en vez de correr el
+instalador, se lo EXTRAE con 7-Zip sin ejecutarlo (confirmado que funciona: el
+instalador se abre como archivo NSIS y expone bin/gswin64c.exe + lib/ +
+Resource/ intactos, la disposición estándar que Ghostscript necesita en tiempo
+de ejecución).
 
 7-Zip en sí no es una dependencia del proyecto (no hay ninguna acá) -- se
 bootstrapea desde el paquete NuGet "7-Zip.x64" (un ZIP plano, a diferencia de
 la "Extra" del propio 7-zip.org, que es un .7z y sería circular). Se cachea
 una sola vez en bin/dependences/_tools/7zip/ (prefijo "_tools": detalle interno,
-no es una tarjeta propia de Ajustes)."""
+no es una tarjeta propia de Ajustes).
+
+Mac/Linux: no hay build bundleable (macOS sin precompilado oficial, Linux solo
+como paquete Snap) -- en vez de descargar/extraer nada, se detecta un `gs` ya
+instalado por el propio usuario (típicamente `brew install ghostscript` /
+`sudo apt install ghostscript`, ver get_install_info() más abajo, que la
+tarjeta de Ajustes usa para sugerir el comando correcto según el SO/gestor de
+paquetes detectado)."""
 import os
 import platform
 import shutil
@@ -25,6 +33,7 @@ import zipfile
 import requests
 
 from core.logger.logger_manager import logger
+from core.utils.paths import get_bin_root_dir
 
 GS_VERSION = "10.07.1"
 _GS_INSTALLER_URL = (
@@ -38,18 +47,33 @@ _GS_INSTALLER_URL = (
 _SEVENZIP_NUGET_URL = "https://www.nuget.org/api/v2/package/7-Zip.x64/16.2.1"
 _GS_KEEP_DIRS = ("bin", "lib", "Resource")
 
+# Rutas conocidas de gs en Mac/Linux para cuando shutil.which("gs") no alcanza
+# -- ver _find_system_gs().
+_SYSTEM_GS_FALLBACK_PATHS = (
+    "/opt/homebrew/bin/gs",  # Homebrew en Apple Silicon
+    "/usr/local/bin/gs",     # Homebrew en Intel / Linuxbrew
+    "/usr/bin/gs",           # paquete nativo de la distro (apt/dnf/pacman/zypper)
+)
+
+# (ejecutable a buscar en PATH, etiqueta para la UI, comando sugerido) -- orden
+# de preferencia al detectar qué gestor de paquetes tiene el usuario en Linux.
+_LINUX_PKG_MANAGERS = (
+    ("apt", "APT (Debian/Ubuntu)", "sudo apt install ghostscript"),
+    ("dnf", "DNF (Fedora/RHEL)", "sudo dnf install ghostscript"),
+    ("pacman", "Pacman (Arch)", "sudo pacman -S ghostscript"),
+    ("zypper", "Zypper (openSUSE)", "sudo zypper install ghostscript"),
+)
+
 
 def get_managed_ghostscript_dir() -> str:
     """Mismo patrón que get_managed_ffmpeg_dir() (ffmpeg_setup.py)."""
-    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-    gs_dir = os.path.join(base_dir, "bin", "dependences", "ghostscript")
+    gs_dir = os.path.join(get_bin_root_dir(), "bin", "dependences", "ghostscript")
     os.makedirs(gs_dir, exist_ok=True)
     return gs_dir
 
 
 def _tools_dir() -> str:
-    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-    d = os.path.join(base_dir, "bin", "dependences", "_tools", "7zip")
+    d = os.path.join(get_bin_root_dir(), "bin", "dependences", "_tools", "7zip")
     os.makedirs(d, exist_ok=True)
     return d
 
@@ -90,26 +114,83 @@ def _ensure_7zip_tool(progress_callback=None) -> str | None:
         return None
 
 
+def _find_system_gs() -> str | None:
+    """gs ya instalado por el usuario en Mac/Linux (Homebrew/apt/dnf/etc).
+    shutil.which() no alcanza solo: una app lanzada desde Finder (o un bundle
+    de PyInstaller) arranca con un PATH mínimo que no incluye los prefijos no
+    estándar de Homebrew (/opt/homebrew, /usr/local) aunque el usuario ya lo
+    haya instalado ahí -- de ahí el fallback a rutas conocidas."""
+    exe = shutil.which("gs")
+    if exe:
+        return exe
+    for candidate in _SYSTEM_GS_FALLBACK_PATHS:
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def detect_package_manager() -> str | None:
+    """Ejecutable del gestor de paquetes de Linux detectado en PATH (apt/dnf/
+    pacman/zypper), o None si no se encontró ninguno. Solo tiene sentido en
+    Linux -- en macOS siempre se ofrece Homebrew, ver get_install_info()."""
+    for exe, _label, _cmd in _LINUX_PKG_MANAGERS:
+        if shutil.which(exe):
+            return exe
+    return None
+
+
+def get_install_info() -> tuple[str, str]:
+    """(etiqueta del gestor, comando sugerido) para instalar Ghostscript en
+    este SO -- usado por la tarjeta de Ajustes > Dependencias para mostrarle al
+    usuario qué correr en su terminal. macOS siempre ofrece Homebrew (único
+    gestor real ahí); en Linux se detecta el gestor nativo ya presente en PATH,
+    con Homebrew (Linuxbrew) como último fallback si no se encontró ninguno."""
+    if platform.system() == "Darwin":
+        return "Homebrew", "brew install ghostscript"
+    for exe, label, cmd in _LINUX_PKG_MANAGERS:
+        if shutil.which(exe):
+            return label, cmd
+    if shutil.which("brew"):
+        return "Homebrew", "brew install ghostscript"
+    return "APT (Debian/Ubuntu)", "sudo apt install ghostscript"
+
+
 def check_ghostscript() -> bool:
-    """True solo en Windows con Ghostscript ya instalado -- en Mac/Linux
-    siempre False por ahora (no hay build bundleable, ver nota en
-    core/constants.py; a futuro: detectar un `gs` del sistema ahí)."""
-    if platform.system() != "Windows":
-        return False
-    exe = get_gs_exe_path()
-    return bool(exe and os.path.isfile(exe))
+    """True si Ghostscript está disponible -- en Windows, el build gestionado
+    por DowP (extraído del instalador oficial); en Mac/Linux, un `gs` ya
+    instalado por el propio usuario (ver _find_system_gs() y get_install_info()
+    -- DowP no bundlea Ghostscript ahí, no hay build portable oficial)."""
+    if platform.system() == "Windows":
+        exe = get_gs_exe_path()
+        return bool(exe and os.path.isfile(exe))
+    return bool(_find_system_gs())
 
 
 def get_gs_exe_path() -> str | None:
-    """Ruta al gswin64c.exe gestionado, o None si no aplica a este SO / no está
-    instalado todavía."""
-    if platform.system() != "Windows":
-        return None
-    return os.path.join(get_managed_ghostscript_dir(), "bin", "gswin64c.exe")
+    """Ruta a un binario de Ghostscript utilizable: el gswin64c.exe gestionado
+    por DowP en Windows, o el `gs` del sistema detectado en Mac/Linux. None si
+    no está instalado todavía."""
+    if platform.system() == "Windows":
+        return os.path.join(get_managed_ghostscript_dir(), "bin", "gswin64c.exe")
+    return _find_system_gs()
 
 
 def get_local_version() -> str | None:
-    return GS_VERSION if check_ghostscript() else None
+    """Versión detectada -- fija (GS_VERSION) en Windows porque DowP controla
+    el build que extrae; en Mac/Linux se lee de `gs --version` porque la elige
+    el usuario/el gestor de paquetes, no DowP."""
+    if platform.system() == "Windows":
+        return GS_VERSION if check_ghostscript() else None
+    exe = _find_system_gs()
+    if not exe:
+        return None
+    try:
+        result = subprocess.run(
+            [exe, "--version"], capture_output=True, text=True, timeout=10,
+        )
+        return result.stdout.strip() or None
+    except Exception:
+        return None
 
 
 def download_ghostscript(progress_callback=None) -> tuple[bool, str]:
@@ -117,7 +198,8 @@ def download_ghostscript(progress_callback=None) -> tuple[bool, str]:
     ejecutarlo (ver nota del módulo) -- deja bin/lib/Resource listos en
     get_managed_ghostscript_dir()."""
     if platform.system() != "Windows":
-        return False, "Ghostscript solo está disponible en Windows por ahora."
+        label, cmd = get_install_info()
+        return False, f"En este SO, instalá Ghostscript vía {label}: {cmd}"
 
     try:
         seven_zip = _ensure_7zip_tool(progress_callback)

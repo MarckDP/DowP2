@@ -1050,8 +1050,8 @@ class ImageToolsTab(QWidget):
         self.btn_open_output_folder.clicked.connect(self._on_open_output_folder)
         controls_row.addWidget(self.btn_open_output_folder)
 
-        # 3. Botones de acción: Convertir y Cancelar
-        self.btn_convert = AnimatedButton(self.tr("Convertir"))
+        # 3. Botones de acción: Iniciar Proceso y Cancelar
+        self.btn_convert = AnimatedButton(self.tr("Iniciar Proceso"))
         self.btn_convert.setProperty("variant", "primary")
         self.btn_convert.setCursor(Qt.PointingHandCursor)
         self.btn_convert.setFixedHeight(32)
@@ -1230,6 +1230,7 @@ class ImageToolsTab(QWidget):
             return
         settings = {
             **self.resize_popover_content.get_settings(),
+            **self.rembg_popover_content.get_settings(),
             **self.upscale_popover_content.get_settings(),
             **self.canvas_popover_content.get_settings(),
             **self.convert_panel.get_settings(),
@@ -1252,6 +1253,8 @@ class ImageToolsTab(QWidget):
             filepaths, settings, titles=titles, source_overrides=source_overrides, parent=self,
         )
         self._convert_worker.file_status_changed.connect(self._on_convert_file_status)
+        self._convert_worker.file_progress.connect(self._on_convert_file_progress)
+        self._convert_worker.busy_indeterminate.connect(self._on_convert_busy_indeterminate)
         self._convert_worker.file_completed.connect(self._on_convert_file_completed)
         self._convert_worker.finished_signal.connect(self._on_convert_finished)
 
@@ -1259,11 +1262,19 @@ class ImageToolsTab(QWidget):
         self.btn_convert_cancel.setVisible(True)
         self.btn_convert_cancel.setEnabled(True)
         self.progress_bar.setProperty("status", "running")
-        self.progress_bar.setRange(0, len(filepaths))
+        self.progress_bar.style().unpolish(self.progress_bar)
+        self.progress_bar.style().polish(self.progress_bar)
+        self.progress_bar.setBouncing(False)
+        # Rango en PORCENTAJE del lote completo (no en "cantidad de archivos" como
+        # antes) -- eso es lo que permite que la barra avance de forma continua
+        # combinando "archivos ya terminados" + "progreso del archivo actual" (ver
+        # _update_progress_bar), en vez de saltar de golpe entre archivos.
+        self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
-        self.progress_bar.setFormat(self.tr("Convirtiendo 0/{0}...").format(len(filepaths)))
+        self.progress_bar.setFormat(self.tr("Convirtiendo 0/{0} (0%)...").format(len(filepaths)))
         self._convert_total = len(filepaths)
         self._convert_done = 0
+        self._current_file_progress = 0
 
         self._convert_worker.start()
 
@@ -1273,25 +1284,59 @@ class ImageToolsTab(QWidget):
             self.btn_convert_cancel.setEnabled(False)
             self.progress_bar.setFormat(self.tr("Cancelando..."))
 
+    def _update_progress_bar(self):
+        """Combina archivos ya terminados + el progreso (0-100) del que está en
+        curso en un único valor continuo entre 0% y 100%."""
+        total = max(self._convert_total, 1)
+        total_percent = (self._convert_done + self._current_file_progress / 100.0) / total * 100.0
+        pct_int = int(round(total_percent))
+        self.progress_bar.setValue(pct_int)
+        self.progress_bar.setFormat(
+            self.tr("Convirtiendo {0}/{1} ({2}%)...").format(
+                min(self._convert_done + 1, self._convert_total), self._convert_total, pct_int
+            )
+        )
+
+    def _on_convert_file_progress(self, filepath: str, pct: int):
+        self._current_file_progress = pct
+        self._update_progress_bar()
+
+    def _on_convert_busy_indeterminate(self, filepath: str, is_indeterminate: bool):
+        """Reescalar IA sin porcentaje real que mostrar (Waifu2x/SRMD, ver
+        upscale_engine.py) -- rebote en vez de un número inventado o la barra
+        clavada sin moverse."""
+        self.progress_bar.setBouncing(is_indeterminate)
+        if is_indeterminate:
+            self.progress_bar.setFormat(
+                self.tr("Reescalando {0}/{1}...").format(
+                    min(self._convert_done + 1, self._convert_total), self._convert_total
+                )
+            )
+
     def _on_convert_file_status(self, filepath: str, status_text: str):
         self.image_queue.update_file_status(filepath, status_text)
+        # "Procesando..." indica que el archivo acaba de EMPEZAR, no que terminó.
+        # Solo se incrementa _convert_done cuando el archivo concluye (Completado,
+        # Error u Omitido). Antes se incrementaba en cada llamada a este método,
+        # provocando que la barra saltara a 100% apenas arrancaba el primer archivo.
+        if status_text in (self.tr("Procesando..."), "Procesando..."):
+            return
         self._convert_done += 1
-        self.progress_bar.setValue(self._convert_done)
-        self.progress_bar.setFormat(
-            self.tr("Convirtiendo {0}/{1}...").format(self._convert_done, self._convert_total)
-        )
+        self._current_file_progress = 0
+        self.progress_bar.setBouncing(False)
+        self._update_progress_bar()
 
     def _on_convert_file_completed(self, input_path: str, output_path: str):
         """Registra el resultado de una conversión exitosa -- a propósito NO
         interrumpe una edición en curso (como en Photoshop), EXCEPTO cuando el
-        lote usó IA (reescalado por ahora -- Eliminar Fondo todavía no tiene
-        ejecución conectada, ver rembg_popover.py): ahí si el usuario está
-        mirando justo esta fila, Comparar se activa solo para mostrar el
-        resultado de una vez. Invalida el cache de comparación por si ya había
-        un resultado previo de una reconversión."""
+        lote usó IA (Reescalar y/o Eliminar Fondo, ver rembg_engine.py): ahí si
+        el usuario está mirando justo esta fila, Comparar se activa solo para
+        mostrar el resultado de una vez. Invalida el cache de comparación por si
+        ya había un resultado previo de una reconversión."""
         self.image_queue.set_output_path(input_path, output_path)
         self._compare_cache.invalidate(input_path)
-        uses_ai = bool(self._active_convert_settings and self._active_convert_settings.get("upscale_enabled"))
+        settings = self._active_convert_settings or {}
+        uses_ai = bool(settings.get("upscale_enabled") or settings.get("rembg_enabled"))
         self._files_with_ai_edit[input_path] = uses_ai
         if input_path != self._current_filepath:
             return
@@ -1309,8 +1354,12 @@ class ImageToolsTab(QWidget):
         self._convert_worker = None
         self.btn_convert_cancel.setVisible(False)
         self.btn_convert_cancel.setEnabled(True)
-        self.progress_bar.setValue(total)
+        self.progress_bar.setBouncing(False)
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(100)
         self.progress_bar.setProperty("status", "done")
+        self.progress_bar.style().unpolish(self.progress_bar)
+        self.progress_bar.style().polish(self.progress_bar)
         self.progress_bar.setFormat(self.tr("Completado: {0}/{1} archivos").format(completed, total))
         self._update_convert_button_state()
 

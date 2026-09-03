@@ -13,6 +13,7 @@ import subprocess
 import requests
 from core.logger.logger_manager import logger
 from core.utils.config_manager import get_config, save_config
+from core.utils.paths import get_bin_root_dir
 
 POTPROVIDER_API_URL = "https://api.github.com/repos/jim60105/bgutil-ytdlp-pot-provider-rs/releases/latest"
 PLUGIN_ZIP_ASSET = "bgutil-ytdlp-pot-provider-rs.zip"
@@ -65,8 +66,7 @@ def get_platform_info():
 
 def get_potprovider_dir():
     """Devuelve y crea si hace falta el directorio del binario motor."""
-    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-    pot_dir = os.path.join(base_dir, "bin", "dependences", "potprovider")
+    pot_dir = os.path.join(get_bin_root_dir(), "bin", "dependences", "potprovider")
     os.makedirs(pot_dir, exist_ok=True)
     return pot_dir
 
@@ -76,8 +76,7 @@ def get_plugin_dir():
     Devuelve el directorio padre que contiene 'yt_dlp_plugins/'.
     Este path es el que se agrega a sys.path para que yt-dlp cargue el plugin.
     """
-    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-    plugin_dir = os.path.join(base_dir, "bin", "dependences", "ytdlp", "plugins")
+    plugin_dir = os.path.join(get_bin_root_dir(), "bin", "dependences", "ytdlp", "plugins")
     os.makedirs(plugin_dir, exist_ok=True)
     return plugin_dir
 

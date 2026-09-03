@@ -503,32 +503,48 @@ GRADIENT_DIRECTIONS = [
 
 # Los formatos que soportan transparencia ya están definidos arriba.
 
+# Catálogo de modelos rembg -- cada entrada es un "perfil" autocontenido: además
+# de file/url/folder (descarga, ver models_setup.py), declara "input_size" (lado
+# del cuadrado NxN que espera el modelo como entrada). Esto es a propósito: el
+# motor de inferencia (core/tabs/image_tools/rembg_engine.py) NO tiene ningún
+# if/elif por nombre de modelo -- lee "input_size" de acá y ya sabe cómo correr
+# cualquier entrada de este diccionario. Agregar un modelo nuevo es agregar una
+# entrada con su input_size correcto, no tocar el motor. Todos comparten el
+# mismo contrato entrada/salida (RGB -> máscara de 1 canal, normalización
+# ImageNet) porque son arquitecturas de segmentación de la misma familia --
+# si algún día entra un modelo con un contrato distinto, es el momento de
+# sumarle un campo nuevo acá, no de volver a bifurcar el motor por nombre.
 REMBG_MODEL_FAMILIES = {
     "Rembg Standard (U2Net)": {
         "isnet-general-use (Recomendado)": {
             "file": "isnet-general-use.onnx",
             "url": "https://github.com/danielgatis/rembg/releases/download/v0.0.0/isnet-general-use.onnx",
-            "folder": "rembg" 
+            "folder": "rembg",
+            "input_size": (1024, 1024)
         },
         "u2netp (Rápido)": {
             "file": "u2netp.onnx",
             "url": "https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2netp.onnx",
-            "folder": "rembg"
+            "folder": "rembg",
+            "input_size": (320, 320)
         },
         "u2net (Alta Precisión)": {
             "file": "u2net.onnx",
             "url": "https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2net.onnx",
-            "folder": "rembg"
+            "folder": "rembg",
+            "input_size": (320, 320)
         },
         "u2net_human_seg (Humanos)": {
             "file": "u2net_human_seg.onnx",
             "url": "https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2net_human_seg.onnx",
-            "folder": "rembg"
+            "folder": "rembg",
+            "input_size": (320, 320)
         },
         "isnet-anime (Anime)": {
             "file": "isnet-anime.onnx",
             "url": "https://github.com/danielgatis/rembg/releases/download/v0.0.0/isnet-anime.onnx",
-            "folder": "rembg"
+            "folder": "rembg",
+            "input_size": (1024, 1024)
         }
     },
     "BiRefNet (Next-Gen 2024)": {
@@ -536,85 +552,100 @@ REMBG_MODEL_FAMILIES = {
         "General (Estándar)": {
             "file": "birefnet-general.onnx",  # ✅ Nombre que rembg espera
             "url": "https://github.com/danielgatis/rembg/releases/download/v0.0.0/BiRefNet-general-epoch_244.onnx",
-            "folder": "rembg"
+            "folder": "rembg",
+            "input_size": (1024, 1024)
         },
         "General Lite (Rápido)": {
             "file": "birefnet-general-lite.onnx",  # ✅ Cambiado
             "url": "https://github.com/danielgatis/rembg/releases/download/v0.0.0/BiRefNet-general-bb_swin_v1_tiny-epoch_232.onnx",
-            "folder": "rembg"
+            "folder": "rembg",
+            "input_size": (1024, 1024)
         },
-        
+
         # --- ESPECIALIZADOS ---
         "Portrait (Retratos)": {
             "file": "birefnet-portrait.onnx",  # ✅ Cambiado
             "url": "https://github.com/danielgatis/rembg/releases/download/v0.0.0/BiRefNet-portrait-epoch_150.onnx",
-            "folder": "rembg"
+            "folder": "rembg",
+            "input_size": (1024, 1024)
         },
         "DIS (Bordes Finos/Complejo)": {
             "file": "birefnet-dis.onnx",  # ✅ Cambiado
             "url": "https://github.com/danielgatis/rembg/releases/download/v0.0.0/BiRefNet-DIS-epoch_590.onnx",
-            "folder": "rembg"
+            "folder": "rembg",
+            "input_size": (1024, 1024)
         },
         "COD (Objetos Camuflados)": {
             "file": "birefnet-cod.onnx",  # ✅ Cambiado
             "url": "https://github.com/danielgatis/rembg/releases/download/v0.0.0/BiRefNet-COD-epoch_125.onnx",
-            "folder": "rembg"
+            "folder": "rembg",
+            "input_size": (1024, 1024)
         },
         "HRSOD (Alta Detección)": {
             "file": "birefnet-hrsod.onnx",  # ✅ Cambiado
             "url": "https://github.com/danielgatis/rembg/releases/download/v0.0.0/BiRefNet-HRSOD_DHU-epoch_115.onnx",
-            "folder": "rembg"
+            "folder": "rembg",
+            "input_size": (1024, 1024)
         },
-        
+
         # --- ALTA RESOLUCIÓN (HR) & MASIVOS ---
         "Massive (Entrenamiento Masivo)": {
             "file": "birefnet-massive.onnx",  # ✅ Cambiado
             "url": "https://github.com/danielgatis/rembg/releases/download/v0.0.0/BiRefNet-massive-TR_DIS5K_TR_TEs-epoch_420.onnx",
-            "folder": "rembg"
+            "folder": "rembg",
+            "input_size": (1024, 1024)
         },
         "HR General (4K/8K)": {
             "file": "birefnet-hr-general.onnx",  # ✅ Cambiado
             "url": "https://github.com/danielgatis/rembg/releases/download/v0.0.0/BiRefNet_HR-general-epoch_130.onnx",
-            "folder": "rembg"
+            "folder": "rembg",
+            "input_size": (1024, 1024)
         },
         "HR Matting (Recorte Ultra Fino)": {
             "file": "birefnet-hr-matting.onnx",  # ✅ Cambiado
             "url": "https://github.com/danielgatis/rembg/releases/download/v0.0.0/BiRefNet_HR-matting-epoch_135.onnx",
-            "folder": "rembg"
+            "folder": "rembg",
+            "input_size": (1024, 1024)
         }
     },
 
     # --- NUEVO BLOQUE: RMBG 2.0 (Descarga Manual) ---
     "RMBG 2.0 (BriaAI)": {
         "Standard (Automático - 977 MB)": {
-            "file": "rmbg2_gatis.onnx", 
+            "file": "rmbg2_gatis.onnx",
             "url": "https://github.com/danielgatis/rembg/releases/download/v0.0.0/bria-rmbg-2.0.onnx",
-            "folder": "rmbg2"
+            "folder": "rmbg2",
+            "input_size": (1024, 1024)
         },
         "Standard (1.02 GB)": {
-            "file": "model.onnx", 
+            "file": "model.onnx",
             "url": "https://huggingface.co/briaai/RMBG-2.0/tree/main/onnx",
-            "folder": "rmbg2" 
+            "folder": "rmbg2",
+            "input_size": (1024, 1024)
         },
         "BnB4 (Recomendado - 355 MB)": {
             "file": "model_bnb4.onnx",
             "url": "https://huggingface.co/briaai/RMBG-2.0/tree/main/onnx",
-            "folder": "rmbg2"
+            "folder": "rmbg2",
+            "input_size": (1024, 1024)
         },
         "FP16 (Media - 514 MB)": {
             "file": "model_fp16.onnx",
             "url": "https://huggingface.co/briaai/RMBG-2.0/tree/main/onnx",
-            "folder": "rmbg2"
+            "folder": "rmbg2",
+            "input_size": (1024, 1024)
         },
         "Int8 (Rápido - 366 MB)": {
             "file": "model_int8.onnx",
             "url": "https://huggingface.co/briaai/RMBG-2.0/tree/main/onnx",
-            "folder": "rmbg2"
+            "folder": "rmbg2",
+            "input_size": (1024, 1024)
         },
         "Quantized (366 MB)": {
             "file": "model_quantized.onnx",
             "url": "https://huggingface.co/briaai/RMBG-2.0/tree/main/onnx",
-            "folder": "rmbg2"
+            "folder": "rmbg2",
+            "input_size": (1024, 1024)
         }
     },
 
@@ -622,12 +653,14 @@ REMBG_MODEL_FAMILIES = {
         "SwinB Plus Ultra (FP32 - 478 MB)": {
             "file": "inspyrenet_ultra.onnx",
             "url": "https://huggingface.co/OS-Software/InSPyReNet-SwinB-Plus-Ultra-ONNX/resolve/main/onnx/model.onnx?download=true",
-            "folder": "inspyrenet"
+            "folder": "inspyrenet",
+            "input_size": (1024, 1024)
         },
         "SwinB Plus Ultra (FP16 - 240 MB)": {
             "file": "inspyrenet_ultra_fp16.onnx",
             "url": "https://huggingface.co/OS-Software/InSPyReNet-SwinB-Plus-Ultra-ONNX/resolve/main/onnx/model_fp16.onnx?download=true",
-            "folder": "inspyrenet"
+            "folder": "inspyrenet",
+            "input_size": (1024, 1024)
         }
     }
 }
@@ -693,13 +726,16 @@ UPSCALING_TOOLS = {
 # sí (EPS/PS -> PDF temporal vía Ghostscript, reusando el renderizador PDF ya
 # existente).
 #
-# TODO(futuro): en Linux/macOS no hay build bundleable (Linux: paquete Snap, no
-# un tarball suelto; macOS: sin build precompilado) -- en vez de bundlear,
-# detectar un Ghostscript ya instalado por el propio usuario ahí (binario `gs`
-# en el PATH -- típicamente a un `apt install ghostscript` / `brew install
-# ghostscript` de distancia) y habilitar EPS/PS ahí si existe. Mismo criterio de
-# "no disponible en este SO" que ya usa is_upscaling_engine_installed() para los
-# motores sin build -- ver core/setup/models_setup.py.
+# En Linux/macOS no hay build bundleable (Linux: paquete Snap, no un tarball
+# suelto; macOS: sin build precompilado) -- en vez de bundlear, se detecta un
+# Ghostscript ya instalado por el propio usuario (binario `gs`, típicamente a
+# un `apt install ghostscript` / `brew install ghostscript` de distancia,
+# ver ghostscript_setup.py::_find_system_gs/get_install_info) y se habilita
+# EPS/PS ahí si existe. La tarjeta de Ajustes > Dependencias (deps_page.py::
+# GhostscriptCardPanel) le sugiere al usuario el comando correcto según el SO
+# y el gestor de paquetes detectado, con un botón para copiarlo y otro para
+# re-verificar tras instalarlo a mano (no hay forma de automatizar la
+# instalación en sí: brew/apt piden sudo/interacción de terminal).
 
 # --- MAPEOC DE NOMBRES AMIGABLES PARA UPSCAYL ---
 # Upscayl es deliberadamente "más global" que solo el repo custom-models -- DowP1 ya

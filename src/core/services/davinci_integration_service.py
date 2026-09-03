@@ -45,47 +45,95 @@ class DaVinciIntegrationService(QObject):
         return long_name
 
     def _preparar_entorno(self):
-        """Configura las variables de entorno necesarias, especialmente para PyInstaller."""
-        if platform.system() != "Windows":
-            return
-            
-        base_api = r"C:\ProgramData\Blackmagic Design\DaVinci Resolve\Support\Developer\Scripting"
-        ruta_modulos = os.path.join(base_api, "Modules")
-        if os.path.exists(ruta_modulos) and ruta_modulos not in sys.path:
-            sys.path.append(ruta_modulos)
-            
-        os.environ['RESOLVE_SCRIPT_API'] = base_api
-        
-        # Buscar dinámicamente fusionscript.dll en la carpeta de instalación
+        """Configura las variables de entorno necesarias para la API de DaVinci Resolve."""
         config = get_config()
         integrations = config.get('integrations', {})
-        davinci_exe = integrations.get('davinci_path', r"C:\Program Files\Blackmagic Design\DaVinci Resolve\Resolve.exe")
-        
-        davinci_dir = os.path.dirname(davinci_exe)
-        fusionscript_path = os.path.join(davinci_dir, "fusionscript.dll")
-        
-        if not os.path.exists(fusionscript_path):
-            # Fallback a la ruta por defecto
-            fusionscript_path = r"C:\Program Files\Blackmagic Design\DaVinci Resolve\fusionscript.dll"
+        sys_name = platform.system()
+
+        if sys_name == "Windows":
+            base_api = r"C:\ProgramData\Blackmagic Design\DaVinci Resolve\Support\Developer\Scripting"
+            ruta_modulos = os.path.join(base_api, "Modules")
+            if os.path.exists(ruta_modulos) and ruta_modulos not in sys.path:
+                sys.path.append(ruta_modulos)
+                
+            os.environ['RESOLVE_SCRIPT_API'] = base_api
             
-        os.environ['RESOLVE_SCRIPT_LIB'] = fusionscript_path
-        
-        if getattr(sys, 'frozen', False):
-            exe_dir = os.path.dirname(sys.executable)
-            internal_dir = os.path.join(exe_dir, '_internal')
-            if not os.path.exists(internal_dir):
-                internal_dir = exe_dir
-            os.environ['PYTHONHOME'] = internal_dir
-            os.environ['RESOLVE_PYTHON3_BIN'] = sys.executable
-            paths = [ruta_modulos, internal_dir]
-            for sub in ['lib', 'lib-dynload', 'site-packages']:
-                p = os.path.join(internal_dir, sub)
-                if os.path.exists(p):
-                    paths.append(p)
-            os.environ['PYTHONPATH'] = os.pathsep.join(paths)
-            if internal_dir not in os.environ.get('PATH', ''):
-                os.environ['PATH'] = internal_dir + os.pathsep + os.environ.get('PATH', '')
-        else:
+            davinci_exe = integrations.get('davinci_path', r"C:\Program Files\Blackmagic Design\DaVinci Resolve\Resolve.exe")
+            davinci_dir = os.path.dirname(davinci_exe)
+            fusionscript_path = os.path.join(davinci_dir, "fusionscript.dll")
+            
+            if not os.path.exists(fusionscript_path):
+                fusionscript_path = r"C:\Program Files\Blackmagic Design\DaVinci Resolve\fusionscript.dll"
+                
+            os.environ['RESOLVE_SCRIPT_LIB'] = fusionscript_path
+            
+            if getattr(sys, 'frozen', False):
+                exe_dir = os.path.dirname(sys.executable)
+                internal_dir = os.path.join(exe_dir, '_internal')
+                if not os.path.exists(internal_dir):
+                    internal_dir = exe_dir
+                os.environ['PYTHONHOME'] = internal_dir
+                os.environ['RESOLVE_PYTHON3_BIN'] = sys.executable
+                paths = [ruta_modulos, internal_dir]
+                for sub in ['lib', 'lib-dynload', 'site-packages']:
+                    p = os.path.join(internal_dir, sub)
+                    if os.path.exists(p):
+                        paths.append(p)
+                os.environ['PYTHONPATH'] = os.pathsep.join(paths)
+                if internal_dir not in os.environ.get('PATH', ''):
+                    os.environ['PATH'] = internal_dir + os.pathsep + os.environ.get('PATH', '')
+            else:
+                if 'PYTHONPATH' not in os.environ:
+                    os.environ['PYTHONPATH'] = ruta_modulos
+                elif ruta_modulos not in os.environ['PYTHONPATH']:
+                    os.environ['PYTHONPATH'] += os.pathsep + ruta_modulos
+
+        elif sys_name == "Darwin":
+            base_api = "/Library/Application Support/Blackmagic Design/DaVinci Resolve/Developer/Scripting"
+            ruta_modulos = os.path.join(base_api, "Modules")
+            if os.path.exists(ruta_modulos) and ruta_modulos not in sys.path:
+                sys.path.append(ruta_modulos)
+                
+            os.environ['RESOLVE_SCRIPT_API'] = base_api
+
+            # Buscar fusionscript.so en la ruta configurada del .app o en las estándar
+            davinci_app = integrations.get('davinci_path', '/Applications/DaVinci Resolve/DaVinci Resolve.app')
+            fusionscript_candidates = [
+                os.path.join(davinci_app, "Contents", "Libraries", "Fusion", "fusionscript.so"),
+                "/Applications/DaVinci Resolve/DaVinci Resolve.app/Contents/Libraries/Fusion/fusionscript.so",
+                "/Applications/DaVinci Resolve Studio/DaVinci Resolve Studio.app/Contents/Libraries/Fusion/fusionscript.so",
+            ]
+            fusionscript_path = next((p for p in fusionscript_candidates if os.path.exists(p)), fusionscript_candidates[0])
+            os.environ['RESOLVE_SCRIPT_LIB'] = fusionscript_path
+
+            if 'PYTHONPATH' not in os.environ:
+                os.environ['PYTHONPATH'] = ruta_modulos
+            elif ruta_modulos not in os.environ['PYTHONPATH']:
+                os.environ['PYTHONPATH'] += os.pathsep + ruta_modulos
+
+        elif sys_name == "Linux":
+            base_api_candidates = [
+                "/opt/resolve/Developer/Scripting",
+                "/home/resolve/Developer/Scripting",
+            ]
+            base_api = next((p for p in base_api_candidates if os.path.exists(p)), base_api_candidates[0])
+            ruta_modulos = os.path.join(base_api, "Modules")
+            if os.path.exists(ruta_modulos) and ruta_modulos not in sys.path:
+                sys.path.append(ruta_modulos)
+
+            os.environ['RESOLVE_SCRIPT_API'] = base_api
+
+            # fusionscript.so vive junto al binario de Resolve, no en el propio Developer/Scripting.
+            davinci_exe = integrations.get('davinci_path', "/opt/resolve/bin/resolve")
+            davinci_root = os.path.dirname(os.path.dirname(davinci_exe))  # .../bin/resolve -> ...
+            fusionscript_candidates = [
+                os.path.join(davinci_root, "libs", "Fusion", "fusionscript.so"),
+                "/opt/resolve/libs/Fusion/fusionscript.so",
+                "/home/resolve/libs/Fusion/fusionscript.so",
+            ]
+            fusionscript_path = next((p for p in fusionscript_candidates if os.path.exists(p)), fusionscript_candidates[0])
+            os.environ['RESOLVE_SCRIPT_LIB'] = fusionscript_path
+
             if 'PYTHONPATH' not in os.environ:
                 os.environ['PYTHONPATH'] = ruta_modulos
             elif ruta_modulos not in os.environ['PYTHONPATH']:
@@ -103,20 +151,51 @@ class DaVinciIntegrationService(QObject):
         self._preparar_entorno()
         
         try:
-            import imp
             api_path = ""
             if platform.system() == "Windows":
                 api_path = os.path.expandvars(r"%PROGRAMDATA%\Blackmagic Design\DaVinci Resolve\Support\Developer\Scripting\Modules\DaVinciResolveScript.py")
             elif platform.system() == "Darwin":
                 api_path = "/Library/Application Support/Blackmagic Design/DaVinci Resolve/Developer/Scripting/Modules/DaVinciResolveScript.py"
+            elif platform.system() == "Linux":
+                for candidate in (
+                    "/opt/resolve/Developer/Scripting/Modules/DaVinciResolveScript.py",
+                    "/home/resolve/Developer/Scripting/Modules/DaVinciResolveScript.py",
+                ):
+                    if os.path.exists(candidate):
+                        api_path = candidate
+                        break
             
-            if os.path.exists(api_path):
-                dvr_script = imp.load_source('DaVinciResolveScript', api_path)
+            dvr_script = None
+            if api_path and os.path.exists(api_path):
+                try:
+                    import importlib.util
+                    spec = importlib.util.spec_from_file_location('DaVinciResolveScript', api_path)
+                    if spec and spec.loader:
+                        dvr_script = importlib.util.module_from_spec(spec)
+                        sys.modules['DaVinciResolveScript'] = dvr_script
+                        spec.loader.exec_module(dvr_script)
+                except Exception as ex_import:
+                    logger.debug(f"[DaVinci] Fallback a imp: {ex_import}")
+                    try:
+                        import imp
+                        dvr_script = imp.load_source('DaVinciResolveScript', api_path)
+                    except Exception:
+                        dvr_script = None
+
+            if dvr_script is None:
+                try:
+                    import DaVinciResolveScript as dvr_script
+                except Exception:
+                    dvr_script = None
+
+            if dvr_script:
                 self.resolve = dvr_script.scriptapp("Resolve")
             else:
-                import DaVinciResolveScript as dvr_script
-                self.resolve = dvr_script.scriptapp("Resolve")
-                
+                self.resolve = None
+
+            if not self.resolve:
+                logger.warning("[DaVinci] No se pudo obtener la instancia de Resolve. Asegúrate de tener DaVinci abierto y permitir scripts (Preferencias -> Sistema -> General -> External scripting = Local).")
+
             return self.resolve
         except Exception as e:
             logger.error(f"[DaVinci] Error conectando a Resolve: {e}")

@@ -246,11 +246,29 @@ class QuickDownloadRow(QFrame):
             }}
         """)
 
+    def _is_alive(self) -> bool:
+        """True si el widget de Qt subyacente todavía existe. Las señales que
+        llaman a mark_completed/mark_error/update_progress/etc. llegan async
+        (progreso de descarga, fin de tarea, estado de recodificación) y pueden
+        disparar DESPUÉS de que la fila ya fue sacada de la UI (el usuario la
+        canceló/limpió mientras la tarea seguía en vuelo) -- en ese momento el
+        lado C++ del widget ya no existe, aunque este objeto Python siga vivo
+        (referenciado desde task_data/self._recode_by_download en
+        download_controller.py). Mismo patrón que
+        ClipboardURLMonitor._is_deleted (clipboard_monitor.py)."""
+        try:
+            self.objectName()
+            return True
+        except RuntimeError:
+            return False
+
     def mark_completed(self, filepath=None):
         """Marca este item como completado y muestra el botón de carpeta."""
         self._is_completed = True
         if filepath:
             self.downloaded_filepath = filepath
+        if not self._is_alive():
+            return
         if self.downloaded_filepath:
             if os.path.exists(self.downloaded_filepath):
                 self.btn_reveal.show()
@@ -305,6 +323,8 @@ class QuickDownloadRow(QFrame):
         """)
 
     def update_progress(self, percent, info="", status=None):
+        if not self._is_alive():
+            return
         percent = max(0, min(100, int(percent)))
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(percent)
@@ -322,6 +342,8 @@ class QuickDownloadRow(QFrame):
         intermitente (no representa un % real) y el texto avisa en qué
         fragmento va, en vez de un porcentaje engañoso.
         """
+        if not self._is_alive():
+            return
         self.progress_bar.setRange(0, 0)
         self.percent_lbl.setText("")
         verb = self.tr("Cortando") if phase == "cutting" else self.tr("Descargando")
@@ -332,7 +354,7 @@ class QuickDownloadRow(QFrame):
         self._apply_status_color("Procesando")
 
     def update_metadata_from_dict(self, info):
-        if not info:
+        if not info or not self._is_alive():
             return
             
         title = info.get("title")

@@ -66,9 +66,15 @@ class ImageConverter:
 
     def convert_file(self, input_path: str, output_path: str, options: dict,
                       progress_callback=None, cancellation_event=None) -> tuple[bool, str]:
-        try:
+        def report(pct, stage="processing"):
             if progress_callback:
-                progress_callback(5)
+                try:
+                    progress_callback(pct, stage)
+                except TypeError:
+                    progress_callback(pct)
+
+        try:
+            report(5, "loading")
             if cancellation_event and cancellation_event.is_set():
                 return False, "Cancelado por el usuario."
 
@@ -84,8 +90,7 @@ class ImageConverter:
                     target_size = (int(width), int(height))
 
             img = self._load_image(input_path, input_ext, target_size, maintain_aspect, options)
-            if progress_callback:
-                progress_callback(40)
+            report(40, "loading")
             if cancellation_event and cancellation_event.is_set():
                 return False, "Cancelado por el usuario."
 
@@ -93,9 +98,9 @@ class ImageConverter:
             # dentro de _load_image (DPI/escala calculados ahí) -- un resize posterior
             # solo aplica a raster/RAW, que se cargan siempre a tamaño nativo.
             if resize_enabled and target_size and input_ext not in _VECTOR_EXTS:
+                report(45, "resize")
                 img = self._resize_raster_image(img, target_size, maintain_aspect, options)
-            if progress_callback:
-                progress_callback(55)
+                report(55, "resize")
             if cancellation_event and cancellation_event.is_set():
                 return False, "Cancelado por el usuario."
 
@@ -104,33 +109,33 @@ class ImageConverter:
             # así el reescalado IA trabaja sobre el recorte, no sobre fondo que se
             # va a tirar.
             if options.get("rembg_enabled", False):
-                img = self._apply_rembg(img, options, progress_callback)
-            if progress_callback:
-                progress_callback(70)
+                report(55, "rembg")
+                img = self._apply_rembg(img, options, report)
+                report(70, "rembg")
             if cancellation_event and cancellation_event.is_set():
                 return False, "Cancelado por el usuario."
 
             # Reescalar IA -- son ejes independientes de Eliminar Fondo, no se
             # descartan entre sí (se puede recortar Y reescalar en el mismo lote).
             if options.get("upscale_enabled", False):
-                img = self._apply_ai_upscale(img, options, cancellation_event, progress_callback)
-            if progress_callback:
-                progress_callback(85)
+                report(70, "upscale")
+                img = self._apply_ai_upscale(img, options, cancellation_event, report)
+                report(85, "upscale")
 
             # Canvas (preset del menú, ajuste de lote) -- último paso antes de
             # guardar, mismo orden que DowP1 (resize -> upscale IA -> canvas).
             if options.get("canvas_enabled", False):
+                report(85, "canvas")
                 img = self._apply_canvas(img, options)
-            if progress_callback:
-                progress_callback(92)
+                report(92, "canvas")
 
+            report(93, "saving")
             if output_format == "NO CONVERTIR":
                 self._save_passthrough(img, input_ext, output_path, options)
             else:
                 self._save_as(img, output_format, output_path, options)
 
-            if progress_callback:
-                progress_callback(100)
+            report(100, "saving")
             return True, "Conversión completada."
         except UnsupportedFormatError as e:
             logger.warning(f"Convertir: {input_path} -> {e}")
@@ -314,13 +319,20 @@ class ImageConverter:
         import tempfile
         from core.tabs.image_tools.upscale_engine import run_upscale
 
-        def upscale_progress(pct):
+        def upscale_progress(pct, *args):
             if not progress_callback:
                 return
             if pct is None:
-                progress_callback(None)
+                try:
+                    progress_callback(None, "upscale")
+                except TypeError:
+                    progress_callback(None)
             else:
-                progress_callback(70 + (pct / 100.0) * 15)
+                mapped = 70 + (pct / 100.0) * 15
+                try:
+                    progress_callback(mapped, "upscale")
+                except TypeError:
+                    progress_callback(mapped)
 
         with tempfile.TemporaryDirectory(prefix="dowp_upscale_") as tmp_dir:
             temp_in = os.path.join(tmp_dir, "in.png")
@@ -345,7 +357,14 @@ class ImageConverter:
         (remove_background, después _apply_alpha_postprocess)."""
         from core.tabs.image_tools.rembg_engine import apply_alpha_postprocess, remove_background
 
-        img = remove_background(img, options, progress_callback=progress_callback)
+        def rembg_cb(pct=None, *args):
+            if progress_callback:
+                try:
+                    progress_callback(pct, "rembg")
+                except TypeError:
+                    progress_callback(pct)
+
+        img = remove_background(img, options, progress_callback=rembg_cb)
         smooth = int(options.get("rembg_smooth", 0) or 0)
         expand = int(options.get("rembg_expand", 0) or 0)
         return apply_alpha_postprocess(img, smooth, expand)

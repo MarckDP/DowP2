@@ -147,6 +147,7 @@ class ImageToolsTab(QWidget):
         self.upscale_popover_content = UpscalePopoverContent()
         self.upscale_popover_content.selection_changed.connect(self._on_upscale_selection_changed)
 
+        # ── Grupo 1: Herramientas IA ──────────────────────────────────────────
         self.btn_upscale = PopoverTriggerButton(host=self, content=self.upscale_popover_content)
         self.btn_upscale.setFixedSize(32, 32)
         self.btn_upscale.setIconSize(QSize(18, 18))
@@ -168,11 +169,9 @@ class ImageToolsTab(QWidget):
         top_layout.addWidget(self.btn_rembg)
         self._popover_buttons.append(self.btn_rembg)
 
-        # Redimensionar -- botón propio con popover (mismo patrón que Reescalar IA/
-        # Eliminar Fondo IA arriba), separado del panel "Convertir" del panel
-        # izquierdo: es una operación de tamaño aplicada a TODO el lote al exportar,
-        # no una opción de codificación de un formato puntual (ver
-        # gui/tabs/image_tools/resize_popover.py y convert_panel.py).
+        top_layout.addWidget(_make_sep())
+
+        # ── Grupo 2: Dimensiones y Lienzo ─────────────────────────────────────
         self.resize_popover_content = ResizePopoverContent()
         self.resize_popover_content.selection_changed.connect(self._on_resize_selection_changed)
 
@@ -184,12 +183,42 @@ class ImageToolsTab(QWidget):
         top_layout.addWidget(self.btn_resize)
         self._popover_buttons.append(self.btn_resize)
 
-        top_layout.addWidget(_make_sep())
-
         self.selected_canvas_option = None
         self.canvas_popover_content = CanvasPopoverContent()
         self.canvas_popover_content.selection_changed.connect(self._on_canvas_selection_changed)
 
+        # Grupo exclusivo de herramientas (canvas + selección/dibujo)
+        self._tool_group = QButtonGroup(self)
+        self._tool_group.setExclusive(True)
+        self._tool_buttons = {}
+        self._canvas_right_activated = False
+        self._TOOL_ICONS = {
+            "select": "arrow_selector_tool.svg",
+            "rect": "rectangle.svg",
+            "ellipse": "circle.svg",
+            "line": "horizontal_rule.svg",
+            "brush": "edit.svg",
+            "canvas": "crop_free.svg",
+        }
+
+        # Canvas — clic izquierdo selecciona la herramienta; clic derecho abre el popover de opciones
+        self.btn_canvas = PopoverTriggerButton(host=self, content=self.canvas_popover_content, left_click_opens=False)
+        self.btn_canvas.setCheckable(True)
+        self.btn_canvas.setFixedSize(32, 32)
+        self.btn_canvas.setIconSize(QSize(18, 18))
+        self.btn_canvas.setCursor(Qt.PointingHandCursor)
+        self.btn_canvas.setToolTip(self.tr("Canvas — clic derecho: opciones"))
+        self.btn_canvas.toggled.connect(lambda checked: self._on_tool_toggled("canvas", checked))
+        self.btn_canvas.opened.connect(self._on_canvas_popover_opened)
+        self.btn_canvas.clicked.connect(self._on_canvas_clicked)
+        self._tool_group.addButton(self.btn_canvas)
+        self._tool_buttons["canvas"] = self.btn_canvas
+        self._popover_buttons.append(self.btn_canvas)
+        top_layout.addWidget(self.btn_canvas)
+
+        top_layout.addWidget(_make_sep())
+
+        # ── Grupo 3: Capas y Composición ──────────────────────────────────────
         self.layer_stack = LayerStack()
         self.layer_stack.layers_changed.connect(self._refresh_layers_panel)
 
@@ -204,11 +233,7 @@ class ImageToolsTab(QWidget):
         self.layers_panel.layer_selected.connect(self._on_layer_row_selected)
         self.layers_panel.add_background_requested.connect(self._on_add_background_requested)
 
-        # Toggle chico que solo muestra/oculta el panel flotante de Capas -- ya NO
-        # decide qué herramienta está activa (eso es independiente, ver abajo), igual
-        # que el panel de Capas de Photoshop: se puede mostrar/ocultar sin que afecte
-        # qué herramienta tenés elegida. Arranca destildado/oculto (ver right_panel
-        # más abajo) -- el usuario lo abre cuando lo necesita.
+        # Botón para mostrar/ocultar el panel flotante de Capas
         self.btn_layers_panel = QPushButton()
         self.btn_layers_panel.setCheckable(True)
         self.btn_layers_panel.setFixedSize(32, 32)
@@ -219,41 +244,15 @@ class ImageToolsTab(QWidget):
         self._style_layers_panel_button(False)
         top_layout.addWidget(self.btn_layers_panel)
 
-        top_layout.addWidget(_make_sep())
-
-        # Herramientas unificadas -- Seleccionar/Rectángulo/Elipse/Línea/Pincel/Canvas,
-        # todas siempre visibles y mutuamente excluyentes, como la caja de
-        # herramientas de un editor real: elegir una es solo "cambiar de
-        # herramienta", no "entrar/salir de un modo aparte". Canvas ya no compite
-        # como un sistema separado -- es una herramienta más del mismo grupo.
-        self._tool_group = QButtonGroup(self)
-        self._tool_group.setExclusive(True)
-        self._tool_buttons = {}
-        self._TOOL_ICONS = {
-            "select": "arrow_menu_open.svg",
-            "rect": "maximize.svg",
-            "ellipse": "check_circle.svg",
-            "line": "minus.svg",
-            "brush": "edit.svg",
-            "canvas": "grid_view.svg",
-        }
+        # Herramientas de capas y dibujo (Seleccionar/Rectángulo/Elipse/Línea/Pincel)
         for key, tooltip in (
             ("select", self.tr("Seleccionar")),
             ("rect", self.tr("Rectángulo")),
             ("ellipse", self.tr("Elipse")),
             ("line", self.tr("Línea")),
             ("brush", self.tr("Pincel")),
-            ("canvas", self.tr("Canvas — clic derecho: opciones")),
         ):
-            if key == "canvas":
-                # left_click_opens=False: clic izquierdo solo selecciona la
-                # herramienta (como cualquier otra); clic derecho abre el menú de
-                # opciones (Ajuste/Margen/Posición/Overflow), vía contextMenuEvent.
-                btn = PopoverTriggerButton(host=self, content=self.canvas_popover_content, left_click_opens=False)
-                btn.opened.connect(self._on_canvas_popover_opened)
-                self._popover_buttons.append(btn)
-            else:
-                btn = QPushButton()
+            btn = QPushButton()
             btn.setCheckable(True)
             btn.setFixedSize(32, 32)
             btn.setIconSize(QSize(18, 18))
@@ -263,17 +262,14 @@ class ImageToolsTab(QWidget):
             self._tool_group.addButton(btn)
             self._tool_buttons[key] = btn
             top_layout.addWidget(btn)
-        self.btn_canvas = self._tool_buttons["canvas"]
+
         self._style_tool_buttons()
         self._tool_buttons["select"].setChecked(True)
 
         for btn in self._popover_buttons:
             btn.opened.connect(lambda b=btn: self._close_other_popovers(b))
-        # Abrir Reescalar/Eliminar Fondo te saca de la herramienta que tuvieras activa
-        # (incluido Canvas) y te deja en Seleccionar -- evita clics que dibujen/
-        # redimensionen algo sin querer mientras estás mirando ese popover. Canvas NO
-        # se agrega acá: abrir SU PROPIO popover no debe sacarte de la herramienta
-        # Canvas (ver _on_canvas_popover_opened, que hace lo contrario: la activa).
+        # Abrir Reescalar/Eliminar Fondo/Redimensionar te saca de la herramienta que tuvieras activa
+        # (incluido Canvas) y te deja en Seleccionar.
         self.btn_upscale.opened.connect(self._reset_to_select_tool)
         self.btn_rembg.opened.connect(self._reset_to_select_tool)
         self.btn_resize.opened.connect(self._reset_to_select_tool)
@@ -387,6 +383,8 @@ class ImageToolsTab(QWidget):
         self.output_bar = self._build_output_bar()
         outer_layout.addWidget(self.output_bar)
 
+        self._update_convert_button_state()
+
         QApplication.instance().installEventFilter(self)
 
     def _close_other_popovers(self, opened_btn):
@@ -414,7 +412,7 @@ class ImageToolsTab(QWidget):
         verde cuando el preset elegido en el popover no es "No escalar (Original)"
         (el default), gris si lo es."""
         if is_active:
-            self.btn_resize.setIcon(get_colored_svg_icon("minimize.svg", "#000000", size=18))
+            self.btn_resize.setIcon(get_colored_svg_icon("resize.svg", "#000000", size=18))
             self.btn_resize.setToolTip(self.tr("Redimensionar — activo"))
             self.btn_resize.setStyleSheet(f"""
                 QPushButton {{
@@ -430,7 +428,7 @@ class ImageToolsTab(QWidget):
                 }}
             """)
         else:
-            self.btn_resize.setIcon(get_colored_svg_icon("minimize.svg", "#6c7086", size=18))
+            self.btn_resize.setIcon(get_colored_svg_icon("resize.svg", "#6c7086", size=18))
             self.btn_resize.setToolTip(self.tr("Redimensionar"))
             self.btn_resize.setStyleSheet(f"""
                 QPushButton {{
@@ -449,7 +447,7 @@ class ImageToolsTab(QWidget):
     def _style_rembg_button(self, is_valid: bool):
         """Mismo criterio visual que _style_upscale_button -- ver ese método."""
         if is_valid:
-            self.btn_rembg.setIcon(get_colored_svg_icon("content_cut.svg", "#000000", size=18))
+            self.btn_rembg.setIcon(get_colored_svg_icon("background_replace.svg", "#000000", size=18))
             self.btn_rembg.setToolTip(self.tr("Eliminar Fondo (IA) — configuración lista"))
             self.btn_rembg.setStyleSheet(f"""
                 QPushButton {{
@@ -465,7 +463,7 @@ class ImageToolsTab(QWidget):
                 }}
             """)
         else:
-            self.btn_rembg.setIcon(get_colored_svg_icon("content_cut.svg", "#6c7086", size=18))
+            self.btn_rembg.setIcon(get_colored_svg_icon("background_replace.svg", "#6c7086", size=18))
             self.btn_rembg.setToolTip(self.tr("Eliminar Fondo (IA)"))
             self.btn_rembg.setStyleSheet(f"""
                 QPushButton {{
@@ -487,7 +485,7 @@ class ImageToolsTab(QWidget):
         no) -- sin reusar esa función porque está atada a "edit.svg"/textos de
         subclip, no genérica."""
         if is_valid:
-            self.btn_upscale.setIcon(get_colored_svg_icon("zoom_in.svg", "#000000", size=18))
+            self.btn_upscale.setIcon(get_colored_svg_icon("frame_person.svg", "#000000", size=18))
             self.btn_upscale.setToolTip(self.tr("Reescalar con IA — configuración lista"))
             self.btn_upscale.setStyleSheet(f"""
                 QPushButton {{
@@ -503,7 +501,7 @@ class ImageToolsTab(QWidget):
                 }}
             """)
         else:
-            self.btn_upscale.setIcon(get_colored_svg_icon("zoom_in.svg", "#6c7086", size=18))
+            self.btn_upscale.setIcon(get_colored_svg_icon("frame_person.svg", "#6c7086", size=18))
             self.btn_upscale.setToolTip(self.tr("Reescalar con IA"))
             self.btn_upscale.setStyleSheet(f"""
                 QPushButton {{
@@ -569,6 +567,10 @@ class ImageToolsTab(QWidget):
         "modo" aparte que activar/desactivar."""
         if not checked:
             return
+        if key != "canvas":
+            self._canvas_right_activated = False
+            if hasattr(self, "btn_canvas") and self.btn_canvas.is_open():
+                self.btn_canvas.set_open(False)
         self._style_tool_buttons()
         # Guard: el grupo fija "select" como estado inicial durante _build_ui(),
         # antes de que self.preview/self.layers_panel existan.
@@ -599,8 +601,12 @@ class ImageToolsTab(QWidget):
         accent = get_theme_token('acento_primario', '#B9E640')
         bg = get_theme_token('fondo_elemento', '#2d2d2d')
         border = get_theme_token('borde_normal', '#2d2d2d')
+        canvas_right = getattr(self, "_canvas_right_activated", False)
         for key, btn in self._tool_buttons.items():
-            icon_name = self._TOOL_ICONS[key]
+            if key == "canvas":
+                icon_name = "crop.svg" if canvas_right else "crop_free.svg"
+            else:
+                icon_name = self._TOOL_ICONS[key]
             if btn.isChecked():
                 btn.setIcon(get_colored_svg_icon(icon_name, "#000000", size=18))
                 btn.setStyleSheet(f"""
@@ -627,14 +633,22 @@ class ImageToolsTab(QWidget):
                     QPushButton:hover {{ background-color: {get_theme_token('seleccion_fondo', '#3d3d3d')}; }}
                 """)
 
+    def _on_canvas_clicked(self):
+        """Clic normal (izquierdo): modo normal de canvas (crop_free)."""
+        self._canvas_right_activated = False
+        if hasattr(self, "btn_canvas") and self.btn_canvas.is_open():
+            self.btn_canvas.set_open(False)
+        self._style_tool_buttons()
+
     def _on_canvas_popover_opened(self):
         """Clic derecho en Canvas -- abre el menú de opciones (Ajuste/Margen/
         Posición/Overflow); si Canvas no era la herramienta activa, la selecciona
-        también, para ver el efecto de lo que se configura. Cerrar el menú NO cambia
-        de herramienta -- eso lo maneja solo elegir otro botón del grupo."""
+        también, y activa el icono crop."""
+        self._canvas_right_activated = True
         if not self.btn_canvas.isChecked():
             self.btn_canvas.setChecked(True)
         self.canvas_popover_content.sync()
+        self._style_tool_buttons()
 
     def _on_layers_panel_toggled(self, checked: bool):
         """Muestra/oculta el panel flotante de Capas -- independiente de qué
@@ -646,7 +660,7 @@ class ImageToolsTab(QWidget):
             self.layers_floating_panel.hide_panel()
 
     def _style_layers_panel_button(self, checked: bool):
-        icon = "view_list.svg" if checked else "list_alt.svg"
+        icon = "stacks.svg"
         color = get_theme_token('acento_primario', '#B9E640') if checked else "#6c7086"
         self.btn_layers_panel.setIcon(get_colored_svg_icon(icon, color, size=18))
         border = get_theme_token('acento_primario', '#B9E640') if checked else get_theme_token('borde_normal', '#2d2d2d')
@@ -1050,22 +1064,14 @@ class ImageToolsTab(QWidget):
         self.btn_open_output_folder.clicked.connect(self._on_open_output_folder)
         controls_row.addWidget(self.btn_open_output_folder)
 
-        # 3. Botones de acción: Iniciar Proceso y Cancelar
+        # 3. Botón de acción: Iniciar Proceso (cambia dinámicamente a Cancelar en ejecución)
+        self._convert_running = False
         self.btn_convert = AnimatedButton(self.tr("Iniciar Proceso"))
         self.btn_convert.setProperty("variant", "primary")
-        self.btn_convert.setCursor(Qt.PointingHandCursor)
         self.btn_convert.setFixedHeight(32)
         self.btn_convert.setMinimumWidth(130)
-        self.btn_convert.clicked.connect(self._on_convert_clicked)
+        self.btn_convert.clicked.connect(self._on_convert_button_clicked)
         controls_row.addWidget(self.btn_convert)
-
-        self.btn_convert_cancel = QPushButton(self.tr("Cancelar"))
-        self.btn_convert_cancel.setProperty("variant", "danger")
-        self.btn_convert_cancel.setCursor(Qt.PointingHandCursor)
-        self.btn_convert_cancel.setFixedHeight(32)
-        self.btn_convert_cancel.setVisible(False)
-        self.btn_convert_cancel.clicked.connect(self._on_convert_cancel_clicked)
-        controls_row.addWidget(self.btn_convert_cancel)
 
         card_layout.addLayout(controls_row)
 
@@ -1108,15 +1114,31 @@ class ImageToolsTab(QWidget):
         self._update_convert_button_state()
 
     def _update_convert_button_state(self):
-        """Habilita "Convertir" solo si la cola tiene archivos y las opciones
+        """Habilita "Iniciar Proceso" solo si la cola tiene archivos y las opciones
         actuales son válidas (ej. ICO necesita al menos un tamaño tildado, ver
-        ConvertPanel.is_valid()) -- mismo criterio que validity_changed ya usa
-        Herramientas de Video para su propio Convertir."""
-        if not hasattr(self, "btn_convert") or self._convert_worker is not None:
-            return  # una conversión en curso o UI en construcción.
+        ConvertPanel.is_valid()). Si hay una conversión en curso, el botón actúa
+        como "Cancelar" y permanece habilitado."""
+        if not hasattr(self, "btn_convert"):
+            return
+        if getattr(self, "_convert_running", False):
+            return
         has_files = bool(self.image_queue.get_all_filepaths()) if hasattr(self, "image_queue") else False
         is_valid = self.convert_panel.is_valid() if hasattr(self, "convert_panel") else True
-        self.btn_convert.setEnabled(has_files and is_valid)
+        can_start = has_files and is_valid
+        self.btn_convert.setEnabled(can_start)
+        if not can_start:
+            if not has_files:
+                self.btn_convert.setToolTip(self.tr("Agrega al menos una imagen a la lista para iniciar el proceso"))
+            else:
+                self.btn_convert.setToolTip(self.tr("Revisa la configuración de conversión para continuar"))
+        else:
+            self.btn_convert.setToolTip(self.tr("Iniciar el proceso de conversión de las imágenes en cola"))
+
+    def _on_convert_button_clicked(self):
+        if getattr(self, "_convert_running", False):
+            self._on_convert_cancel_clicked()
+        else:
+            self._on_convert_clicked()
 
     def _build_source_overrides(self, filepaths: list[str]) -> dict[str, str] | None:
         """Aplana a un PNG temporal cada archivo del lote que tenga formas/pincel
@@ -1258,9 +1280,14 @@ class ImageToolsTab(QWidget):
         self._convert_worker.file_completed.connect(self._on_convert_file_completed)
         self._convert_worker.finished_signal.connect(self._on_convert_finished)
 
-        self.btn_convert.setEnabled(False)
-        self.btn_convert_cancel.setVisible(True)
-        self.btn_convert_cancel.setEnabled(True)
+        self._convert_running = True
+        self.btn_convert.setText(self.tr("Cancelar"))
+        self.btn_convert.setProperty("variant", "danger")
+        self.btn_convert.style().unpolish(self.btn_convert)
+        self.btn_convert.style().polish(self.btn_convert)
+        self.btn_convert.setEnabled(True)
+        self.btn_convert.setToolTip(self.tr("Cancelar el proceso de conversión actual"))
+
         self.progress_bar.setProperty("status", "running")
         self.progress_bar.style().unpolish(self.progress_bar)
         self.progress_bar.style().polish(self.progress_bar)
@@ -1271,18 +1298,36 @@ class ImageToolsTab(QWidget):
         # _update_progress_bar), en vez de saltar de golpe entre archivos.
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
-        self.progress_bar.setFormat(self.tr("Convirtiendo 0/{0} (0%)...").format(len(filepaths)))
         self._convert_total = len(filepaths)
         self._convert_done = 0
         self._current_file_progress = 0
+        self._current_stage = "loading"
+
+        if self._convert_total == 1:
+            self.progress_bar.setFormat(self.tr("Iniciando..."))
+        else:
+            self.progress_bar.setFormat(self.tr("Iniciando 0/{0}...").format(self._convert_total))
 
         self._convert_worker.start()
 
     def _on_convert_cancel_clicked(self):
         if self._convert_worker is not None:
             self._convert_worker.cancel()
-            self.btn_convert_cancel.setEnabled(False)
+            self.btn_convert.setEnabled(False)
+            self.btn_convert.setText(self.tr("Cancelando..."))
             self.progress_bar.setFormat(self.tr("Cancelando..."))
+
+    def _get_stage_text(self, stage: str) -> str:
+        stages = {
+            "loading": self.tr("Cargando"),
+            "resize": self.tr("Redimensionando"),
+            "rembg": self.tr("Eliminando fondo"),
+            "upscale": self.tr("Reescalando con IA"),
+            "canvas": self.tr("Ajustando canvas"),
+            "saving": self.tr("Guardando"),
+            "processing": self.tr("Procesando"),
+        }
+        return stages.get(stage, stage if stage else self.tr("Procesando"))
 
     def _update_progress_bar(self):
         """Combina archivos ya terminados + el progreso (0-100) del que está en
@@ -1291,35 +1336,40 @@ class ImageToolsTab(QWidget):
         total_percent = (self._convert_done + self._current_file_progress / 100.0) / total * 100.0
         pct_int = int(round(total_percent))
         self.progress_bar.setValue(pct_int)
-        self.progress_bar.setFormat(
-            self.tr("Convirtiendo {0}/{1} ({2}%)...").format(
-                min(self._convert_done + 1, self._convert_total), self._convert_total, pct_int
-            )
-        )
 
-    def _on_convert_file_progress(self, filepath: str, pct: int):
+        stage_text = self._get_stage_text(getattr(self, "_current_stage", "processing"))
+        current_idx = min(self._convert_done + 1, self._convert_total)
+
+        if self._convert_total == 1:
+            self.progress_bar.setFormat(f"{stage_text} ({pct_int}%)...")
+        else:
+            self.progress_bar.setFormat(f"{current_idx}/{self._convert_total} {stage_text} ({pct_int}%)...")
+
+    def _on_convert_file_progress(self, filepath: str, pct: int, stage: str = "processing"):
+        if stage:
+            self._current_stage = stage
         self._current_file_progress = pct
         self._update_progress_bar()
 
-    def _on_convert_busy_indeterminate(self, filepath: str, is_indeterminate: bool):
-        """Reescalar IA sin porcentaje real que mostrar (Waifu2x/SRMD, ver
-        upscale_engine.py) -- rebote en vez de un número inventado o la barra
-        clavada sin moverse."""
+    def _on_convert_busy_indeterminate(self, filepath: str, is_indeterminate: bool, stage: str = "processing"):
         self.progress_bar.setBouncing(is_indeterminate)
+        if stage:
+            self._current_stage = stage
         if is_indeterminate:
-            self.progress_bar.setFormat(
-                self.tr("Reescalando {0}/{1}...").format(
-                    min(self._convert_done + 1, self._convert_total), self._convert_total
-                )
-            )
+            stage_text = self._get_stage_text(self._current_stage)
+            current_idx = min(self._convert_done + 1, self._convert_total)
+            if self._convert_total == 1:
+                self.progress_bar.setFormat(f"{stage_text}...")
+            else:
+                self.progress_bar.setFormat(f"{current_idx}/{self._convert_total} {stage_text}...")
+        else:
+            self._update_progress_bar()
 
     def _on_convert_file_status(self, filepath: str, status_text: str):
         self.image_queue.update_file_status(filepath, status_text)
         # "Procesando..." indica que el archivo acaba de EMPEZAR, no que terminó.
-        # Solo se incrementa _convert_done cuando el archivo concluye (Completado,
-        # Error u Omitido). Antes se incrementaba en cada llamada a este método,
-        # provocando que la barra saltara a 100% apenas arrancaba el primer archivo.
         if status_text in (self.tr("Procesando..."), "Procesando..."):
+            self._current_stage = "loading"
             return
         self._convert_done += 1
         self._current_file_progress = 0
@@ -1352,8 +1402,11 @@ class ImageToolsTab(QWidget):
             shutil.rmtree(self._flatten_temp_dir, ignore_errors=True)
             self._flatten_temp_dir = None
         self._convert_worker = None
-        self.btn_convert_cancel.setVisible(False)
-        self.btn_convert_cancel.setEnabled(True)
+        self._convert_running = False
+        self.btn_convert.setText(self.tr("Iniciar Proceso"))
+        self.btn_convert.setProperty("variant", "primary")
+        self.btn_convert.style().unpolish(self.btn_convert)
+        self.btn_convert.style().polish(self.btn_convert)
         self.progress_bar.setBouncing(False)
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(100)

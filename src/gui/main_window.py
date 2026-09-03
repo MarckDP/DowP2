@@ -414,14 +414,19 @@ class EditorStatusCornerWidget(QWidget):
                 widget.start_launching_animation()
                 from core.logger.logger_manager import logger
                 from PySide6.QtCore import QProcess
+                import platform
                 logger.info(f"Lanzando editor (modo desvinculado): {exe_path}")
                 try:
-                    success = QProcess.startDetached(exe_path)
-                    if not success:
-                        if hasattr(os, 'startfile'):
-                            os.startfile(exe_path)
-                        else:
-                            subprocess.Popen(exe_path, creationflags=getattr(subprocess, 'DETACHED_PROCESS', 0))
+                    if platform.system() == "Darwin":
+                        # En macOS, un .app es un bundle directorio que se arranca con 'open'
+                        subprocess.Popen(["open", exe_path])
+                    else:
+                        success = QProcess.startDetached(exe_path)
+                        if not success:
+                            if hasattr(os, 'startfile'):
+                                os.startfile(exe_path)
+                            else:
+                                subprocess.Popen(exe_path, creationflags=getattr(subprocess, 'DETACHED_PROCESS', 0))
                 except Exception as e:
                     logger.error(f"Error lanzando {app_id}: {e}")
                     widget.stop_launching_animation()

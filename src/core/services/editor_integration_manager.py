@@ -1,4 +1,6 @@
 import os
+import re
+import platform
 import subprocess
 from PySide6.QtCore import QObject, Signal, QThread
 from core.logger.logger_manager import logger
@@ -20,47 +22,58 @@ class ProcessMonitorThread(QThread):
         
     def run(self):
         import time
+        is_windows = platform.system() == "Windows"
         while self.is_running:
             try:
-                import ctypes
-                EnumWindows = ctypes.windll.user32.EnumWindows
-                EnumWindowsProc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int))
-                GetWindowThreadProcessId = ctypes.windll.user32.GetWindowThreadProcessId
-                IsWindowVisible = ctypes.windll.user32.IsWindowVisible
+                if is_windows:
+                    import ctypes
+                    EnumWindows = ctypes.windll.user32.EnumWindows
+                    EnumWindowsProc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int))
+                    GetWindowThreadProcessId = ctypes.windll.user32.GetWindowThreadProcessId
+                    IsWindowVisible = ctypes.windll.user32.IsWindowVisible
 
-                GetWindowTextLengthW = ctypes.windll.user32.GetWindowTextLengthW
+                    GetWindowTextLengthW = ctypes.windll.user32.GetWindowTextLengthW
 
-                visible_pids = set()
+                    visible_pids = set()
 
-                def foreach_window(hwnd, lParam):
-                    if IsWindowVisible(hwnd):
-                        length = GetWindowTextLengthW(hwnd)
-                        if length > 0:
-                            pid = ctypes.c_ulong()
-                            GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-                            if pid.value > 0:
-                                visible_pids.add(pid.value)
-                    return True
+                    def foreach_window(hwnd, lParam):
+                        if IsWindowVisible(hwnd):
+                            length = GetWindowTextLengthW(hwnd)
+                            if length > 0:
+                                pid = ctypes.c_ulong()
+                                GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+                                if pid.value > 0:
+                                    visible_pids.add(pid.value)
+                        return True
 
-                EnumWindows(EnumWindowsProc(foreach_window), 0)
+                    EnumWindows(EnumWindowsProc(foreach_window), 0)
 
-                import csv, io
-                output = subprocess.check_output(['tasklist', '/fo', 'csv', '/nh'], creationflags=subprocess.CREATE_NO_WINDOW).decode('utf-8', errors='ignore')
-                reader = csv.reader(io.StringIO(output))
-                
-                running_exes = set()
-                for row in reader:
-                    if len(row) > 1:
-                        exe_name = row[0]
-                        pid = int(row[1])
-                        if pid in visible_pids:
-                            running_exes.add(exe_name)
-                            
-                status = {}
-                for app_id, exe_name in self.targets.items():
-                    status[app_id] = (exe_name in running_exes)
+                    import csv, io
+                    creationflags = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+                    output = subprocess.check_output(['tasklist', '/fo', 'csv', '/nh'], creationflags=creationflags).decode('utf-8', errors='ignore')
+                    reader = csv.reader(io.StringIO(output))
                     
-                self.processes_updated.emit(status)
+                    running_exes = set()
+                    for row in reader:
+                        if len(row) > 1:
+                            exe_name = row[0]
+                            pid = int(row[1])
+                            if pid in visible_pids:
+                                running_exes.add(exe_name)
+                                
+                    status = {}
+                    for app_id, exe_name in self.targets.items():
+                        status[app_id] = (exe_name in running_exes)
+                        
+                    self.processes_updated.emit(status)
+                else:
+                    output = subprocess.check_output(['ps', '-A', '-o', 'comm'], text=True, errors='ignore')
+                    status = {
+                        "premiere": "Adobe Premiere Pro" in output,
+                        "aftereffects": ("After Effects" in output or "AfterFX" in output),
+                        "davinci": bool(re.search(r'(?:^|/|\s)Resolve(?:\.app)?(?:\s|$)', output, re.MULTILINE)),
+                    }
+                    self.processes_updated.emit(status)
             except Exception as e:
                 pass
             time.sleep(3.0)

@@ -9,7 +9,7 @@ class AnimatedButton(QPushButton):
     """
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.setCursor(Qt.PointingHandCursor)
+        self.setCursor(Qt.PointingHandCursor if self.isEnabled() else Qt.ArrowCursor)
         
         # Configure opacity effect
         self._opacity_effect = QGraphicsOpacityEffect(self)
@@ -40,6 +40,7 @@ class AnimatedButton(QPushButton):
     def changeEvent(self, event):
         if event.type() == QEvent.EnabledChange:
             enabled = self.isEnabled()
+            self.setCursor(Qt.PointingHandCursor if enabled else Qt.ArrowCursor)
             self._opacity_effect.setEnabled(enabled)
             if enabled:
                 # Reset opacity to standard idle state when re-enabled

@@ -28,13 +28,10 @@ class ImageConvertWorker(QThread):
     reversible si la política es "sobrescribir": se confirma (se borra el .dbak) si
     la conversión de ESE archivo salió bien, o se revierte si falló/se canceló."""
 
-    file_progress = Signal(str, int)          # filepath, %
-    # filepath, True/False -- "no hay porcentaje real que mostrar ahora" (ver
-    # ImageConverter._apply_ai_upscale/upscale_engine.run_upscale: Waifu2x/SRMD no
-    # imprimen progreso, a diferencia de Upscayl). Señal separada de file_progress
-    # (que es Signal(str, int), no puede llevar None) para no forzar un porcentaje
-    # inventado -- quien la escuche debe mostrar un estado "trabajando" indeterminado.
-    busy_indeterminate = Signal(str, bool)
+    file_progress = Signal(str, int, str)          # filepath, %, stage
+    # filepath, True/False, stage -- "no hay porcentaje real que mostrar ahora"
+    # (Waifu2x/SRMD/rembg). Señal separada de file_progress con la etapa actual.
+    busy_indeterminate = Signal(str, bool, str)
     file_status_changed = Signal(str, str)    # filepath, texto de estado
     file_completed = Signal(str, str)         # input_path, output_path -- solo en éxito
     finished_signal = Signal(int, int)        # completados, total
@@ -132,12 +129,13 @@ class ImageConvertWorker(QThread):
             if backup_path and os.path.normpath(desired_path) == os.path.normpath(filepath):
                 read_path = backup_path
 
-            def progress_cb(pct, _filepath=filepath):
+            def progress_cb(pct, stage="processing", _filepath=filepath):
+                stage_str = str(stage) if stage else "processing"
                 if pct is None:
-                    self.busy_indeterminate.emit(_filepath, True)
+                    self.busy_indeterminate.emit(_filepath, True, stage_str)
                 else:
-                    self.busy_indeterminate.emit(_filepath, False)
-                    self.file_progress.emit(_filepath, int(round(pct)))
+                    self.busy_indeterminate.emit(_filepath, False, stage_str)
+                    self.file_progress.emit(_filepath, int(round(pct)), stage_str)
 
             try:
                 success, message = self._converter.convert_file(

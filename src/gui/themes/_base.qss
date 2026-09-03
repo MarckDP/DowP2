@@ -292,6 +292,7 @@ QPushButton#analyzeButton:disabled {
     background: none;
     background-color: {{fondo_terciario}};
     color: {{texto_secundario}};
+    border: 1px solid {{borde_sutil}};
 }
 
 /* 3. Acento Sólido Verde Plano (Carpeta, Play, Loop, etc.) */

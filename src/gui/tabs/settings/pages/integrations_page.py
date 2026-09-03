@@ -7,6 +7,7 @@ from core.utils.config_manager import get_config, save_config
 from core.utils.paths import get_src_dir
 from gui.styles import apply_folder_browse_button_style
 import os
+import platform
 
 class IntegrationsPage(QWidget):
     """Página de ajustes de Integraciones para NLEs."""
@@ -57,10 +58,11 @@ class IntegrationsPage(QWidget):
         self.content_layout.setSpacing(20)
         self.content_layout.setAlignment(Qt.AlignTop)
 
-        # --- SECCIÓN ADOBE ---
-        self.create_adobe_section()
-        
-        # --- SECCIÓN DAVINCI (Placeholder) ---
+        # --- SECCIÓN ADOBE (Premiere Pro / After Effects no existen en Linux) ---
+        if platform.system() != "Linux":
+            self.create_adobe_section()
+
+        # --- SECCIÓN DAVINCI (Windows, Mac y Linux) ---
         self.create_davinci_section()
 
         self.content_layout.addStretch(1)
@@ -98,15 +100,22 @@ class IntegrationsPage(QWidget):
         config = get_config()
         integrations = config.get('integrations', {})
         
-        pr_default = self.detect_adobe_path("premiere") or "C:\\Program Files\\Adobe\\Adobe Premiere Pro 2024\\Adobe Premiere Pro.exe"
-        ae_default = self.detect_adobe_path("aftereffects") or "C:\\Program Files\\Adobe\\Adobe After Effects 2024\\Support Files\\AfterFX.exe"
+        import platform
+        is_mac = platform.system() == "Darwin"
+        
+        pr_detected = self.detect_adobe_path("premiere")
+        ae_detected = self.detect_adobe_path("aftereffects")
+        
+        pr_hint = "/Applications/Adobe Premiere Pro [Versión]/Adobe Premiere Pro [Versión].app" if is_mac else r"C:\Program Files\Adobe\Adobe Premiere Pro [Versión]\Adobe Premiere Pro.exe"
+        ae_hint = "/Applications/Adobe After Effects [Versión]/Adobe After Effects [Versión].app" if is_mac else r"C:\Program Files\Adobe\Adobe After Effects [Versión]\Support Files\AfterFX.exe"
         
         # Premiere Pro Settings
         pr_layout = self.create_app_setting(
             app_id="premiere",
             app_name="Adobe Premiere Pro",
             icon_name="premiere pro.svg",
-            default_path=pr_default,
+            default_path=pr_detected,
+            placeholder_hint=pr_hint,
             is_enabled=integrations.get('premiere_enabled', False),
             current_path=integrations.get('premiere_path', '')
         )
@@ -119,7 +128,8 @@ class IntegrationsPage(QWidget):
             app_id="aftereffects",
             app_name="Adobe After Effects",
             icon_name="after effects.svg",
-            default_path=ae_default,
+            default_path=ae_detected,
+            placeholder_hint=ae_hint,
             is_enabled=integrations.get('aftereffects_enabled', False),
             current_path=integrations.get('aftereffects_path', '')
         )
@@ -161,11 +171,21 @@ class IntegrationsPage(QWidget):
         config = get_config()
         integrations = config.get('integrations', {})
         
+        sys_name = platform.system()
+        dv_detected = self.detect_davinci_path()
+        if sys_name == "Darwin":
+            dv_hint = "/Applications/DaVinci Resolve/DaVinci Resolve.app"
+        elif sys_name == "Linux":
+            dv_hint = "/opt/resolve/bin/resolve"
+        else:
+            dv_hint = r"C:\Program Files\Blackmagic Design\DaVinci Resolve\Resolve.exe"
+        
         dv_layout = self.create_app_setting(
             app_id="davinci",
             app_name="DaVinci Resolve",
             icon_name="davinci resolve.svg",
-            default_path="C:\\Program Files\\Blackmagic Design\\DaVinci Resolve\\Resolve.exe",
+            default_path=dv_detected or dv_hint,
+            placeholder_hint=dv_hint,
             is_enabled=integrations.get('davinci_enabled', False),
             current_path=integrations.get('davinci_path', '')
         )
@@ -202,38 +222,155 @@ class IntegrationsPage(QWidget):
         self.lbl_icon_dv = dv_layout.icon_lbl
         
     def detect_adobe_path(self, app_id):
+        """Busca y devuelve la versión instalada más reciente de Premiere Pro o After Effects."""
         import platform
-        if platform.system() != 'Windows':
-            return ""
-            
-        base_path = "C:\\Program Files\\Adobe"
-        if not os.path.exists(base_path):
-            return ""
-            
+        import re
+        sys_name = platform.system()
+
+        def extract_version_score(text, filepath=""):
+            # 1. Buscar año de 4 dígitos (ej: 2026, 2025, 2024...)
+            year_match = re.search(r'(20\d\d)', text)
+            if year_match:
+                return int(year_match.group(1)) * 1000
+            # 2. Buscar versión numérica (ej: 25.0, 24.1...)
+            ver_match = re.search(r'(\d+(?:\.\d+)?)', text)
+            if ver_match:
+                try:
+                    return int(float(ver_match.group(1)) * 10)
+                except ValueError:
+                    pass
+            # 3. Fallback a la fecha de modificación del archivo
+            if filepath and os.path.exists(filepath):
+                try:
+                    return int(os.path.getmtime(filepath) // 86400)
+                except Exception:
+                    pass
+            return 1000
+
         candidates = []
-        target_folder_keyword = "Premiere Pro" if app_id == "premiere" else "After Effects"
-        exe_name = "Adobe Premiere Pro.exe" if app_id == "premiere" else "Support Files\\AfterFX.exe"
-        
-        try:
-            for item in os.listdir(base_path):
-                if target_folder_keyword in item:
-                    full_exe_path = os.path.join(base_path, item, exe_name)
-                    if os.path.exists(full_exe_path):
-                        import re
-                        match = re.search(r'\d{4}', item)
-                        year = int(match.group()) if match else 2000
-                        candidates.append((year, full_exe_path))
-        except Exception:
-            pass
-            
+
+        if sys_name == 'Windows':
+            exe_name = "Adobe Premiere Pro.exe" if app_id == "premiere" else "Support Files\\AfterFX.exe"
+            target_keyword = "premiere pro" if app_id == "premiere" else "after effects"
+
+            # Paso 1: Consultar el Registro de Windows (App Paths registra la versión activa principal)
+            try:
+                import winreg
+                reg_exe = "Adobe Premiere Pro.exe" if app_id == "premiere" else "AfterFX.exe"
+                for root_key in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+                    try:
+                        with winreg.OpenKey(root_key, rf"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\{reg_exe}") as key:
+                            val, _ = winreg.QueryValueEx(key, "")
+                            if val:
+                                val = val.strip('"\'' )
+                                if os.path.exists(val):
+                                    score = extract_version_score(val, val)
+                                    candidates.append((score, val))
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+            # Paso 2: Escanear Program Files en discos comunes
+            possible_roots = [os.environ.get("ProgramFiles", r"C:\Program Files")]
+            for drive in ("C", "D", "E"):
+                d_path = f"{drive}:\\Program Files"
+                if d_path not in possible_roots and os.path.exists(d_path):
+                    possible_roots.append(d_path)
+
+            for pf in possible_roots:
+                adobe_base = os.path.join(pf, "Adobe")
+                if not os.path.exists(adobe_base):
+                    continue
+                try:
+                    for item in os.listdir(adobe_base):
+                        if target_keyword in item.lower():
+                            full_exe = os.path.join(adobe_base, item, exe_name)
+                            if os.path.exists(full_exe):
+                                score = extract_version_score(item, full_exe)
+                                candidates.append((score, full_exe))
+                except Exception:
+                    pass
+
+        elif sys_name == 'Darwin':
+            target_keyword = "premiere pro" if app_id == "premiere" else "after effects"
+
+            # Paso 1: Spotlight (mdfind) para localizar bundles .app al instante
+            try:
+                import subprocess
+                kw_query = "Adobe Premiere Pro" if app_id == "premiere" else "Adobe After Effects"
+                out = subprocess.check_output(['mdfind', f'kMDItemFSName == "{kw_query}*.app"'], text=True, errors='ignore').strip()
+                for line in out.splitlines():
+                    path = line.strip()
+                    if path.endswith(".app") and os.path.exists(path):
+                        score = extract_version_score(path, path)
+                        candidates.append((score, path))
+            except Exception:
+                pass
+
+            # Paso 2: Escanear /Applications y ~/Applications
+            for base_apps in ("/Applications", os.path.expanduser("~/Applications")):
+                if not os.path.exists(base_apps):
+                    continue
+                try:
+                    for item in os.listdir(base_apps):
+                        if target_keyword in item.lower():
+                            full_item = os.path.join(base_apps, item)
+                            if item.endswith(".app") and os.path.exists(full_item):
+                                score = extract_version_score(item, full_item)
+                                candidates.append((score, full_item))
+                            elif os.path.isdir(full_item):
+                                for sub in os.listdir(full_item):
+                                    if target_keyword in sub.lower() and sub.endswith(".app"):
+                                        app_bundle = os.path.join(full_item, sub)
+                                        score = extract_version_score(item + " " + sub, app_bundle)
+                                        candidates.append((score, app_bundle))
+                except Exception:
+                    pass
+
         if candidates:
-            # Sort by year descending and return the highest
-            candidates.sort(key=lambda x: x[0], reverse=True)
-            return candidates[0][1]
-            
+            # Eliminar duplicados y ordenar por versión/año descendente
+            seen = set()
+            unique_candidates = []
+            for score, path in candidates:
+                norm = os.path.normpath(path)
+                if norm not in seen:
+                    seen.add(norm)
+                    unique_candidates.append((score, norm))
+            unique_candidates.sort(key=lambda x: x[0], reverse=True)
+            return unique_candidates[0][1]
+
+        return ""
+
+    def detect_davinci_path(self):
+        sys_name = platform.system()
+        if sys_name == 'Windows':
+            candidates = [
+                r"C:\Program Files\Blackmagic Design\DaVinci Resolve\Resolve.exe",
+            ]
+            for c in candidates:
+                if os.path.exists(c):
+                    return c
+        elif sys_name == 'Darwin':
+            candidates = [
+                "/Applications/DaVinci Resolve/DaVinci Resolve.app",
+                "/Applications/DaVinci Resolve Studio/DaVinci Resolve Studio.app",
+                "/Applications/DaVinci Resolve.app",
+            ]
+            for c in candidates:
+                if os.path.exists(c):
+                    return c
+        elif sys_name == 'Linux':
+            candidates = [
+                "/opt/resolve/bin/resolve",
+                "/home/resolve/bin/resolve",
+            ]
+            for c in candidates:
+                if os.path.exists(c):
+                    return c
         return ""
         
-    def create_app_setting(self, app_id, app_name, icon_name, default_path, is_enabled, current_path):
+    def create_app_setting(self, app_id, app_name, icon_name, default_path, is_enabled, current_path, placeholder_hint=""):
         layout = QVBoxLayout()
         layout.setSpacing(8)
         
@@ -258,11 +395,12 @@ class IntegrationsPage(QWidget):
         path_row.setContentsMargins(40, 0, 0, 0) # Indent
         
         path_input = QLineEdit()
-        path_input.setPlaceholderText(default_path)
+        placeholder = default_path or placeholder_hint or self.tr("Seleccionar ruta...")
+        path_input.setPlaceholderText(placeholder)
         path_input.setText(current_path)
         
-        # Autodetect if empty and enabled
-        if is_enabled and not current_path and os.path.exists(default_path):
+        # Autodetect if empty and enabled and default_path exists on disk
+        if is_enabled and not current_path and default_path and os.path.exists(default_path):
             path_input.setText(default_path)
             self._save_integration_setting(app_id, "path", default_path)
             
@@ -290,7 +428,17 @@ class IntegrationsPage(QWidget):
         return layout
         
     def _browse_exe(self, app_id, line_edit):
-        file_path, _ = QFileDialog.getOpenFileName(self, self.tr("Seleccionar Ejecutable"), "C:\\Program Files", "Ejecutables (*.exe *.app)")
+        sys_name = platform.system()
+        if sys_name == "Darwin":
+            start_dir = "/Applications"
+            filter_str = "Aplicaciones (*.app);;Todos los archivos (*)"
+        elif sys_name == "Linux":
+            start_dir = "/opt/resolve/bin" if os.path.exists("/opt/resolve/bin") else "/opt"
+            filter_str = "Todos los archivos (*)"
+        else:
+            start_dir = "C:\\Program Files"
+            filter_str = "Ejecutables (*.exe);;Todos los archivos (*.*)"
+        file_path, _ = QFileDialog.getOpenFileName(self, self.tr("Seleccionar Ejecutable"), start_dir, filter_str)
         if file_path:
             file_path = os.path.normpath(file_path)
             line_edit.setText(file_path)
@@ -302,8 +450,8 @@ class IntegrationsPage(QWidget):
         path_input.setEnabled(checked)
         btn_browse.setEnabled(checked)
         
-        # Auto-fill if enabling and empty
-        if checked and not path_input.text() and os.path.exists(default_path):
+        # Auto-fill if enabling and empty and path exists
+        if checked and not path_input.text() and default_path and os.path.exists(default_path):
             path_input.setText(default_path)
 
         # Notificar a la ventana principal para que el ícono en la esquina superior
@@ -333,6 +481,9 @@ class IntegrationsPage(QWidget):
             label.setGraphicsEffect(effect)
 
     def update_adobe_status(self, active_editor):
+        if not hasattr(self, 'lbl_icon_pr'):
+            # Sección Adobe no creada (Linux: Premiere/After Effects no existen)
+            return
         if active_editor == 'premiere':
             self.adobe_status_lbl.setText(self.tr("Conectado (Premiere Pro)"))
             self.adobe_status_lbl.setStyleSheet("color: #55ff55; font-weight: bold;")

@@ -13,10 +13,33 @@ gris); al elegir ambos, se aplica (botón verde). Sin botones Abrir/Borrar inlin
 esos ya viven en Ajustes > Modelos (ver models_page.py); acá solo se avisa si el
 modelo elegido no está instalado o requiere descarga manual.
 
+Aceleración GPU: encendida por defecto en Windows, APAGADA por defecto en
+macOS, y directamente OCULTA en Linux. No son limitaciones arbitrarias:
+- macOS: confirmado en pruebas reales (M3 y M5, ver memoria de proyecto) que
+  CoreMLExecutionProvider puede crashear la app de golpe con estos modelos
+  (RMBG 2.0/BiRefNet/InSPyReNet, todos con backbone Swin-Transformer). Ya se
+  investigó la causa: son dos bugs de Apple sin arreglar en macOS 26.x
+  (Tahoe), a nivel CoreML/Metal, no algo que se pueda mitigar desde acá -- no
+  hay opción de provider (tipo MLComputeUnits) que lo resuelva del todo. En
+  Mac la CPU sola ya rinde bien para esto, así que el default seguro es
+  apagado. No se lo bloqueamos al usuario si lo quiere prender igual -- "no
+  impedimos, avisamos": tildarlo en macOS dispara un aviso, no lo deshabilita
+  (ver _on_gpu_toggled).
+- Linux: el checkbox ni se muestra. onnx_providers.py solo devuelve un
+  provider de GPU real en Windows (DirectML) y macOS (CoreML) -- en Linux
+  siempre corre CPUExecutionProvider sin importar este valor, porque no
+  instalamos onnxruntime-gpu (ver memoria "DowP ONNX Runtime GPU strategy":
+  el paquete CUDA pesa cientos de MB y solo beneficiaría a usuarios Nvidia,
+  dejando a todos los demás pagando el peso sin beneficio). Mostrar un
+  checkbox que no hace nada distinto sería engañoso, así que se oculta en vez
+  de dejarlo tildado sin efecto.
+
 Solo selección: no dispara ningún procesamiento todavía, eso se conecta en un paso
 aparte."""
+import platform
+
 from PySide6.QtWidgets import (
-    QFrame, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QCheckBox, QSlider,
+    QFrame, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QCheckBox, QSlider, QMessageBox,
 )
 from PySide6.QtCore import Signal, Qt
 from PySide6.QtGui import QFontMetrics
@@ -24,6 +47,16 @@ from PySide6.QtGui import QFontMetrics
 from gui.styles import get_theme_token
 from core.constants import AI_ENGINE_HOLDER, AI_MODEL_HOLDER
 from core.setup.models_setup import get_all_rembg_families, is_rembg_model_installed, is_rembg_model_gated
+
+_GPU_MACOS_WARNING = (
+    "En macOS, la aceleración por GPU (CoreML) no es confiable con todos los "
+    "modelos -- hay bugs conocidos y todavía sin arreglar de Apple (macOS 26.x) "
+    "que pueden hacer que la app se cierre de golpe sin aviso al usar GPU con "
+    "estos modelos (confirmado con RMBG 2.0/BiRefNet/InSPyReNet), no solo que "
+    "tarde más o se quede colgada. La CPU sola ya rinde bien en Mac para esto.\n\n"
+    "Podés dejarla activada igual si querés probar, pero si la app se cierra "
+    "sola o se cuelga, volvé a destildar esta opción."
+)
 
 _GPU_TOOLTIP = (
     "Si está activo, usa la tarjeta gráfica (GPU).\n"
@@ -74,11 +107,18 @@ class RembgPopoverContent(QFrame):
         layout.addWidget(title)
 
         # Aceleración por hardware -- a diferencia del reescalado (siempre GPU), rembg
-        # sí corre por CPU si se desactiva (mismo default que DowP 1: encendida).
-        self.check_gpu = QCheckBox(self.tr("Aceleración de Hardware (GPU)"))
-        self.check_gpu.setChecked(True)
-        self.check_gpu.setToolTip(_GPU_TOOLTIP)
-        layout.addWidget(self.check_gpu)
+        # sí corre por CPU si se desactiva. Default por SO (ver docstring del módulo):
+        # encendida en Windows, apagada en macOS (CoreML no confiable con todos los
+        # modelos -- no se bloquea, se avisa), oculta en Linux (no hay provider de
+        # GPU real instalado ahí, mostrarla sería engañoso).
+        if platform.system() != "Linux":
+            self.check_gpu = QCheckBox(self.tr("Aceleración de Hardware (GPU)"))
+            self.check_gpu.setChecked(platform.system() != "Darwin")
+            self.check_gpu.setToolTip(_GPU_TOOLTIP)
+            self.check_gpu.toggled.connect(self._on_gpu_toggled)
+            layout.addWidget(self.check_gpu)
+        else:
+            self.check_gpu = None
 
         # Motor (familia del modelo)
         family_row = QHBoxLayout()
@@ -176,6 +216,12 @@ class RembgPopoverContent(QFrame):
         for w in self._label_widgets:
             w.setFixedWidth(width)
 
+    def _on_gpu_toggled(self, checked: bool):
+        """No impedimos, avisamos: tildar GPU en macOS no se bloquea, solo se
+        advierte una vez por click (ver _GPU_MACOS_WARNING) -- el usuario decide."""
+        if checked and platform.system() == "Darwin":
+            QMessageBox.warning(self, self.tr("Aceleración por GPU en macOS"), self.tr(_GPU_MACOS_WARNING))
+
     def _on_expand_changed(self, v: int):
         sign = "+" if v > 0 else ""
         self.lbl_expand_value.setText(f"{sign}{v} px")
@@ -243,7 +289,7 @@ class RembgPopoverContent(QFrame):
         return self.combo_family.currentData(), self.combo_model.currentData()
 
     def gpu_enabled(self) -> bool:
-        return self.check_gpu.isChecked()
+        return self.check_gpu.isChecked() if self.check_gpu else False
 
     def smooth_value(self) -> int:
         return self.slider_smooth.value()

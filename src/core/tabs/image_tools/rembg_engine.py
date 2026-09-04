@@ -53,14 +53,20 @@ def _get_session(model_path: str, use_gpu: bool):
         if session is not None:
             return session
 
-        # Solo un modelo en memoria a la vez: si ya hay otro cargado, desalojarlo
-        # antes de cargar el nuevo. Cada sesión ONNX puede pesar 200-900 MB en
-        # RAM/VRAM — acumular varias haría explotar la memoria del usuario.
-        if _sessions:
-            old_keys = list(_sessions.keys())
-            logger.info(f"Eliminar Fondo: desalojando {len(old_keys)} sesión(es) anterior(es) "
-                        f"para dar paso a {os.path.basename(model_path)}")
-            _sessions.clear()
+        # Limitar la cantidad de modelos en memoria según la config del usuario
+        # (Ajustes > Modelos > "Cantidad máxima de modelos en memoria", defecto 1).
+        # Cada sesión ONNX puede pesar 200-900 MB en RAM/VRAM -- acumular sin
+        # límite haría explotar la memoria. Cuando se excede, se desaloja la más
+        # antigua (FIFO: primer key del dict, que en Python 3.7+ conserva orden de
+        # inserción).
+        from core.utils.config_manager import get_config
+        max_sessions = int(get_config().get("rembg_max_cached_sessions", 1))
+        while len(_sessions) >= max_sessions:
+            oldest_key = next(iter(_sessions))
+            logger.info(f"Eliminar Fondo: desalojando sesión antigua "
+                        f"({os.path.basename(oldest_key.rsplit('_', 1)[0])}) "
+                        f"para respetar el límite de {max_sessions} modelo(s) en memoria")
+            del _sessions[oldest_key]
 
         import onnxruntime as ort
         providers = get_execution_providers(use_gpu)

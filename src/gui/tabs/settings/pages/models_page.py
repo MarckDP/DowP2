@@ -277,6 +277,8 @@ class ModelsPage(QWidget):
         self.main_layout.addWidget(line)
 
         self.main_layout.addWidget(self._build_persist_sessions_row())
+        self._max_sessions_row = self._build_max_sessions_row()
+        self.main_layout.addWidget(self._max_sessions_row)
 
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
@@ -400,6 +402,46 @@ class ModelsPage(QWidget):
         self._refresh_persist_row()
         return container
 
+    def _build_max_sessions_row(self) -> QWidget:
+        """Fila de "Cantidad máxima de modelos en memoria": QSpinBox 1-5 (defecto 1).
+        Solo visible cuando "Mantener en memoria" está encendido -- si está apagado
+        no tiene sentido mostrarla porque los modelos se liberan al terminar cada lote."""
+        container = QWidget()
+        row = QHBoxLayout(container)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(10)
+
+        text_col = QVBoxLayout()
+        text_col.setSpacing(2)
+        lbl = QLabel(self.tr("Cantidad máxima de modelos en memoria"))
+        lbl.setObjectName("settingsLabel")
+        text_col.addWidget(lbl)
+
+        self.lbl_max_sessions_desc = QLabel(self.tr(
+            "Si usas varios modelos distintos, puedes mantener más de uno cargado "
+            "para no volver a esperar la carga al alternar entre ellos. Cada modelo "
+            "ocupa entre 200 MB y 900 MB de memoria."
+        ))
+        self.lbl_max_sessions_desc.setWordWrap(True)
+        self.lbl_max_sessions_desc.setStyleSheet("color: #888888; font-size: 11px;")
+        text_col.addWidget(self.lbl_max_sessions_desc)
+        row.addLayout(text_col, 1)
+
+        self.spin_max_sessions = QSpinBox()
+        self.spin_max_sessions.setRange(1, 5)
+        self.spin_max_sessions.setValue(int(get_config().get("rembg_max_cached_sessions", 1)))
+        self.spin_max_sessions.setFixedWidth(60)
+        self.spin_max_sessions.valueChanged.connect(self._on_max_sessions_changed)
+        row.addWidget(self.spin_max_sessions, 0, Qt.AlignVCenter)
+
+        return container
+
+    def _on_max_sessions_changed(self, value: int):
+        cfg = get_config()
+        cfg["rembg_max_cached_sessions"] = value
+        save_config(cfg)
+        logger.info(f"Modelos IA: máximo de sesiones en memoria cambiado a {value}")
+
     def _refresh_persist_row(self):
         """Pone al día la descripción y el botón "Liberar" según el estado del switch.
         La descripción nombra dónde queda el modelo (memoria de la GPU o RAM), que es
@@ -422,6 +464,10 @@ class ModelsPage(QWidget):
         # Apagado no hay nada que liberar: el modelo ya se descarga solo al terminar
         # cada lote.
         self.btn_free_memory.setEnabled(on)
+
+        # La fila de cantidad máxima solo tiene sentido con la persistencia encendida.
+        if hasattr(self, '_max_sessions_row'):
+            self._max_sessions_row.setVisible(on)
 
     def _memory_hint(self) -> str:
         """Dónde vive el modelo mientras está cargado, dicho con el detalle que se

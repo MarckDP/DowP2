@@ -817,6 +817,27 @@ QFrame#processOptionsContainer {
     border: 1px solid {{borde_normal}};
 }
 
+/* CollapsiblePanel (panel de Capas en Editor de Imagen, panel de Opciones en
+   Herramientas Multimedia): estilo por modo vía propiedad dinámica en vez de
+   setStyleSheet() inline, para evitar el repolish en cascada de todo el
+   contenido al alternar acoplado/overlay (ver collapsible_panel.py). */
+QFrame#collapsiblePanel[dockMode="docked"] {
+    background: transparent;
+    border: none;
+}
+
+QFrame#collapsiblePanel[dockMode="overlay"] {
+    background-color: {{fondo_principal}};
+}
+
+QFrame#collapsiblePanel[dockMode="overlay"][edge="right"] {
+    border-left: 1px solid {{borde_normal}};
+}
+
+QFrame#collapsiblePanel[dockMode="overlay"][edge="left"] {
+    border-right: 1px solid {{borde_normal}};
+}
+
 QFrame#bottomConsolePanel {
     background-color: transparent;
     border: none;

@@ -204,7 +204,18 @@ class CustomTitleBar(QWidget):
                     win.width() // 2,
                     self.height() // 2
                 )
-            win.move(event.globalPosition().toPoint() - self._drag_start_pos)
+                win.move(event.globalPosition().toPoint() - self._drag_start_pos)
+
+            # A partir de aquí le cedemos el gesto al gestor de ventanas nativo
+            # (startSystemMove) en vez de seguir moviendo la ventana a mano con
+            # move(): un move() manual nunca es reconocido como arrastre nativo por
+            # el sistema operativo, así que los snaps de borde (Windows/macOS/Linux)
+            # no se activaban. Una vez que el SO toma el control no van a llegar más
+            # mouseMoveEvent para este gesto.
+            handle = win.windowHandle()
+            if handle is not None:
+                self._drag_active = False
+                handle.startSystemMove()
             event.accept()
 
     def mouseReleaseEvent(self, event):

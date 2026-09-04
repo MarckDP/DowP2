@@ -24,6 +24,49 @@ from gui.tabs.settings.settings_view import SettingsTab
 from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor, QRadialGradient
 from PySide6.QtCore import Qt, QPointF, QSize, QTimer
 
+# ── Estructuras/constantes Win32 para el chrome nativo sin bordes (ver nativeEvent
+# de MainWindow) -- definidas una sola vez a nivel de módulo, no en cada evento de
+# mouse durante drag/resize. Windows-only a propósito: en Mac/Linux el snap de
+# ventana ya se resuelve con QWindow.startSystemMove() (ver title_bar.py).
+if sys.platform == "win32":
+    import ctypes
+    from ctypes import wintypes
+
+    class _RECT(ctypes.Structure):
+        _fields_ = [
+            ("left", ctypes.c_long), ("top", ctypes.c_long),
+            ("right", ctypes.c_long), ("bottom", ctypes.c_long),
+        ]
+
+    class _NCCALCSIZE_PARAMS(ctypes.Structure):
+        _fields_ = [
+            ("rgrc", _RECT * 3),
+            ("lppos", ctypes.c_void_p),
+        ]
+
+    class _MONITORINFO(ctypes.Structure):
+        _fields_ = [
+            ("cbSize", wintypes.DWORD),
+            ("rcMonitor", _RECT),
+            ("rcWork", _RECT),
+            ("dwFlags", wintypes.DWORD),
+        ]
+
+    _user32 = ctypes.windll.user32
+    _user32.MonitorFromWindow.restype = ctypes.c_void_p
+    _user32.MonitorFromWindow.argtypes = [wintypes.HWND, wintypes.DWORD]
+    _user32.GetMonitorInfoW.restype = wintypes.BOOL
+    _user32.GetMonitorInfoW.argtypes = [ctypes.c_void_p, ctypes.POINTER(_MONITORINFO)]
+    _user32.IsZoomed.restype = wintypes.BOOL
+    _user32.IsZoomed.argtypes = [wintypes.HWND]
+
+    _WM_NCCALCSIZE = 0x0083
+    _WM_NCHITTEST = 0x0084
+    _HTCLIENT = 1
+    _HTCAPTION = 2
+    _MONITOR_DEFAULTTONEAREST = 2
+
+
 def make_led_icon(color_hex: str, size: int = 32, glow: bool = True) -> QIcon:
     """Genera un ícono de luz LED circular nítido con resplandor suave y reflejo especular."""
     pix = QPixmap(size, size)
@@ -555,8 +598,22 @@ class MainWindow(QMainWindow):
         self._conflict_bridge = ConflictDialogBridge()
 
         # ── Barra de título personalizada ─────────────────────────────────────
-        self.setWindowFlags(Qt.FramelessWindowHint | Qt.Window)
-        # Permite redimensionar desde los bordes incluso sin decoración nativa
+        if sys.platform == "win32":
+            # Sin Qt.FramelessWindowHint a propósito, solo en Windows: se necesita el
+            # frame nativo real (WS_CAPTION | WS_THICKFRAME, lo que Qt crea por
+            # defecto sin este flag) para que Windows ofrezca snap de bordes, Aero
+            # Shake y sombra DWM -- sin esos estilos nativos, Windows nunca ofrece
+            # snap sin importar cómo se mueva la ventana (confirmado: QTBUG-84466).
+            # El aspecto sin bordes se logra interceptando WM_NCCALCSIZE en
+            # nativeEvent() más abajo, no quitando el frame a nivel de Qt.
+            pass
+        else:
+            # Mac/Linux: acá el frame sí se saca a nivel de Qt (como siempre) --
+            # WM_NCCALCSIZE es Windows-only, así que sin este flag quedaría el título
+            # nativo del sistema apilado encima del CustomTitleBar propio. El snap de
+            # bordes en estas plataformas ya se resuelve en title_bar.py con
+            # QWindow.startSystemMove(), que no depende de tener el frame nativo.
+            self.setWindowFlags(Qt.FramelessWindowHint | Qt.Window)
         self.setAttribute(Qt.WA_TranslucentBackground, False)
 
         # Cargar tema inicial
@@ -674,39 +731,85 @@ class MainWindow(QMainWindow):
         theme_name = config.get("theme", "dark")
         self.setStyleSheet(load_stylesheet(theme_name))
 
+    def _handle_nccalcsize(self, msg):
+        """WM_NCCALCSIZE: el área de cliente pasa a ocupar toda la ventana (si no,
+        Windows reserva espacio para el título/bordes nativos que no dibujamos).
+        Estando maximizada hay que recortar al área de trabajo del monitor (rcWork,
+        sin la taskbar) -- si no se hace esto, la ventana maximizada queda ~7-8px más
+        grande que el monitor y tapa la taskbar o invade el monitor vecino (bug
+        clásico de este patrón)."""
+        if msg.wParam == 0:
+            # FALSE: lParam apunta directo a un RECT, no a NCCALCSIZE_PARAMS -- no
+            # hace falta tocar nada, el cliente ya queda igual a lo propuesto.
+            return True, 0
+        params = _NCCALCSIZE_PARAMS.from_address(msg.lParam)
+        # IsZoomed(hWnd) en vez de self.isMaximized(): este mensaje nativo llega
+        # DURANTE la transición maximizada<->normal, y el estado que Qt cree tener
+        # (isMaximized()) puede no estar actualizado todavía en ese instante --
+        # usarlo acá hacía que, al restaurar, siguiéramos recortando al área del
+        # monitor (pensado solo para maximizada) sobre el tamaño ya restaurado,
+        # rompiendo visualmente toda la UI hasta minimizar/restaurar de nuevo.
+        # IsZoomed() consulta el estado nativo real en el momento exacto del mensaje.
+        if _user32.IsZoomed(msg.hWnd):
+            hmonitor = _user32.MonitorFromWindow(msg.hWnd, _MONITOR_DEFAULTTONEAREST)
+            if hmonitor:
+                mi = _MONITORINFO()
+                mi.cbSize = ctypes.sizeof(_MONITORINFO)
+                if _user32.GetMonitorInfoW(hmonitor, ctypes.byref(mi)):
+                    params.rgrc[0] = mi.rcWork
+        return True, 0
+
     def nativeEvent(self, eventType, message):
-        """Maneja eventos nativos de Windows para permitir redimensionar la ventana sin bordes."""
-        try:
-            if not self.isMaximized():
-                import ctypes
-                import ctypes.wintypes
-                msg = ctypes.wintypes.MSG.from_address(int(message))
-                if msg.message == 0x0084:  # WM_NCHITTEST
-                    # Usa QCursor.pos() porque Qt ya se encarga de normalizar las coordenadas 
-                    # a nivel lógico para todos los monitores independientemente de su DPI.
+        """Maneja eventos nativos de Windows para: 1) dibujar la ventana sin bordes
+        pese a tener el frame nativo real (WM_NCCALCSIZE, ver _handle_nccalcsize) y
+        2) redimensionar desde los bordes + que la barra de título custom se
+        comporte como una caption nativa de verdad -- arrastre, snap de bordes,
+        doble-clic para maximizar y Aero Shake los maneja Windows solo
+        (WM_NCHITTEST devolviendo HTCAPTION), sin código Python adicional."""
+        if sys.platform == "win32":
+            try:
+                msg = wintypes.MSG.from_address(int(message))
+
+                if msg.message == _WM_NCCALCSIZE:
+                    return self._handle_nccalcsize(msg)
+
+                if msg.message == _WM_NCHITTEST:
+                    # Usa QCursor.pos() porque Qt ya se encarga de normalizar las
+                    # coordenadas a nivel lógico para todos los monitores
+                    # independientemente de su DPI.
                     from PySide6.QtGui import QCursor
                     local_pos = self.mapFromGlobal(QCursor.pos())
-                    x = local_pos.x()
-                    y = local_pos.y()
-                    
-                    w, h = self.width(), self.height()
-                    border = 6  # Grosor del borde para redimensionar
-                    
-                    left = x < border
-                    right = x >= w - border
-                    top = y < border
-                    bottom = y >= h - border
-                    
-                    if left and top: return True, 13  # HTTOPLEFT
-                    if right and top: return True, 14  # HTTOPRIGHT
-                    if left and bottom: return True, 16  # HTBOTTOMLEFT
-                    if right and bottom: return True, 17  # HTBOTTOMRIGHT
-                    if left: return True, 10  # HTLEFT
-                    if right: return True, 11  # HTRIGHT
-                    if top: return True, 12  # HTTOP
-                    if bottom: return True, 15  # HTBOTTOM
-        except Exception as e:
-            logger.debug(f"MainWindow.nativeEvent error: {e}")
+                    x, y = local_pos.x(), local_pos.y()
+                    is_maximized = bool(_user32.IsZoomed(msg.hWnd))
+
+                    if not is_maximized:
+                        w, h = self.width(), self.height()
+                        border = 6  # Grosor del borde para redimensionar
+                        left = x < border
+                        right = x >= w - border
+                        top = y < border
+                        bottom = y >= h - border
+                        if left and top: return True, 13  # HTTOPLEFT
+                        if right and top: return True, 14  # HTTOPRIGHT
+                        if left and bottom: return True, 16  # HTBOTTOMLEFT
+                        if right and bottom: return True, 17  # HTBOTTOMRIGHT
+                        if left: return True, 10  # HTLEFT
+                        if right: return True, 11  # HTRIGHT
+                        if top: return True, 12  # HTTOP
+                        if bottom: return True, 15  # HTBOTTOM
+
+                    # Franja de la barra de título custom: se devuelve como caption
+                    # nativa salvo sobre los botones minimizar/maximizar/cerrar, que
+                    # deben seguir recibiendo clics normales de Qt. childAt() ya
+                    # recorre title_bar recursivamente y respeta
+                    # WA_TransparentForMouseEvents del title_label.
+                    if y < self.title_bar.height():
+                        child = self.childAt(x, y)
+                        if isinstance(child, QPushButton):
+                            return True, _HTCLIENT
+                        return True, _HTCAPTION
+            except Exception as e:
+                logger.debug(f"MainWindow.nativeEvent error: {e}")
 
         return super().nativeEvent(eventType, message)
 

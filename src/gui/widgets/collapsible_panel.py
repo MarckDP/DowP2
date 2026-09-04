@@ -14,8 +14,6 @@ from PySide6.QtWidgets import QWidget, QFrame, QVBoxLayout, QScrollArea
 from PySide6.QtCore import Qt, QRect, QPoint, QSize, QEasingCurve, QPropertyAnimation, Signal
 from PySide6.QtGui import QPainter, QColor, QPolygon
 
-from gui.styles import get_theme_token
-
 
 class EdgeTabButton(QWidget):
     """Pestaña angosta pegada a un borde (izquierdo o derecho) para abrir/cerrar el overlay."""
@@ -106,6 +104,7 @@ class CollapsiblePanel(QFrame):
         self._dock_stretch = 0
 
         self.setObjectName("collapsiblePanel")
+        self.setProperty("edge", edge)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -202,7 +201,9 @@ class CollapsiblePanel(QFrame):
         self.setParent(self._dock_layout.parentWidget())
         self.setMinimumWidth(self.docked_size)
         self.setMaximumWidth(self._dock_max_width)
-        self.setStyleSheet("QFrame#collapsiblePanel { background: transparent; border: none; }")
+        self.setProperty("dockMode", "docked")
+        self.style().unpolish(self)
+        self.style().polish(self)
         self.updateGeometry()
         self._dock_layout.insertWidget(self._dock_index, self, self._dock_stretch)
         self.show()
@@ -215,15 +216,9 @@ class CollapsiblePanel(QFrame):
         self.setParent(self._overlay_host)
         self.setMinimumWidth(0)
         self.setMaximumWidth(self._overlay_max_width)
-        bg = get_theme_token('fondo_principal', '#121212')
-        border = get_theme_token('borde_normal', '#2d2d2d')
-        side_border = f"border-left: 1px solid {border};" if self.edge == "right" else f"border-right: 1px solid {border};"
-        self.setStyleSheet(f"""
-            QFrame#collapsiblePanel {{
-                background-color: {bg};
-                {side_border}
-            }}
-        """)
+        self.setProperty("dockMode", "overlay")
+        self.style().unpolish(self)
+        self.style().polish(self)
         self.hide()
         self.edge_tab.set_open(False)
         self.edge_tab.show()

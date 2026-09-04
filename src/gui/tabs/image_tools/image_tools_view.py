@@ -1429,6 +1429,14 @@ class ImageToolsTab(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        # Síncrono a propósito: se probó diferir esto con QTimer.singleShot(0), pero
+        # como el resize ya repinta con el tamaño nuevo antes de que corra el timer, se
+        # veía un frame con el panel lateral (Capas) todavía en el modo/ancho viejo
+        # (parpadeo visible) antes de corregirse. El freeze real al maximizar no era
+        # este cálculo en sí, sino el setStyleSheet() en cascada que CollapsiblePanel
+        # hacía en cada cambio de modo (ver collapsible_panel.py) -- ya reemplazado por
+        # setProperty()+polish(), mucho más barato -- así que correrlo síncrono acá ya
+        # no bloquea perceptiblemente y evita el parpadeo.
         self._update_responsive_mode()
 
     def minimumSizeHint(self):

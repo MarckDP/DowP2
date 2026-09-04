@@ -243,7 +243,7 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         self.controller.indexing_progress.connect(self._on_indexing_progress)
         self.controller.indexing_finished.connect(self._on_indexing_finished)
         
-        QTimer.singleShot(200, self.controller.trigger_async_indexing)
+        QTimer.singleShot(50, self.controller.trigger_async_indexing)
         
         # Detener el Watchdog y la música cuando se destruya el widget
         self.destroyed.connect(self._cleanup)
@@ -377,6 +377,13 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         lbl_section.setStyleSheet("font-weight: bold; font-size: 14px; color: white;")
         layout.addWidget(lbl_section)
 
+        # Botón para Indexar Carpeta colocado arriba, justo debajo del título
+        self.btn_add_folder = AnimatedButton(self.tr("Indexar Carpeta"))
+        self.btn_add_folder.setObjectName("analyzeButton")
+        self.btn_add_folder.setFixedHeight(32)
+        self.btn_add_folder.clicked.connect(self._on_add_folder_clicked)
+        layout.addWidget(self.btn_add_folder)
+
         # QTreeWidget en modo acordeón/árbol de carpetas
         self.tree_folders = QTreeWidget()
         self.tree_folders.setHeaderHidden(True)
@@ -390,16 +397,10 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         self.tree_folders.customContextMenuRequested.connect(self._show_tree_context_menu)
         layout.addWidget(self.tree_folders, 1)
 
-        # Botón para Indexar Carpeta (único botón físico)
-        self.btn_add_folder = AnimatedButton(self.tr("Indexar Carpeta"))
-        self.btn_add_folder.setObjectName("analyzeButton")
-        self.btn_add_folder.setFixedHeight(32)
-        self.btn_add_folder.clicked.connect(self._on_add_folder_clicked)
-        layout.addWidget(self.btn_add_folder)
-
+        # Texto indicando los medios indexados al pie de la columna
         self.lbl_indexed_count = QLabel("")
         self.lbl_indexed_count.setAlignment(Qt.AlignCenter)
-        self.lbl_indexed_count.setStyleSheet(f"font-size: 11px; color: {get_theme_token('texto_secundario', '#a6adc8')}; margin-top: 4px;")
+        self.lbl_indexed_count.setStyleSheet(f"font-size: 11px; color: {get_theme_token('texto_secundario', '#a6adc8')}; margin-top: 4px; margin-bottom: 2px;")
         layout.addWidget(self.lbl_indexed_count)
 
         return col
@@ -1541,17 +1542,24 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
 
     def _on_indexing_started(self):
         if hasattr(self, "lbl_indexed_count"):
-            self.lbl_indexed_count.setText("Iniciando indexación...")
+            if not self.lbl_indexed_count.text():
+                self.lbl_indexed_count.setText(self.tr("Iniciando indexación..."))
 
     def _on_indexing_progress(self, count):
         if hasattr(self, "lbl_indexed_count"):
-            self.lbl_indexed_count.setText(f"Indexando... ({count} encontrados)")
+            if "Medios Indexados" not in self.lbl_indexed_count.text():
+                self.lbl_indexed_count.setText(self.tr(f"Indexando... ({count} encontrados)"))
 
     def _on_indexing_finished(self, files):
         if hasattr(self, "lbl_indexed_count"):
             total = len(files)
-            self.lbl_indexed_count.setText(f"{total} Medios Indexados en Total")
-        # Si estamos viendo 'Todos los locales', actualizamos automáticamente
+            if total == 1:
+                self.lbl_indexed_count.setText(self.tr("1 Medio Indexado en Total"))
+            else:
+                self.lbl_indexed_count.setText(self.tr(f"{total} Medios Indexados en Total"))
+        # Si estamos viendo la raíz de Directorios o de Colecciones (ambas son vistas
+        # agregadas que dependen de este mismo indexado en segundo plano), actualizamos
+        # automáticamente.
         current_item = self.tree_folders.currentItem()
-        if current_item and current_item.data(0, Qt.UserRole).get("tipo") == "root_physical":
+        if current_item and current_item.data(0, Qt.UserRole).get("tipo") in ("root_physical", "root_virtual"):
             self._update_media_list()

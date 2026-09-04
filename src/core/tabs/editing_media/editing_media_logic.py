@@ -147,7 +147,12 @@ else:
 
 class AsyncIndexerThread(QThread):
     progress = Signal(int)
-    finished_indexing = Signal(list)
+    # (archivos de carpetas físicas indexadas, archivos de colecciones) -- separados a
+    # propósito: Directorios solo debe reflejar carpetas reales, Colecciones solo debe
+    # reflejar colecciones, sin mezclarse (ver conversación -- antes se fusionaban en una
+    # sola lista deduplicada, lo que hacía aparecer subclips/favoritos/etc. también en la
+    # raíz de Directorios aunque su carpeta nunca se haya indexado).
+    finished_indexing = Signal(list, list)
 
     def __init__(self, indexed_folders, collections, build_entry_func, scan_func, parent=None):
         super().__init__(parent)
@@ -157,38 +162,42 @@ class AsyncIndexerThread(QThread):
         self._scan_folder_fast = scan_func
 
     def run(self):
-        files = []
-        seen_paths = set()
+        folder_files = []
+        seen_folder_paths = set()
+        collection_files = []
+        seen_collection_paths = set()
         count = 0
 
-        # Escanear carpetas
+        # Escanear carpetas físicas indexadas
         for folder in self.indexed_folders:
-            folder_files = self._scan_folder_fast(folder)
-            for f_entry in folder_files:
+            entries = self._scan_folder_fast(folder)
+            for f_entry in entries:
                 norm = f_entry["ruta"]
-                if norm not in seen_paths:
-                    seen_paths.add(norm)
-                    files.append(f_entry)
+                if norm not in seen_folder_paths:
+                    seen_folder_paths.add(norm)
+                    folder_files.append(f_entry)
                     count += 1
                     if count % 10 == 0:
                         self.progress.emit(count)
 
-        # Escanear colecciones
+        # Escanear colecciones (Descargados, Subclips, Default, Favoritos, SFX, Música,
+        # y cualquier colección creada por el usuario) -- lista aparte, no se mezcla con
+        # la de carpetas físicas.
         for col_name in self.collections.keys():
             for path in self.collections[col_name]:
                 norm_path = path.replace("\\", "/")
                 if os.path.exists(norm_path) and os.path.isfile(norm_path):
-                    if norm_path not in seen_paths:
-                        seen_paths.add(norm_path)
+                    if norm_path not in seen_collection_paths:
+                        seen_collection_paths.add(norm_path)
                         name = os.path.basename(norm_path)
                         ext = os.path.splitext(name)[1].lower()
-                        files.append(self._build_file_entry(norm_path, name, ext))
+                        collection_files.append(self._build_file_entry(norm_path, name, ext))
                         count += 1
                         if count % 10 == 0:
                             self.progress.emit(count)
 
         self.progress.emit(count)
-        self.finished_indexing.emit(files)
+        self.finished_indexing.emit(folder_files, collection_files)
 
 
 class EditingMediaController(QObject):
@@ -214,6 +223,7 @@ class EditingMediaController(QObject):
         self.collections = {
             "Descargados": [],
             "Subclips": [],
+            "Default": [],
             "Favoritos": [],
             "SFX": [],
             "Música": []
@@ -246,15 +256,20 @@ class EditingMediaController(QObject):
                     data = json.load(f)
                     self.indexed_folders = data.get("indexed_folders", [])
                     loaded_cols = data.get("collections", {})
-                    # Asegurar que Descargados y Subclips vayan siempre juntas, primero (en ese
-                    # orden), sin importar dónde hayan quedado guardadas en el JSON ni si vienen
-                    # de una instalación vieja que todavía no tenía 'Subclips'.
+                    # Asegurar que Descargados, Subclips y Default vayan siempre juntas, primero
+                    # (en ese orden), sin importar dónde hayan quedado guardadas en el JSON ni si
+                    # vienen de una instalación vieja que todavía no las tenía. "Default" es la
+                    # colección virtual (sin carpeta física real) donde cae por defecto un
+                    # archivo indexado individualmente (ver dropEvent en editing_media_tree.py) --
+                    # se muestra dentro de "Directorios" en el árbol, no en "Colecciones"
+                    # (ver _update_tree_view), aunque vive en esta misma estructura de datos.
                     self.collections = {
                         "Descargados": loaded_cols.get("Descargados", []),
-                        "Subclips": loaded_cols.get("Subclips", [])
+                        "Subclips": loaded_cols.get("Subclips", []),
+                        "Default": loaded_cols.get("Default", [])
                     }
                     for k, v in loaded_cols.items():
-                        if k not in ("Descargados", "Subclips"):
+                        if k not in ("Descargados", "Subclips", "Default"):
                             self.collections[k] = v
                     if "Favoritos" not in self.collections:
                         self.collections["Favoritos"] = []
@@ -423,6 +438,7 @@ class EditingMediaController(QObject):
             self.start_watcher()
             self._invalidate_media_cache()
             self.disk_changed.emit()
+            self.trigger_async_indexing()
             return True
         return False
 
@@ -435,6 +451,7 @@ class EditingMediaController(QObject):
             self.start_watcher()
             self._invalidate_media_cache()
             self.disk_changed.emit()
+            self.trigger_async_indexing()
             return True
         return False
 
@@ -679,9 +696,11 @@ class EditingMediaController(QObject):
 
     def trigger_async_indexing(self):
         """Dispara la indexación en segundo plano de todos los medios."""
-        if hasattr(self, "_async_indexer") and self._async_indexer.isRunning():
+        if hasattr(self, "_async_indexer") and self._async_indexer and self._async_indexer.isRunning():
+            self._reindex_pending = True
             return
             
+        self._reindex_pending = False
         self.indexing_started.emit()
         self._async_indexer = AsyncIndexerThread(
             self.indexed_folders,
@@ -693,19 +712,41 @@ class EditingMediaController(QObject):
         self._async_indexer.finished_indexing.connect(self._on_async_indexing_finished)
         self._async_indexer.start()
 
-    def _on_async_indexing_finished(self, files):
+    def _on_async_indexing_finished(self, folder_files, collection_files):
         if not hasattr(self, "_media_cache"):
             self._media_cache = {}
-        self._media_cache["__all__"] = files
-        self.indexing_finished.emit(files)
+        self._media_cache["__all_folders__"] = folder_files
+        self._media_cache["__all_collections__"] = collection_files
+        # Señal pública hacia la UI: el contador "Medios Indexados en Total" refleja
+        # específicamente las carpetas físicas indexadas (ver get_all_media_files),
+        # no las colecciones -- mismo criterio de separación.
+        self.indexing_finished.emit(folder_files)
+        if getattr(self, "_reindex_pending", False):
+            self._reindex_pending = False
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(200, self.trigger_async_indexing)
 
     def get_all_media_files(self) -> list:
-        """Escanéa todas las carpetas indexadas recursivamente y colecciones, retornando la lista consolidada (con cache)."""
-        cache_key = "__all__"
+        """Directorios (raíz): escanéa SOLO las carpetas físicas indexadas, sin mezclar
+        colecciones -- un archivo que solo vive en una colección (Favoritos, Subclips,
+        Default, ...) no aparece acá salvo que su carpeta contenedora también esté
+        indexada de verdad."""
+        cache_key = "__all_folders__"
         if hasattr(self, "_media_cache") and cache_key in self._media_cache:
             return self._media_cache[cache_key]
-        
+
         # Si no está en caché, disparamos asíncronamente y devolvemos lista vacía
+        self.trigger_async_indexing()
+        return []
+
+    def get_all_collections_files(self) -> list:
+        """Colecciones (raíz): todas las colecciones combinadas (Descargados, Subclips,
+        Default, Favoritos, SFX, Música y las creadas por el usuario), sin mezclar
+        carpetas físicas indexadas."""
+        cache_key = "__all_collections__"
+        if hasattr(self, "_media_cache") and cache_key in self._media_cache:
+            return self._media_cache[cache_key]
+
         self.trigger_async_indexing()
         return []
 

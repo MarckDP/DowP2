@@ -70,6 +70,15 @@ class TreeListMixin:
             item.setExpanded(True)
             self._populate_folder_children(item, folder)
 
+        # 2b. Carpeta "Default": colección virtual (sin carpeta física real detrás) donde
+        # cae por defecto un archivo indexado individualmente (ver dropEvent más abajo).
+        # Se muestra acá, dentro de Directorios, aunque técnicamente vive en
+        # self.controller.collections igual que las de Colecciones -- por eso se excluye
+        # explícitamente del loop de Colecciones unas líneas más abajo, para no duplicarla.
+        default_item = QTreeWidgetItem(self.physical_root, ["Default"])
+        default_item.setIcon(0, get_folder_icon())
+        default_item.setData(0, Qt.UserRole, {"tipo": "collection", "nombre": "Default"})
+
         # 3. Nodo Raíz de Colecciones Virtuales
         self.virtual_root = QTreeWidgetItem(self.tree_folders, [self.tr("Colecciones")])
         self.virtual_root.setIcon(0, get_svg_icon("star.svg"))
@@ -77,6 +86,8 @@ class TreeListMixin:
         self.virtual_root.setExpanded(True)
 
         for col_name in self.controller.collections.keys():
+            if col_name == "Default":
+                continue  # Ya se muestra dentro de Directorios, ver más arriba.
             item = QTreeWidgetItem(self.virtual_root, [col_name])
             color = get_item_color(f"col:{col_name}")
             if col_name == "Descargados":
@@ -85,6 +96,9 @@ class TreeListMixin:
             elif col_name == "Subclips":
                 accent_color = get_theme_token("acento_primario", "#B9E640")
                 item.setIcon(0, get_colored_svg_icon("content_cut.svg", color or accent_color))
+            elif col_name == "Favoritos":
+                accent_color = get_theme_token("acento_primario", "#B9E640")
+                item.setIcon(0, get_colored_svg_icon("star.svg", color or accent_color))
             elif color:
                 item.setIcon(0, get_colored_svg_icon("star.svg", color))
             else:
@@ -359,7 +373,7 @@ class TreeListMixin:
             elif tipo == "root_physical":
                 media_items = self.controller.get_all_media_files()
             elif tipo == "root_virtual":
-                media_items = []
+                media_items = self.controller.get_all_collections_files()
             elif tipo == "root_web":
                 media_items = []
             elif tipo == "web_source":
@@ -568,11 +582,13 @@ class TreeListMixin:
     def _do_disk_changed_refresh(self):
         self._update_tree_view()
         self._update_media_list()
+        self.controller.trigger_async_indexing()
 
     def _on_collections_changed(self):
         """Callback cuando se modifican las colecciones virtuales."""
         self._update_tree_view()
         self._update_media_list()
+        self.controller.trigger_async_indexing()
 
     def _on_add_folder_clicked(self):
         """Abre un selector de carpetas e indexa la seleccionada."""
@@ -832,11 +848,16 @@ class TreeListMixin:
                 
             menu.exec(self.tree_folders.mapToGlobal(position))
         elif tipo == "collection":
-            act_remove = menu.addAction(self.tr("Eliminar Colección Virtual"))
-            act_remove.triggered.connect(self._on_remove_collection_clicked)
-            
+            # "Descargados"/"Subclips"/"Default" son carpetas de sistema que la propia app
+            # llena sola (descargas, cortes físicos, indexación individual) -- no se pueden
+            # eliminar por clic derecho para evitar borrarlas por accidente. El coloreado sí
+            # se deja disponible para las tres, igual que cualquier otra colección.
+            if data.get("nombre") not in ("Descargados", "Subclips", "Default", "Favoritos"):
+                act_remove = menu.addAction(self.tr("Eliminar Colección Virtual"))
+                act_remove.triggered.connect(self._on_remove_collection_clicked)
+                menu.addSeparator()
+
             # Opciones de coloreado
-            menu.addSeparator()
             act_color = menu.addAction(self.tr("Color Aleatorio"))
             act_color.triggered.connect(lambda: self._set_random_color_for_item(item))
             
@@ -994,7 +1015,7 @@ class TreeListMixin:
                     act_remove.triggered.connect(lambda: [self._remove_file_from_collection(current_col_name, fp) for fp in file_paths])
                 else:
                     submenu = menu.addMenu(self.tr(f"Añadir a Colección{count_str}"))
-                    collections_list = [c for c in self.controller.collections.keys() if c not in ("Descargados", "Subclips")]
+                    collections_list = [c for c in self.controller.collections.keys() if c not in ("Descargados", "Subclips", "Default")]
                     if collections_list:
                         for col_name in collections_list:
                             act_col = submenu.addAction(col_name)
@@ -1242,14 +1263,13 @@ class TreeListMixin:
             elif os.path.isfile(local_path):
                 ext = os.path.splitext(local_path)[1].lower()
                 if ext in VALID_EXTS:
-                    col_name = "Favoritos"
-                    if "Favoritos" not in self.controller.collections:
-                        cols = list(self.controller.collections.keys())
-                        if cols:
-                            col_name = cols[0]
-                        else:
-                            self.controller.add_collection("Favoritos")
-                    
+                    # Los archivos indexados individualmente (sueltos, no una carpeta entera)
+                    # van a la carpeta virtual "Default" dentro de Directorios, no a la
+                    # colección "Favoritos" (que el usuario reserva para organizar a mano).
+                    col_name = "Default"
+                    if "Default" not in self.controller.collections:
+                        self.controller.add_collection("Default")
+
                     self.controller.add_to_collection(col_name, local_path)
                     has_new_files = True
 

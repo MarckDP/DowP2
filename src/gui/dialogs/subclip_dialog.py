@@ -3,23 +3,50 @@ import os
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QListWidget, QListWidgetItem, QWidget,
-    QSizePolicy, QLineEdit, QFrame, QToolButton, QMenu
+    QSizePolicy, QLineEdit, QFrame, QToolButton, QMenu, QApplication
 )
-from PySide6.QtCore import Qt, QSize, QTimer, Signal, QPoint
-from PySide6.QtGui import QIcon, QPainter, QColor
+from PySide6.QtCore import Qt, QSize, QTimer, Signal, QPoint, QEvent, QMimeData, QUrl
+from PySide6.QtGui import QIcon, QPainter, QColor, QDrag
 
-from gui.styles import get_theme_token
+from gui.styles import get_theme_token, apply_cut_button_style
 from gui.widgets.send_state_button import SendButtonState
 from gui.widgets.media_trim_player_widget import MediaTrimPlayerWidget
 from gui.tabs.editing_media.editing_media_icons import get_svg_icon
 from core.services.editor_integration_manager import EditorIntegrationManager
+from core.utils.subclip_export import export_subclip
 from core.logger.logger_manager import logger
 
 
+def _start_file_drag(source_widget, paths: list):
+    """Inicia un QDrag nativo (arrastrar-y-soltar hacia otra app: DaVinci/Premiere/
+    Explorador/etc.) con los archivos locales de `paths`. Mismo mecanismo que ya usa
+    Gestor de Medios para arrastrar ítems fuera de la app (ver _DragCleanupMixin en
+    editing_media_view.py), aplicado acá a mano porque el origen no es una vista
+    respaldada por modelo (QAbstractItemView), sino un botón/widget suelto."""
+    if not paths:
+        return
+    mime = QMimeData()
+    mime.setUrls([QUrl.fromLocalFile(p) for p in paths])
+    drag = QDrag(source_widget)
+    drag.setMimeData(mime)
+    drag.exec(Qt.CopyAction)
+    # Igual que _DragCleanupMixin: tras el exec() nativo, Qt no siempre entrega un
+    # evento Leave (el SO tomó el control del mouse durante el arrastre), lo que deja
+    # el estado visual ':hover'/presionado pegado -- se fuerza a mano.
+    QApplication.sendEvent(source_widget, QEvent(QEvent.Leave))
+    source_widget.update()
+
+
 class SubclipItemWidget(QWidget):
-    """Elemento individual de la lista de subclips creados."""
-    def __init__(self, index: int, name: str, in_sec: float, out_sec: float, on_preview, on_delete, on_rename, parent=None):
+    """Elemento individual de la lista de subclips creados. Arrastrable: presionar y
+    mover sobre el fondo de la fila (no sobre los botones ni el nombre editable, que
+    ya consumen su propio clic) corta ese subclip puntual -- si todavía no se cortó,
+    ver on_drag_single -- y lo deja listo para soltarse en otra app."""
+    def __init__(self, index: int, name: str, in_sec: float, out_sec: float, on_preview, on_delete, on_rename, on_drag_single=None, parent=None):
         super().__init__(parent)
+        self._index = index
+        self._on_drag_single = on_drag_single
+        self._press_pos = None
         self.setFixedHeight(58)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 4, 6, 4)
@@ -94,6 +121,55 @@ class SubclipItemWidget(QWidget):
         m = (total_sec // 60) % 60
         h = total_sec // 3600
         return f"{h:02d}:{m:02d}:{s:02d}.{ms:03d}"
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._press_pos = event.pos()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if (event.buttons() & Qt.LeftButton) and self._press_pos and self._on_drag_single:
+            delta = event.pos() - self._press_pos
+            if delta.manhattanLength() >= QApplication.startDragDistance():
+                self._press_pos = None
+                self._on_drag_single(self._index)
+                return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        self._press_pos = None
+        super().mouseReleaseEvent(event)
+
+
+class _DraggableCutButton(QPushButton):
+    """Botón normal (el clic simple sigue funcionando tal cual) que además se puede
+    presionar y arrastrar como un archivo: al superar el umbral de arrastre, en vez de
+    completar el clic, llama a on_drag_paths() (que corta lo que haga falta y devuelve
+    las rutas resultantes) e inicia un QDrag nativo con ellas."""
+    def __init__(self, on_drag_paths, parent=None):
+        super().__init__(parent)
+        self._on_drag_paths = on_drag_paths
+        self._press_pos = None
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._press_pos = event.pos()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if (event.buttons() & Qt.LeftButton) and self._press_pos and self.isEnabled():
+            delta = event.pos() - self._press_pos
+            if delta.manhattanLength() >= QApplication.startDragDistance():
+                self._press_pos = None
+                self.setDown(False)
+                paths = self._on_drag_paths()
+                _start_file_drag(self, paths)
+                return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        self._press_pos = None
+        super().mouseReleaseEvent(event)
 
 
 class SubclipEditorDialog(QDialog):
@@ -310,12 +386,32 @@ class SubclipEditorDialog(QDialog):
         self.action_send_single.triggered.connect(self._on_send_single_subclip_clicked)
         self._send_state = SendButtonState(self.btn_send, restore_callback=self._update_send_button)
 
-        right_layout.addWidget(self.btn_send)
+        # Botón de corte físico: genera un archivo real por cada subclip de la lista
+        # (mismo export_subclip() que ya usa el arrastre en la waveform, ver
+        # editing_media_playback.py::_on_waveform_subclip_drag_requested) y los registra
+        # en la colección "Subclips". A diferencia de "Enviar a Editor" (que solo manda
+        # puntos in/out a un editor externo conectado), este botón no depende de tener
+        # ningún editor conectado. Deshabilitado si no hay subclips guardados todavía --
+        # a propósito no cae a "cortar el rango actual" como sí hace "Enviar" (ver
+        # conversación: acá el usuario debe guardar el subclip primero).
+        self.btn_physical_cut = _DraggableCutButton(on_drag_paths=self._collect_all_subclip_paths)
+        self.btn_physical_cut.setFixedSize(32, 32)
+        self.btn_physical_cut.setIconSize(QSize(18, 18))
+        self.btn_physical_cut.setToolTip(self.tr("Cortar subclips (archivos físicos) -- arrastrar para soltarlos en otra app"))
+        self.btn_physical_cut.clicked.connect(self._on_physical_cut_clicked)
+
+        send_row = QHBoxLayout()
+        send_row.setContentsMargins(0, 0, 0, 0)
+        send_row.setSpacing(6)
+        send_row.addWidget(self.btn_send, 1)
+        send_row.addWidget(self.btn_physical_cut)
+        right_layout.addLayout(send_row)
         content_layout.addWidget(right_widget, 30)
 
         card_layout.addWidget(content_widget, 1)
         overlay_layout.addWidget(self.card)
         self._update_send_button()
+        self._update_physical_cut_button()
         self._refresh_subclip_list()
 
     def keyPressEvent(self, event):
@@ -349,8 +445,10 @@ class SubclipEditorDialog(QDialog):
         self.btn_add_subclip.setEnabled(not pending)
         if pending:
             self.btn_send.setEnabled(False)
+            self.btn_physical_cut.setEnabled(False)
         else:
             self._update_send_button()
+            self._update_physical_cut_button()
 
     def set_resolved_media_path(self, local_path: str):
         """
@@ -397,6 +495,7 @@ class SubclipEditorDialog(QDialog):
         self.subclips.append(clip_data)
         self._refresh_subclip_list()
         self._update_send_button()
+        self._update_physical_cut_button()
 
     def _refresh_subclip_list(self):
         self.list_subclips.clear()
@@ -409,7 +508,8 @@ class SubclipEditorDialog(QDialog):
                 out_sec=sc["out"],
                 on_preview=self._preview_subclip,
                 on_delete=self._delete_subclip,
-                on_rename=self._rename_subclip
+                on_rename=self._rename_subclip,
+                on_drag_single=self._on_drag_single_subclip
             )
             item.setSizeHint(QSize(220, 66))
             self.list_subclips.setItemWidget(item, w)
@@ -434,6 +534,7 @@ class SubclipEditorDialog(QDialog):
             self.subclips.pop(index)
             self._refresh_subclip_list()
             self._update_send_button()
+            self._update_physical_cut_button()
 
     def _rename_subclip(self, index: int, new_name: str):
         if 0 <= index < len(self.subclips):
@@ -472,6 +573,70 @@ class SubclipEditorDialog(QDialog):
             self.btn_send.setIconSize(QSize(20, 20))
 
         self.btn_send.setEnabled(True)
+
+    def _update_physical_cut_button(self):
+        """Habilitado (y pintado en verde) solo si hay al menos un subclip guardado en la
+        lista y el medio no está pendiente de descarga -- a diferencia de "Enviar", a
+        propósito NO cae a cortar el rango actual cuando la lista está vacía (ver
+        conversación). El verde/gris viene de apply_cut_button_style: "saved" cuando se
+        puede usar, "normal" cuando está deshabilitado."""
+        enabled = bool(self.subclips) and not self.pending_download
+        self.btn_physical_cut.setEnabled(enabled)
+        apply_cut_button_style(
+            self.btn_physical_cut, "saved" if enabled else "normal",
+            icon_size=18, shape="square", icon_name="control_camera.svg"
+        )
+
+    def _ensure_subclip_exported(self, sc: dict) -> str | None:
+        """Corta físicamente `sc` solo si todavía no se cortó -- la ruta queda cacheada en
+        sc["exported_path"] para no duplicar archivos si se vuelve a arrastrar/cortar el
+        mismo subclip (hoy no hay forma de editar el in/out de un subclip ya creado, solo
+        renombrar/borrar -- ver SubclipItemWidget -- así que cachear "una sola vez" es
+        seguro; si en el futuro se agrega edición de rango, hay que invalidar este cache
+        ahí). Registra cada corte nuevo en la colección "Subclips"."""
+        cached = sc.get("exported_path")
+        if cached and os.path.exists(cached):
+            return cached
+
+        # unique_suffix=False: respeta el nombre tal cual está en la lista (el default
+        # "_clip{NN}" que pone el diálogo, o lo que el usuario haya escrito a mano) --
+        # sin agregarle "_subclip_NN". Eso solo aplica al gesto de arrastre en la
+        # waveform del Gestor de Medios, no acá.
+        path = export_subclip(self.media_path, sc["in"], sc["out"], base_name=sc["name"], unique_suffix=False)
+        if not path:
+            logger.error(f"[SubclipDialog] Falló el corte físico de '{sc['name']}'.")
+            return None
+
+        sc["exported_path"] = path
+        from core.tabs.editing_media.editing_media_logic import EditingMediaController
+        controller = EditingMediaController.get_instance()
+        if controller:
+            controller.add_to_subclips_collection(path)
+        return path
+
+    def _collect_all_subclip_paths(self) -> list:
+        """Corta (o reusa) cada subclip de la lista y devuelve las rutas resultantes --
+        usado tanto por el clic simple de btn_physical_cut como por arrastrarlo entero."""
+        return [p for sc in self.subclips if (p := self._ensure_subclip_exported(sc))]
+
+    def _on_drag_single_subclip(self, index: int):
+        """Corta (o reusa) un único subclip puntual e inicia su arrastre -- llamado desde
+        SubclipItemWidget al arrastrar esa fila en particular."""
+        if not (0 <= index < len(self.subclips)):
+            return
+        path = self._ensure_subclip_exported(self.subclips[index])
+        if path:
+            _start_file_drag(self.list_subclips, [path])
+
+    def _on_physical_cut_clicked(self):
+        if not self.subclips or self.pending_download:
+            return
+        self.btn_physical_cut.setEnabled(False)
+        try:
+            paths = self._collect_all_subclip_paths()
+        finally:
+            self._update_physical_cut_button()
+        logger.info(f"[SubclipDialog] Corte físico: {len(paths)}/{len(self.subclips)} subclips generados.")
 
     def _send_subclip_payload(self, payload: dict, log_desc: str):
         """Envía el payload de subclips mostrando el estado animado en btn_send y cerrando el diálogo en éxito."""

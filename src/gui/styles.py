@@ -371,10 +371,15 @@ def apply_download_action_button_style(btn, tooltip=None, icon_size=18):
         btn.setToolTip(tooltip)
 
 
-def apply_cut_button_style(btn, status="normal", icon_size=18, shape="circular"):
+def apply_cut_button_style(btn, status="normal", icon_size=18, shape="circular", icon_name="content_cut.svg"):
     """
     Aplica el estilo unificado del botón de recorte de fragmentos
     basado en los tokens del tema actual.
+
+    icon_name: ícono a usar (por defecto content_cut.svg, el de Modo Rápido) --
+    mismo estilo cuadrado/circular y mismos 3 colores de estado para cualquier botón
+    de "acción de corte" de la app, ej. control_camera.svg para el corte físico de
+    subclips en subclip_dialog.py (ver conversación).
 
     Status:
       - 'normal': gris elegante (#2d2d2d / fondo_elemento) con hover claro
@@ -413,7 +418,7 @@ def apply_cut_button_style(btn, status="normal", icon_size=18, shape="circular")
     }
     
     cfg = colors.get(status, colors["normal"])
-    btn.setIcon(get_colored_svg_icon("content_cut.svg", cfg["icon"], size=icon_size))
+    btn.setIcon(get_colored_svg_icon(icon_name, cfg["icon"], size=icon_size))
     
     if shape == "square":
         radius = 6

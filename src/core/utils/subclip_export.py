@@ -67,9 +67,34 @@ def unique_subclip_path(dest_dir: str, base_name: str, ext: str) -> str:
     return sub_path
 
 
-def export_subclip(input_path: str, in_sec: float, out_sec: float, dest_dir: str = None, base_name: str = None) -> str:
+def exact_or_unique_path(dest_dir: str, base_name: str, ext: str) -> str:
+    """Genera <base_name><ext> tal cual en dest_dir si ese nombre está libre -- a diferencia de
+    unique_subclip_path, NO agrega "_subclip_NN" por convención, respeta el nombre que se le
+    pase. Solo si ya existe un archivo con ese nombre exacto agrega el sufijo numérico mínimo
+    (_2, _3, ...) para no pisarlo."""
+    base_path = os.path.join(dest_dir, f"{base_name}{ext}").replace("\\", "/")
+    if not os.path.exists(base_path):
+        return base_path
+    count = 2
+    while True:
+        candidate = os.path.join(dest_dir, f"{base_name}_{count}{ext}").replace("\\", "/")
+        if not os.path.exists(candidate):
+            return candidate
+        count += 1
+
+
+def export_subclip(input_path: str, in_sec: float, out_sec: float, dest_dir: str = None, base_name: str = None, unique_suffix: bool = True) -> str:
     """Corta físicamente un subclip de input_path entre in_sec/out_sec y lo guarda en dest_dir
-    (o en core.utils.paths.get_subclips_dir() si dest_dir es None) con un nombre único.
+    (o en core.utils.paths.get_subclips_dir() si dest_dir es None).
+
+    unique_suffix=True (default): nombre <base_name>_subclip_NN<ext> -- comportamiento original,
+    usado por el arrastre en la waveform del Gestor de Medios (ver
+    editing_media_playback.py::_on_waveform_subclip_drag_requested), que no se toca.
+    unique_suffix=False: respeta <base_name><ext> tal cual (el nombre que el usuario haya puesto
+    en la ventana de Edición de Subclips, sin agregarle "_subclip" -- ver
+    gui/dialogs/subclip_dialog.py), solo desambiguando con un sufijo numérico si hay colisión
+    real de nombre.
+
     Devuelve la ruta final del archivo generado, o None si el corte con FFmpeg falla."""
     if dest_dir is None:
         from core.utils.paths import get_subclips_dir
@@ -81,7 +106,7 @@ def export_subclip(input_path: str, in_sec: float, out_sec: float, dest_dir: str
         ext = ".wav"
     base = base_name or name_stub
 
-    sub_path = unique_subclip_path(dest_dir, base, ext)
+    sub_path = unique_subclip_path(dest_dir, base, ext) if unique_suffix else exact_or_unique_path(dest_dir, base, ext)
 
     if cut_subclip_ffmpeg(input_path, sub_path, in_sec, out_sec):
         return sub_path

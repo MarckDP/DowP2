@@ -21,7 +21,7 @@ _PASSTHROUGH_KEEP_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".tiff", ".tif", ".b
 
 class ImageConvertWorker(QThread):
     """Convierte un lote de imágenes con las mismas opciones -- mismo patrón que
-    ModelDownloadWorker (gui/tabs/settings/pages/models_page.py) pero iterando N
+    ModelDownloadWorker (gui/widgets/model_download_prompt.py) pero iterando N
     archivos en vez de un solo item. El destino (carpeta + qué hacer si el archivo
     ya existe) se resuelve con core/utils/file_conflict_manager.resolve_conflict,
     la misma utilidad que ya usa el resto de la app (descargas) -- mismo respaldo

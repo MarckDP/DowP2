@@ -140,6 +140,20 @@ def get_sent_thumbnails_dir() -> str:
     os.makedirs(d, exist_ok=True)
     return d
 
+def get_pasted_images_dir() -> str:
+    """Retorna el directorio donde se materializan las imágenes pegadas desde el
+    portapapeles al Editor de Imagen. Un bitmap del portapapeles no es un archivo, y
+    toda la cola del Editor trabaja con rutas en disco, así que hay que escribirlo a
+    algún lado.
+
+    Mismo criterio que get_sent_thumbnails_dir() y por el mismo motivo: NO puede ser
+    una caché de las que gestiona cache_manager.py, porque el usuario puede vaciarlas
+    desde Ajustes > Caché y se llevaría por delante una imagen que sigue en la cola,
+    todavía sin convertir."""
+    d = os.path.join(get_app_data_dir(), "pasted_images")
+    os.makedirs(d, exist_ok=True)
+    return d
+
 def get_default_download_dir() -> str:
     """Retorna el directorio predeterminado de descargas del usuario."""
     from core.tabs.advanced_process.output_logic import get_default_download_path

@@ -2,7 +2,7 @@
 import os
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QScrollArea,
-    QPushButton, QMessageBox, QProgressBar, QCheckBox, QFileDialog, QDialog,
+    QPushButton, QMessageBox, QProgressBar, QFileDialog, QDialog,
     QLineEdit, QSpinBox, QDialogButtonBox, QFormLayout,
 )
 from PySide6.QtCore import Qt, QThread, Signal, QUrl
@@ -17,31 +17,17 @@ from core.setup.models_setup import (
     is_upscaling_engine_installed, download_upscaling_engine, delete_upscaling_engine,
     get_folder_size, get_custom_rembg_models, import_custom_rembg_model,
     delete_custom_rembg_model, probe_onnx_input_size,
+    get_rembg_model_size_bytes, get_upscaling_engine_size_bytes,
 )
 from core.tabs.image_tools import rembg_engine
-
-
-class ModelDownloadWorker(QThread):
-    """Descarga un modelo/motor sin bloquear la UI. `row_id` viaja en ambas señales
-    para que varias filas puedan descargar en paralelo sin cruzar su progreso."""
-    finished_signal = Signal(bool, str, str)   # success, message, row_id
-    numeric_progress_signal = Signal(int, str)  # percent, row_id
-
-    def __init__(self, row_id: str, download_func, info: dict, parent=None):
-        super().__init__(parent)
-        self.row_id = row_id
-        self.download_func = download_func
-        self.info = info
-
-    def run(self):
-        try:
-            def cb(pct):
-                self.numeric_progress_signal.emit(pct, self.row_id)
-            success, msg = self.download_func(self.info, progress_callback=cb)
-            self.finished_signal.emit(success, msg, self.row_id)
-        except Exception as e:
-            logger.error(f"ModelDownloadWorker: Error descargando '{self.row_id}': {e}")
-            self.finished_signal.emit(False, str(e), self.row_id)
+from core.utils.onnx_providers import get_gpu_provider_label
+from core.utils.hardware_detector import get_cached_gpu_name
+from gui.widgets.toggle_switch import ToggleSwitch
+# ModelDownloadWorker vivía acá, pero los popovers del Editor de Imagen ahora
+# también descargan modelos (ver gui/widgets/model_download_prompt.py) y no tiene
+# sentido tener dos copias del mismo QThread.
+from gui.widgets.model_download_prompt import ModelDownloadWorker, format_model_label
+from gui.tabs.editing_media.editing_media_icons import get_colored_svg_icon
 
 
 class _ProbeInputSizeWorker(QThread):
@@ -181,7 +167,13 @@ class ModelRow(QFrame):
         layout.addLayout(info_vbox, 1)
 
         if self.gated:
-            lbl_locked = QLabel(self.tr("🔒 Requiere cuenta (próximamente)"))
+            # Icono SVG de assets, no un emoji: el emoji no se tiñe con el tema y se
+            # dibuja distinto (o no se dibuja) según la fuente de cada sistema.
+            lbl_locked_icon = QLabel()
+            lbl_locked_icon.setPixmap(
+                get_colored_svg_icon("login.svg", "#888888", size=14).pixmap(14, 14))
+            layout.addWidget(lbl_locked_icon, 0, Qt.AlignVCenter)
+            lbl_locked = QLabel(self.tr("Requiere cuenta (próximamente)"))
             lbl_locked.setStyleSheet("color: #888888; font-size: 11px; font-style: italic;")
             layout.addWidget(lbl_locked, 0, Qt.AlignVCenter)
             return
@@ -230,7 +222,7 @@ class ModelRow(QFrame):
             return
         if self.is_installed():
             size = get_folder_size(self.path_for_size)
-            self.lbl_status.setText(f"✓ {self.tr('Instalado')} ({format_bytes(size)})")
+            self.lbl_status.setText(f"{self.tr('Instalado')} ({format_bytes(size)})")
             self.lbl_status.setStyleSheet("color: #4CAF50; font-size: 11px; font-weight: bold;")
             self.btn_download.setText(self.tr("Reinstalar"))
             self.btn_folder.setDisabled(False)
@@ -284,30 +276,7 @@ class ModelsPage(QWidget):
         line.setFrameShadow(QFrame.Sunken)
         self.main_layout.addWidget(line)
 
-        # Persistencia de sesiones ONNX -- por defecto (desmarcado) el modelo se
-        # carga al empezar un lote de "Convertir" y se libera apenas termina (ver
-        # ImageConvertWorker.run/rembg_engine.prepare_session/clear_sessions): la
-        # carga inicial de un modelo ONNX en GPU (DirectML compila el grafo la
-        # primera vez que corre, puede tardar varios segundos y frena la pantalla
-        # entera mientras la GPU está saturada) se vuelve a pagar en cada lote.
-        # Con esto marcado, la sesión queda cargada en memoria entre lotes -- se
-        # paga esa carga inicial una sola vez por sesión de DowP, hasta que se
-        # cierre la app o el usuario desmarque esta opción (ahí se libera al toque).
-        self.chk_persist_sessions = QCheckBox(
-            self.tr("Mantener los modelos de IA cargados en memoria entre conversiones")
-        )
-        self.chk_persist_sessions.setToolTip(self.tr(
-            "Si está marcado, el modelo de IA (Eliminar Fondo) queda cargado en memoria "
-            "desde el primer uso hasta que cierres DowP o desmarques esta opción -- evita "
-            "pagar de nuevo la carga inicial (que puede tardar varios segundos y frenar "
-            "la pantalla) en cada conversión.\n\n"
-            "Si está desmarcado (por defecto), el modelo se carga al empezar un lote y "
-            "se libera apenas termina -- usa menos memoria en reposo, pero cada lote "
-            "nuevo vuelve a pagar la carga inicial."
-        ))
-        self.chk_persist_sessions.setChecked(bool(get_config().get("rembg_persist_sessions", False)))
-        self.chk_persist_sessions.toggled.connect(self._on_persist_sessions_toggled)
-        self.main_layout.addWidget(self.chk_persist_sessions)
+        self.main_layout.addWidget(self._build_persist_sessions_row())
 
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
@@ -359,6 +328,113 @@ class ModelsPage(QWidget):
         scroll_area.setWidget(scroll_content)
         self.main_layout.addWidget(scroll_area)
 
+    def refresh_rows(self):
+        """Relee de disco el estado de cada fila. Hace falta porque esta página
+        se construye una sola vez al arrancar la app y ya no es la única que
+        instala/borra modelos: los popovers del Editor de Imagen también lo hacen
+        (ver gui/widgets/model_download_prompt.py). Sin esto, borrar un modelo ahí y
+        entrar aquí lo seguiría mostrando como instalado."""
+        for row in self.rows.values():
+            row.refresh_status()
+        self._refresh_custom_rows()
+
+    # ── Mantener modelos en memoria ─────────────────────────────────────────
+    def _build_persist_sessions_row(self) -> QWidget:
+        """Fila de "Mantener los modelos en memoria": switch + botón para liberar
+        a mano, con la misma forma que el resto de Ajustes (etiqueta y descripción a
+        la izquierda, control a la derecha -- ver downloads_page.py).
+
+        Lo que decide el switch es cuánto vive la sesión ONNX, no dónde: apagado, el
+        modelo se carga al empezar cada lote de "Convertir" y se libera apenas termina
+        (ver ImageConvertWorker.run / rembg_engine.prepare_session / clear_sessions);
+        encendido, queda cargado entre lotes y el siguiente arranca sin volver a pagar
+        la carga inicial -- que son varios segundos con los modelos grandes, los
+        mismos segundos por CPU que por GPU.
+
+        Por eso NO se condiciona a que haya GPU: el ahorro existe igual corriendo por
+        CPU (cargar 900 MB de pesos y construir el grafo cuesta lo suyo en cualquier
+        caso), y en Linux, donde a propósito nunca hay provider de GPU, deshabilitarlo
+        dejaría sin la opción justo a quien más tarda.
+
+        La detección de hardware entra solo para redactar: get_gpu_provider_label()
+        (core/utils/onnx_providers.py, la misma función que arma la sesión de verdad)
+        dice si el modelo va a vivir en la GPU o en la RAM, y get_cached_gpu_name()
+        (core/utils/hardware_detector.py, leído de la config, sin lanzar un escaneo
+        que tarda segundos) pone el nombre de la tarjeta. Ninguna de las dos habilita
+        ni deshabilita nada."""
+        container = QWidget()
+        row = QHBoxLayout(container)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(10)
+
+        text_col = QVBoxLayout()
+        text_col.setSpacing(2)
+        self.lbl_persist = QLabel(self.tr("Mantener los modelos de IA cargados en memoria"))
+        self.lbl_persist.setObjectName("settingsLabel")
+        text_col.addWidget(self.lbl_persist)
+
+        self.lbl_persist_desc = QLabel()
+        self.lbl_persist_desc.setWordWrap(True)
+        self.lbl_persist_desc.setStyleSheet("color: #888888; font-size: 11px;")
+        text_col.addWidget(self.lbl_persist_desc)
+        row.addLayout(text_col, 1)
+
+        self.switch_persist = ToggleSwitch()
+        self.switch_persist.toggled.connect(self._on_persist_sessions_toggled)
+        row.addWidget(self.switch_persist, 0, Qt.AlignVCenter)
+
+        # "Liberar" solo tiene algo que hacer con la opción encendida: apagada, el
+        # modelo ya se libera solo al terminar cada lote.
+        self.btn_free_memory = QPushButton(self.tr("Liberar"))
+        self.btn_free_memory.setCursor(Qt.PointingHandCursor)
+        self.btn_free_memory.setProperty("variant", "secondary")
+        self.btn_free_memory.setToolTip(self.tr(
+            "Descargar ahora los modelos que queden cargados, estén en la memoria de "
+            "la GPU o en la RAM, sin cerrar la aplicación"))
+        self.btn_free_memory.clicked.connect(self._on_free_memory_clicked)
+        row.addWidget(self.btn_free_memory, 0, Qt.AlignVCenter)
+
+        self._gpu_label = get_gpu_provider_label()
+        self._gpu_name = get_cached_gpu_name()
+        self.switch_persist.setChecked(bool(get_config().get("rembg_persist_sessions", False)))
+        self._refresh_persist_row()
+        return container
+
+    def _refresh_persist_row(self):
+        """Pone al día la descripción y el botón "Liberar" según el estado del switch.
+        La descripción nombra dónde queda el modelo (memoria de la GPU o RAM), que es
+        lo que el usuario necesita saber para decidir si le sobra esa memoria."""
+        on = self.switch_persist.isChecked()
+
+        if on:
+            self.lbl_persist_desc.setText(self.tr(
+                "Encendido: el modelo queda cargado en {0} desde el primer uso, así "
+                "cada conversión nueva empieza a trabajar de inmediato en vez de "
+                "volver a cargarlo."
+            ).format(self._memory_hint()))
+        else:
+            self.lbl_persist_desc.setText(self.tr(
+                "Apagado: el modelo se carga al empezar cada conversión y se libera de "
+                "{0} al terminar. Ocupa menos memoria en reposo, pero cada lote vuelve "
+                "a pagar la carga inicial (varios segundos con los modelos grandes)."
+            ).format(self._memory_hint()))
+
+        # Apagado no hay nada que liberar: el modelo ya se descarga solo al terminar
+        # cada lote.
+        self.btn_free_memory.setEnabled(on)
+
+    def _memory_hint(self) -> str:
+        """Dónde vive el modelo mientras está cargado, dicho con el detalle que se
+        tenga: "la memoria de la NVIDIA GeForce RTX 3060 (DirectML)" si hay GPU y el
+        escaneo de hardware ya corrió, "la memoria de la GPU (CoreML)" si solo se
+        sabe el provider, o "la memoria del sistema (RAM)" cuando la inferencia va
+        por CPU -- que es siempre el caso en Linux, a propósito."""
+        if self._gpu_label is None:
+            return self.tr("la memoria del sistema (RAM)")
+        if self._gpu_name:
+            return self.tr("la memoria de la {0} ({1})").format(self._gpu_name, self._gpu_label)
+        return self.tr("la memoria de la GPU ({0})").format(self._gpu_label)
+
     def _on_persist_sessions_toggled(self, checked: bool):
         cfg = get_config()
         cfg["rembg_persist_sessions"] = checked
@@ -366,10 +442,26 @@ class ModelsPage(QWidget):
         logger.info(f"Modelos IA: 'Mantener en memoria' cambiado a {checked}")
         if not checked:
             # Apagar la opción libera lo que haya quedado cargado ahora mismo, no
-            # recién en la próxima conversión -- si no, el usuario desmarca la
+            # recién en la próxima conversión -- si no, el usuario apaga la
             # opción pensando que ya liberó memoria y en realidad sigue cargada
             # hasta el próximo lote.
             rembg_engine.clear_sessions()
+        self._refresh_persist_row()
+
+    def _on_free_memory_clicked(self):
+        """Libera a mano lo que haya cargado, sin tener que apagar la opción ni
+        cerrar la app. Se dice cuántas sesiones eran: "no había nada" es información
+        útil, y sin ella el botón no da ninguna señal de haber hecho algo."""
+        freed = rembg_engine.clear_sessions()
+        if freed:
+            texto = (self.tr("Se descargó 1 modelo de la memoria.") if freed == 1
+                     else self.tr("Se descargaron {0} modelos de la memoria.").format(freed))
+            QMessageBox.information(self, self.tr("Memoria liberada"), texto)
+        else:
+            QMessageBox.information(
+                self, self.tr("Nada que liberar"),
+                self.tr("No hay ningún modelo cargado en memoria en este momento."),
+            )
 
     def _add_section_header(self, text: str):
         lbl = QLabel(text)
@@ -390,7 +482,10 @@ class ModelsPage(QWidget):
         row_id = f"rembg::{model_info['folder']}::{model_info['file']}"
         path = os.path.join(get_models_dir(), model_info["folder"], model_info["file"])
         gated = self._is_gated(model_info)
-        row = ModelRow(row_id, model_name, path, gated=gated)
+        # El título lleva el peso de la DESCARGA (constants.py); la línea de estado
+        # de la fila, cuando ya está instalado, muestra lo que ocupa en disco.
+        row = ModelRow(row_id, format_model_label(model_name, get_rembg_model_size_bytes(model_info)),
+                       path, gated=gated)
         row.download_requested.connect(self._on_download_requested)
         if not gated:
             row.btn_delete.clicked.connect(lambda: self._on_delete_rembg(row_id, model_name))
@@ -466,7 +561,8 @@ class ModelsPage(QWidget):
     def _add_upscaling_row(self, engine_key: str, tool_info: dict):
         row_id = f"upscaling::{engine_key}"
         path = os.path.join(get_models_dir(), tool_info["folder"])
-        row = ModelRow(row_id, tool_info["name"], path, gated=False)
+        row = ModelRow(row_id, format_model_label(tool_info["name"], get_upscaling_engine_size_bytes(tool_info)),
+                       path, gated=False)
         row.download_requested.connect(self._on_download_requested)
         row.btn_delete.clicked.connect(lambda: self._on_delete_upscaling(row_id, tool_info["name"]))
         self.rows[row_id] = row

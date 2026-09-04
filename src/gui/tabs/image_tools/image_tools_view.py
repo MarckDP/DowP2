@@ -168,6 +168,9 @@ class ImageToolsTab(QWidget):
         self.btn_upscale.setIconSize(QSize(18, 18))
         self.btn_upscale.setCursor(Qt.PointingHandCursor)
         self._style_upscale_button(is_valid=False)
+        # El popover no puede cerrarse solo: quien manda su visibilidad es el botón.
+        self.upscale_popover_content.close_popover_requested.connect(
+            lambda: self.btn_upscale.set_open(False))
         top_layout.addWidget(self.btn_upscale)
         self._popover_buttons.append(self.btn_upscale)
 
@@ -185,6 +188,8 @@ class ImageToolsTab(QWidget):
         self.btn_rembg.setIconSize(QSize(18, 18))
         self.btn_rembg.setCursor(Qt.PointingHandCursor)
         self._style_rembg_button(is_valid=False)
+        self.rembg_popover_content.close_popover_requested.connect(
+            lambda: self.btn_rembg.set_open(False))
         top_layout.addWidget(self.btn_rembg)
         self._popover_buttons.append(self.btn_rembg)
 
@@ -804,9 +809,22 @@ class ImageToolsTab(QWidget):
     def eventFilter(self, obj, event):
         """Cierra cualquier popover de la franja superior (Reescalar IA, Eliminar
         Fondo IA, ...) al clickear afuera de su botón y de su contenido -- mismo
-        patrón que quick_mode_view.py para su popover de "Recodificar" (respeta
-        popups internos, ej. el desplegable de los combos)."""
-        if event.type() == QEvent.MouseButtonPress and QApplication.activePopupWidget() is None:
+        patrón que quick_mode_view.py para su popover de "Recodificar".
+
+        Dos clases de clic NO cuentan como "afuera", y las dos hay que dejarlas
+        pasar porque este filtro está puesto sobre QApplication y por lo tanto ve
+        los clics de toda la app, no solo los de esta pestaña:
+          - Los de un popup interno (el desplegable de un combo): activePopupWidget.
+          - Los de un diálogo modal encima (ej. "¿descargar este modelo?", ver
+            gui/widgets/model_download_prompt.py): activeModalWidget. Caen en otra
+            ventana, así que geométricamente son "afuera" de cualquier popover, pero
+            mientras el modal está arriba el usuario ni siquiera PUEDE tocar el
+            popover -- cerrarlo por ese clic es puro efecto colateral. Sin esta
+            guarda, apretar Descargar/Cancelar cerraba el popover y escondía justo
+            el porcentaje de la descarga recién lanzada."""
+        if (event.type() == QEvent.MouseButtonPress
+                and QApplication.activePopupWidget() is None
+                and QApplication.activeModalWidget() is None):
             pos = event.globalPos()
             for btn in getattr(self, "_popover_buttons", []):
                 if not btn.is_open():

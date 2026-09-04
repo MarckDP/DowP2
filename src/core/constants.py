@@ -514,36 +514,53 @@ GRADIENT_DIRECTIONS = [
 # ImageNet) porque son arquitecturas de segmentación de la misma familia --
 # si algún día entra un modelo con un contrato distinto, es el momento de
 # sumarle un campo nuevo aquí, no de volver a bifurcar el motor por nombre.
+#
+# "size_bytes" es el peso REAL del archivo a descargar, medido con un HEAD a su
+# URL (Content-Length) contra los releases de GitHub/HuggingFace -- no una
+# estimación. Sirve para avisar cuánto pesa ANTES de bajarlo, tanto en Ajustes >
+# Modelos como en el diálogo de descarga que sale al elegir un modelo que no está
+# instalado desde los popovers del Editor de Imagen (ver
+# gui/widgets/model_download_prompt.py). Si algún día se cambia una URL por otra
+# versión del mismo modelo, hay que volver a medir este número: un valor viejo no
+# rompe la descarga (el porcentaje real sale del Content-Length de la respuesta),
+# pero le miente al usuario en el diálogo. Los modelos de RMBG 2.0 marcados como
+# gated (URL a una página de HuggingFace, no a un archivo) llevan el tamaño que
+# declara la API de HuggingFace para ese archivo.
 REMBG_MODEL_FAMILIES = {
     "Rembg Standard (U2Net)": {
         "isnet-general-use (Recomendado)": {
             "file": "isnet-general-use.onnx",
             "url": "https://github.com/danielgatis/rembg/releases/download/v0.0.0/isnet-general-use.onnx",
             "folder": "rembg",
+            "size_bytes": 178648008,
             "input_size": (1024, 1024)
         },
         "u2netp (Rápido)": {
             "file": "u2netp.onnx",
             "url": "https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2netp.onnx",
             "folder": "rembg",
+            "size_bytes": 4574861,
             "input_size": (320, 320)
         },
         "u2net (Alta Precisión)": {
             "file": "u2net.onnx",
             "url": "https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2net.onnx",
             "folder": "rembg",
+            "size_bytes": 175997641,
             "input_size": (320, 320)
         },
         "u2net_human_seg (Humanos)": {
             "file": "u2net_human_seg.onnx",
             "url": "https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2net_human_seg.onnx",
             "folder": "rembg",
+            "size_bytes": 175997641,
             "input_size": (320, 320)
         },
         "isnet-anime (Anime)": {
             "file": "isnet-anime.onnx",
             "url": "https://github.com/danielgatis/rembg/releases/download/v0.0.0/isnet-anime.onnx",
             "folder": "rembg",
+            "size_bytes": 176069933,
             "input_size": (1024, 1024)
         }
     },
@@ -553,12 +570,14 @@ REMBG_MODEL_FAMILIES = {
             "file": "birefnet-general.onnx",  # ✅ Nombre que rembg espera
             "url": "https://github.com/danielgatis/rembg/releases/download/v0.0.0/BiRefNet-general-epoch_244.onnx",
             "folder": "rembg",
+            "size_bytes": 972666916,
             "input_size": (1024, 1024)
         },
         "General Lite (Rápido)": {
             "file": "birefnet-general-lite.onnx",  # ✅ Cambiado
             "url": "https://github.com/danielgatis/rembg/releases/download/v0.0.0/BiRefNet-general-bb_swin_v1_tiny-epoch_232.onnx",
             "folder": "rembg",
+            "size_bytes": 224005088,
             "input_size": (1024, 1024)
         },
 
@@ -567,24 +586,28 @@ REMBG_MODEL_FAMILIES = {
             "file": "birefnet-portrait.onnx",  # ✅ Cambiado
             "url": "https://github.com/danielgatis/rembg/releases/download/v0.0.0/BiRefNet-portrait-epoch_150.onnx",
             "folder": "rembg",
+            "size_bytes": 972666916,
             "input_size": (1024, 1024)
         },
         "DIS (Bordes Finos/Complejo)": {
             "file": "birefnet-dis.onnx",  # ✅ Cambiado
             "url": "https://github.com/danielgatis/rembg/releases/download/v0.0.0/BiRefNet-DIS-epoch_590.onnx",
             "folder": "rembg",
+            "size_bytes": 972666916,
             "input_size": (1024, 1024)
         },
         "COD (Objetos Camuflados)": {
             "file": "birefnet-cod.onnx",  # ✅ Cambiado
             "url": "https://github.com/danielgatis/rembg/releases/download/v0.0.0/BiRefNet-COD-epoch_125.onnx",
             "folder": "rembg",
+            "size_bytes": 972666916,
             "input_size": (1024, 1024)
         },
         "HRSOD (Alta Detección)": {
             "file": "birefnet-hrsod.onnx",  # ✅ Cambiado
             "url": "https://github.com/danielgatis/rembg/releases/download/v0.0.0/BiRefNet-HRSOD_DHU-epoch_115.onnx",
             "folder": "rembg",
+            "size_bytes": 972666916,
             "input_size": (1024, 1024)
         },
 
@@ -593,73 +616,84 @@ REMBG_MODEL_FAMILIES = {
             "file": "birefnet-massive.onnx",  # ✅ Cambiado
             "url": "https://github.com/danielgatis/rembg/releases/download/v0.0.0/BiRefNet-massive-TR_DIS5K_TR_TEs-epoch_420.onnx",
             "folder": "rembg",
+            "size_bytes": 972666916,
             "input_size": (1024, 1024)
         },
         "HR General (4K/8K)": {
             "file": "birefnet-hr-general.onnx",  # ✅ Cambiado
             "url": "https://github.com/danielgatis/rembg/releases/download/v0.0.0/BiRefNet_HR-general-epoch_130.onnx",
             "folder": "rembg",
+            "size_bytes": 1098928953,
             "input_size": (1024, 1024)
         },
         "HR Matting (Recorte Ultra Fino)": {
             "file": "birefnet-hr-matting.onnx",  # ✅ Cambiado
             "url": "https://github.com/danielgatis/rembg/releases/download/v0.0.0/BiRefNet_HR-matting-epoch_135.onnx",
             "folder": "rembg",
+            "size_bytes": 1098928867,
             "input_size": (1024, 1024)
         }
     },
 
     # --- NUEVO BLOQUE: RMBG 2.0 (Descarga Manual) ---
     "RMBG 2.0 (BriaAI)": {
-        "Standard (Automático - 977 MB)": {
+        "Standard (Automático)": {
             "file": "rmbg2_gatis.onnx",
             "url": "https://github.com/danielgatis/rembg/releases/download/v0.0.0/bria-rmbg-2.0.onnx",
             "folder": "rmbg2",
+            "size_bytes": 1024331469,
             "input_size": (1024, 1024)
         },
-        "Standard (1.02 GB)": {
+        "Standard (Manual)": {
             "file": "model.onnx",
             "url": "https://huggingface.co/briaai/RMBG-2.0/tree/main/onnx",
             "folder": "rmbg2",
+            "size_bytes": 1024331469,
             "input_size": (1024, 1024)
         },
-        "BnB4 (Recomendado - 355 MB)": {
+        "BnB4 (Recomendado)": {
             "file": "model_bnb4.onnx",
             "url": "https://huggingface.co/briaai/RMBG-2.0/tree/main/onnx",
             "folder": "rmbg2",
+            "size_bytes": 355288046,
             "input_size": (1024, 1024)
         },
-        "FP16 (Media - 514 MB)": {
+        "FP16 (Media)": {
             "file": "model_fp16.onnx",
             "url": "https://huggingface.co/briaai/RMBG-2.0/tree/main/onnx",
             "folder": "rmbg2",
+            "size_bytes": 513576499,
             "input_size": (1024, 1024)
         },
-        "Int8 (Rápido - 366 MB)": {
+        "Int8 (Rápido)": {
             "file": "model_int8.onnx",
             "url": "https://huggingface.co/briaai/RMBG-2.0/tree/main/onnx",
             "folder": "rmbg2",
+            "size_bytes": 366087445,
             "input_size": (1024, 1024)
         },
-        "Quantized (366 MB)": {
+        "Quantized": {
             "file": "model_quantized.onnx",
             "url": "https://huggingface.co/briaai/RMBG-2.0/tree/main/onnx",
             "folder": "rmbg2",
+            "size_bytes": 366087549,
             "input_size": (1024, 1024)
         }
     },
 
     "InSPyReNet (Ultra High Resolution)": {
-        "SwinB Plus Ultra (FP32 - 478 MB)": {
+        "SwinB Plus Ultra (FP32)": {
             "file": "inspyrenet_ultra.onnx",
             "url": "https://huggingface.co/OS-Software/InSPyReNet-SwinB-Plus-Ultra-ONNX/resolve/main/onnx/model.onnx?download=true",
             "folder": "inspyrenet",
+            "size_bytes": 395316574,
             "input_size": (1024, 1024)
         },
-        "SwinB Plus Ultra (FP16 - 240 MB)": {
+        "SwinB Plus Ultra (FP16)": {
             "file": "inspyrenet_ultra_fp16.onnx",
             "url": "https://huggingface.co/OS-Software/InSPyReNet-SwinB-Plus-Ultra-ONNX/resolve/main/onnx/model_fp16.onnx?download=true",
             "folder": "inspyrenet",
+            "size_bytes": 199133027,
             "input_size": (1024, 1024)
         }
     }
@@ -681,6 +715,11 @@ UPSCALING_TOOLS = {
             "macos": "https://github.com/nihui/waifu2x-ncnn-vulkan/releases/download/20250915/waifu2x-ncnn-vulkan-20250915-macos.zip",
             "linux": "https://github.com/nihui/waifu2x-ncnn-vulkan/releases/download/20250915/waifu2x-ncnn-vulkan-20250915-linux.zip",
         },
+        "size_bytes": {
+            "windows": 35497352,
+            "macos": 41706129,
+            "linux": 36658685,
+        },
     },
     "SRMD": {
         "name": "SRMD",
@@ -694,6 +733,11 @@ UPSCALING_TOOLS = {
             "windows": "https://github.com/nihui/srmd-ncnn-vulkan/releases/download/20220728/srmd-ncnn-vulkan-20220728-windows.zip",
             "macos": "https://github.com/nihui/srmd-ncnn-vulkan/releases/download/20220728/srmd-ncnn-vulkan-20220728-macos.zip",
             "linux": "https://github.com/nihui/srmd-ncnn-vulkan/releases/download/20220728/srmd-ncnn-vulkan-20220728-ubuntu.zip",
+        },
+        "size_bytes": {
+            "windows": 19208707,
+            "macos": 24612116,
+            "linux": 19716383,
         },
     },
     "Upscayl": {
@@ -709,6 +753,12 @@ UPSCALING_TOOLS = {
             "macos": "https://github.com/upscayl/upscayl-ncnn/releases/download/20251207-174704/upscayl-bin-20251207-174704-macos.zip",
             "linux": "https://github.com/upscayl/upscayl-ncnn/releases/download/20251207-174704/upscayl-bin-20251207-174704-linux.zip",
         },
+        "size_bytes": {
+            "windows": 2421760,
+            "macos": 9338240,
+            "linux": 3952825,
+        },
+        "models_size_bytes": 319059567,
         # Modelos (custom-models): mismo zip para los tres SO, no cambia.
         "models_url": "https://github.com/upscayl/custom-models/archive/refs/heads/main.zip"
     }
@@ -747,6 +797,18 @@ UPSCALING_TOOLS = {
 # realesr-animevideov3-x2/x3 quedan afuera a propósito: DowP1 las purga por
 # inestabilidad conocida (sanitize_upscayl_models -- ver _sanitize_upscayl_models en
 # models_setup.py), solo se ofrece la x4.
+# Modelos que Upscayl necesita y que NO vienen en el repo custom-models -- se bajan
+# de los releases oficiales de Real-ESRGAN/RealSR (ver _download_upscayl_legacy_models
+# en core/setup/models_setup.py, que es quien los consume). Cada entrada es
+# (nombre, url, archivo-canario, peso real en bytes): el canario es el archivo que,
+# si ya está en disco, permite saltarse esa descarga entera. Un solo URL por fuente
+# alcanza para los 3 SO: los .bin/.param son datos de pesos, idénticos sin importar
+# qué build del binario los acompañe.
+UPSCAYL_LEGACY_MODEL_SOURCES = [
+    ("Real-ESRGAN", "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-windows.zip", "realesrgan-x4plus.bin", 45474481),
+    ("RealSR", "https://github.com/nihui/realsr-ncnn-vulkan/releases/download/20220728/realsr-ncnn-vulkan-20220728-windows.zip", "DF2K_x4.bin", 64005701),
+]
+
 UPSCAYL_MODELS_MAP = {
     "realesrgan-x4plus": "Real-ESRGAN (General / Fotografía)",
     "realesrgan-x4plus-anime": "Real-ESRGAN (Anime / Ilustración)",

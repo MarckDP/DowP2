@@ -116,9 +116,17 @@ class PopoverTriggerButton(QPushButton):
             y = top_left.y() + 3
 
             self.content.setFixedWidth(width)
-            if self.content.layout():
-                self.content.layout().activate()
+            layout = self.content.layout()
+            if layout:
+                layout.activate()
             height = self.content.sizeHint().height()
+            # sizeHint() no tiene en cuenta el texto que se parte en varias líneas:
+            # devuelve el alto "natural", no el que hace falta a ESTE ancho. Con un
+            # aviso largo (ej. la línea de estado de los popovers de IA) eso deja el
+            # popover corto y se corta la última fila. heightForWidth() sí lo sabe --
+            # cuando el layout lo soporta, manda el mayor de los dos.
+            if layout and layout.hasHeightForWidth():
+                height = max(height, layout.heightForWidth(width))
 
             # Evitar desbordes verticales
             max_h = max(100, self._host.height() - 20)

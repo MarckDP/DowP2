@@ -80,17 +80,27 @@ def prepare_session(options: dict) -> None:
         logger.warning(f"Eliminar Fondo: no se pudo precargar la sesión ({e}) -- se reintentará por imagen.")
 
 
-def clear_sessions() -> None:
-    """Libera las sesiones ONNX cacheadas (memoria de GPU/CPU) -- llamar al
-    terminar un lote (ver ImageConvertWorker.run), no queda nada cacheado entre
-    lotes distintos de una misma sesión de DowP."""
+def loaded_session_count() -> int:
+    """Cuántas sesiones ONNX hay cargadas ahora mismo -- lo consulta Ajustes >
+    Modelos para decir qué se liberó al apretar "Liberar"."""
+    with _sessions_lock:
+        return len(_sessions)
+
+
+def clear_sessions() -> int:
+    """Libera las sesiones ONNX cacheadas (memoria de GPU/CPU) y devuelve
+    cuántas eran -- se llama al terminar un lote (ver ImageConvertWorker.run) para
+    que no quede nada cacheado entre lotes distintos, y también a mano desde
+    Ajustes > Modelos, donde ese número es lo que se le muestra al usuario."""
     import gc
     with _sessions_lock:
-        if not _sessions:
-            return
-        logger.debug(f"Eliminar Fondo: liberando {len(_sessions)} sesión(es) ONNX.")
+        freed = len(_sessions)
+        if not freed:
+            return 0
+        logger.debug(f"Eliminar Fondo: liberando {freed} sesión(es) ONNX.")
         _sessions.clear()
     gc.collect()
+    return freed
 
 
 def _preprocess(img: Image.Image, size: tuple[int, int]):

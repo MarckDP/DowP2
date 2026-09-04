@@ -19,6 +19,25 @@ def format_bytes(bytes_size: int) -> str:
     return f"{size:.2f} {units[i]}" if i > 0 else f"{int(size)} {units[i]}"
 
 
+def format_bytes_compact(bytes_size: int) -> str:
+    """Como format_bytes pero corto, para pesos que van pegados a un nombre
+    (ej. "General (Estándar) (928 MB)" en los combos de modelos de IA): sin
+    decimales a partir de 10 MB, porque ahí el segundo decimal no le dice nada a
+    nadie y sí alarga cada ítem de la lista. Mismas unidades binarias que
+    format_bytes -- las que muestra el explorador de archivos."""
+    if bytes_size <= 0:
+        return ""
+    kb = bytes_size / 1024
+    if kb < 1024:
+        return f"{kb:.0f} KB"
+    mb = kb / 1024
+    if mb < 10:
+        return f"{mb:.1f} MB"
+    if mb < 1024:
+        return f"{mb:.0f} MB"
+    return f"{mb / 1024:.1f} GB"
+
+
 class BaseCacheProvider(ABC):
     """Clase base abstracta para cualquier proveedor de caché en la aplicación."""
 

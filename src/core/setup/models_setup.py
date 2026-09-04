@@ -3,7 +3,9 @@
 
 A diferencia de las dependencias (ffmpeg, yt-dlp, etc., ver core/setup/ffmpeg_setup.py),
 los modelos NUNCA se descargan solos al abrir la app -- solo cuando el usuario los pide
-desde Ajustes > Modelos (o, más adelante, desde el Editor de Imagen). Mismo patrón de
+a mano, sea desde Ajustes > Modelos o desde los popovers del Editor de Imagen (ahí se
+le pregunta primero, con el peso real por delante: ver
+gui/widgets/model_download_prompt.py::confirm_model_download). Mismo patrón de
 descarga que el resto de core/setup/*.py (requests streamed + callback de porcentaje,
 sin checksum -- DowP 1 tampoco lo hacía)."""
 import os
@@ -13,7 +15,7 @@ import sys
 import tempfile
 import zipfile
 import requests
-from core.constants import REMBG_MODEL_FAMILIES
+from core.constants import REMBG_MODEL_FAMILIES, UPSCAYL_LEGACY_MODEL_SOURCES
 from core.logger.logger_manager import logger
 from core.utils.paths import get_models_dir
 
@@ -43,6 +45,13 @@ def _model_path(model_info: dict) -> str:
 def is_rembg_model_installed(model_info: dict) -> bool:
     path = _model_path(model_info)
     return os.path.exists(path) and os.path.getsize(path) > 1024
+
+
+def get_rembg_model_size_bytes(model_info: dict) -> int:
+    """Peso real del .onnx a descargar, declarado en REMBG_MODEL_FAMILIES
+    ("size_bytes", medido con un HEAD contra su URL). 0 si no se conoce -- caso de
+    los modelos importados a mano, que ya están en disco y nunca se descargan."""
+    return int(model_info.get("size_bytes") or 0)
 
 
 def is_rembg_model_gated(model_info: dict) -> bool:
@@ -264,6 +273,22 @@ def is_upscaling_engine_installed(tool_info: dict) -> bool:
     return exe_path is not None and os.path.exists(exe_path)
 
 
+def get_upscaling_engine_size_bytes(tool_info: dict) -> int:
+    """Peso real de TODO lo que baja download_upscaling_engine() para este motor en
+    este SO: el zip del binario + (si lo tiene) el zip de modelos + los modelos
+    legacy de Upscayl. Los legacy que ya están en disco no se suman -- se saltan en
+    la descarga por su archivo canario, así que sumarlos exageraría el número que
+    ve el usuario en el diálogo."""
+    total = int(_platform_value(tool_info.get("size_bytes")) or 0)
+    total += int(tool_info.get("models_size_bytes") or 0)
+    if tool_info.get("folder") == "upscayl":
+        models_dir = os.path.join(_engine_dir(tool_info), "models")
+        for _name, _url, canary, size in UPSCAYL_LEGACY_MODEL_SOURCES:
+            if not os.path.exists(os.path.join(models_dir, canary)):
+                total += size
+    return total
+
+
 def _download_and_extract_zip(url: str, dest_dir: str, progress_callback=None, weight=(0, 100)):
     """Descarga un zip a un temporal, lo extrae, y fusiona su contenido en dest_dir --
     si el zip trae todo envuelto en una única subcarpeta (patrón común de releases de
@@ -308,16 +333,13 @@ def _download_and_extract_zip(url: str, dest_dir: str, progress_callback=None, w
 
 
 # Upscayl es deliberadamente "más global" que el repo custom-models solo -- estos 2
-# releases oficiales (Real-ESRGAN/RealSR) aportan modelos que custom-models no tiene
-# (ver la nota en UPSCAYL_MODELS_MAP, core/constants.py). Un solo URL por fuente
-# alcanza para los 3 SO: los .bin/.param son datos de pesos, idénticos sin importar
-# qué build (windows/macos/ubuntu) del binario los acompañe -- confirmado contra el
-# árbol real de ambos releases en GitHub, así que no hace falta _platform_value() aquí,
-# a diferencia de UPSCALING_TOOLS (que sí baja un ejecutable real por SO).
-_UPSCAYL_LEGACY_MODEL_SOURCES = [
-    ("Real-ESRGAN", "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-windows.zip", "realesrgan-x4plus.bin"),
-    ("RealSR", "https://github.com/nihui/realsr-ncnn-vulkan/releases/download/20220728/realsr-ncnn-vulkan-20220728-windows.zip", "DF2K_x4.bin"),
-]
+# releases oficiales (Real-ESRGAN/RealSR, ver UPSCAYL_LEGACY_MODEL_SOURCES en
+# core/constants.py) aportan modelos que custom-models no tiene. Un solo URL por
+# fuente alcanza para los 3 SO: los .bin/.param son datos de pesos, idénticos sin
+# importar qué build (windows/macos/ubuntu) del binario los acompañe -- confirmado
+# contra el árbol real de ambos releases en GitHub, así que no hace falta
+# _platform_value() ahí, a diferencia de UPSCALING_TOOLS (que sí baja un ejecutable
+# real por SO).
 
 # Ver sanitize_upscayl_models() en el setup.pyc decompilado de DowP1: purga estos 2
 # modelos por inestabilidad conocida (no se ofrecen ni en UPSCAYL_MODELS_MAP ni aquí).
@@ -347,7 +369,7 @@ def _download_upscayl_legacy_models(models_dir: str, progress_callback=None):
     .param del zip completo (que también trae el ejecutable/LICENSE/README de ese
     proyecto, irrelevantes aquí)."""
     os.makedirs(models_dir, exist_ok=True)
-    for name, url, canary in _UPSCAYL_LEGACY_MODEL_SOURCES:
+    for name, url, canary, _size in UPSCAYL_LEGACY_MODEL_SOURCES:
         if os.path.exists(os.path.join(models_dir, canary)):
             logger.info(f"Upscayl: modelos de {name} ya presentes, se omite su descarga.")
             continue

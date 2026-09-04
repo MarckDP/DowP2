@@ -73,6 +73,11 @@ def _get_cpu_name() -> str:
     return platform.processor() or platform.machine() or "Procesador Estándar"
 
 
+# Lo que devuelve _get_gpu_name() cuando no pudo averiguar nada: es un relleno,
+# no un nombre real, y quien lo consuma debería poder distinguirlo.
+UNKNOWN_GPU_NAME = "Gráficos integrados / Estándar"
+
+
 def _get_gpu_name() -> str:
     """Obtiene el nombre de la tarjeta gráfica activa según el sistema operativo."""
     os_system = platform.system()
@@ -99,7 +104,19 @@ def _get_gpu_name() -> str:
     except Exception as e:
         logger.debug(f"HardwareDetector: Fallo detectando GPU: {e}")
 
-    return "Gráficos integrados / Estándar"
+    return UNKNOWN_GPU_NAME
+
+
+def get_cached_gpu_name() -> str | None:
+    """Nombre de la GPU del último escaneo, leído de la config, SIN lanzar uno
+    nuevo. detect_hardware() puede tardar segundos (prueba encoders reales de ffmpeg
+    uno por uno), así que para un dato puramente informativo -- como decirle al
+    usuario qué GPU se está usando, o cuál se detectó pero no sirve para inferencia
+    -- se usa lo que ya haya cacheado. None si nunca se escaneó o si el escaneo no
+    pudo identificarla."""
+    info = get_config().get("hardware_info", {}) or {}
+    name = (info.get("gpu_name") or "").strip()
+    return name if name and name != UNKNOWN_GPU_NAME else None
 
 
 # Encoders candidatos por códec, en orden de prioridad de uso (hardware antes que software).

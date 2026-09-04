@@ -15,6 +15,15 @@ from .pages.system_page import SystemPage
 from .pages.models_page import ModelsPage
 from .pages.console_page import ConsolePage
 
+# Índices de las páginas dentro del QStackedWidget de abajo, en el mismo orden en
+# que se añaden. Los usa SettingsModalOverlay.open_page() y cualquier parte de la app
+# que quiera saltar directo a una página -- ver
+# gui/widgets/model_download_prompt.py::open_models_settings, que es lo que hay
+# detrás del botón "Administrar" de los popovers del Editor de Imagen. Si se
+# reordenan las páginas hay que actualizar esto.
+SETTINGS_PAGE_MODELS = 9
+
+
 class SidebarButton(QPushButton):
     """Custom button for sidebar to handle styling via objectName and QSS"""
     def __init__(self, text, parent=None):
@@ -165,6 +174,12 @@ class SettingsTab(QWidget):
         self.stacked_widget.setCurrentIndex(index)
         if index == 1:
             self.page_memory_cache.refresh_stats()
+        elif index == SETTINGS_PAGE_MODELS:
+            # Un modelo pudo instalarse o borrarse desde los popovers del Editor de
+            # Imagen desde la última vez que se miró esta página. Cubre también el
+            # salto directo del botón "Administrar": open_page() llega hasta aquí
+            # porque hace click() sobre el botón lateral.
+            self.page_models.refresh_rows()
 
 
 

@@ -1,5 +1,7 @@
 # src/gui/tabs/image_tools/image_queue_widget.py
 import os
+import uuid
+from datetime import datetime
 from PySide6.QtWidgets import (
     QVBoxLayout,
     QHBoxLayout,
@@ -11,6 +13,8 @@ from PySide6.QtWidgets import (
     QFrame,
     QAbstractItemView,
     QMenu,
+    QApplication,
+    QMessageBox,
 )
 from PySide6.QtCore import Qt, Signal, QSize, QUrl, QThread, QAbstractTableModel, QModelIndex, QEvent
 from PySide6.QtGui import QDragEnterEvent, QDropEvent
@@ -20,6 +24,7 @@ from gui.tabs.editing_media.editing_media_icons import get_colored_svg_icon
 from core.tabs.editing_media.thumbnail_cache_manager import ThumbnailCacheManager
 from core.tabs.editing_media.editing_media_logic import VALID_IMAGE_EXTS, VALID_VECTOR_EXTS, format_size
 from core.logger.logger_manager import logger
+from core.utils.paths import get_pasted_images_dir
 
 # Copia adaptada de gui/tabs/video_tools/media_queue_widget.py::MediaQueueWidget (misma
 # estructura/estilo tal cual pidió el usuario) -- sin lo específico de video/audio
@@ -292,8 +297,17 @@ class ImageQueueWidget(QFrame):
         self.btn_clear.setToolTip(self.tr("Limpiar toda la lista"))
         self.btn_clear.clicked.connect(self.clear_queue)
 
+        self.btn_paste = QPushButton(self.tr("Pegar"))
+        self.btn_paste.setProperty("variant", "secondary")
+        self.btn_paste.setCursor(Qt.PointingHandCursor)
+        self.btn_paste.setToolTip(self.tr(
+            "Pegar una imagen del portapapeles (captura de pantalla, \"copiar imagen\" "
+            "del navegador, o archivos copiados en el explorador)"))
+        self.btn_paste.clicked.connect(self._on_paste_clicked)
+
         btn_layout.addWidget(self.btn_add_files)
         btn_layout.addWidget(self.btn_add_folder)
+        btn_layout.addWidget(self.btn_paste)
         btn_layout.addStretch()
         btn_layout.addWidget(self.btn_clear)
         layout.addLayout(btn_layout)
@@ -430,6 +444,113 @@ class ImageQueueWidget(QFrame):
         if folder:
             self._start_scan([folder])
 
+    # ── Pegar desde el portapapeles ─────────────────────────────────────────
+    def _on_paste_clicked(self):
+        """Trae al Editor lo que haya en el portapapeles, sin depender del SO:
+        QClipboard ya normaliza los formatos nativos (CF_DIB/PNG en Windows,
+        TIFF/PNG en macOS, image/png en X11/Wayland).
+
+        El ORDEN de comprobación es lo importante, y no es el intuitivo. Copiar una
+        imagen desde el navegador deja a la vez un bitmap Y un text/uri-list con una
+        URL remota (https://...), así que preguntar primero "¿hay URLs?" encontraría
+        una que no es ningún archivo local y no pegaría nada. Por eso:
+
+          1. Archivos locales de verdad (copiados en Explorador/Finder/Nautilus):
+             se agregan por referencia, sin duplicar nada en disco ni perder su nombre.
+          2. Un bitmap: eso sí hay que materializarlo, porque la cola trabaja con
+             rutas (ver add_files) -- se guarda como PNG, que es sin pérdida y
+             conserva la transparencia.
+          3. Nada utilizable: se avisa, en vez de quedarse mudo."""
+        clipboard = QApplication.clipboard()
+        mime = clipboard.mimeData() if clipboard else None
+        if mime is None:
+            self._warn_clipboard_unusable()
+            return
+
+        local_paths = self._local_image_paths_from_mime(mime)
+        if local_paths:
+            self.add_files(local_paths)
+            self._select_path(local_paths[-1])
+            logger.info(f"Editor de Imagen: pegados {len(local_paths)} archivo(s) del portapapeles")
+            return
+
+        if mime.hasImage():
+            image = clipboard.image()
+            if not image.isNull():
+                saved = self._save_pasted_image(image)
+                if saved is None:
+                    QMessageBox.warning(
+                        self, self.tr("No se pudo pegar"),
+                        self.tr("Había una imagen en el portapapeles, pero no se pudo "
+                                "guardar en disco. Revisa el espacio libre y los permisos."),
+                    )
+                    return
+                self.add_files([saved])
+                self._select_path(saved)
+                return
+
+        self._warn_clipboard_unusable()
+
+    def _local_image_paths_from_mime(self, mime) -> list[str]:
+        """Rutas locales utilizables que traiga el portapapeles, en orden y sin
+        repetir. Se descartan las URLs remotas (isLocalFile() False), lo que ya no
+        existe en disco y lo que no sea una imagen soportada -- pegar un .docx
+        copiado en el explorador no debería meterlo en la cola.
+
+        También se mira el texto plano: copiar la ruta de un archivo desde una
+        terminal o desde la barra del explorador es texto, no una URL, y viene con
+        comillas alrededor bastante a menudo."""
+        candidates = []
+        if mime.hasUrls():
+            candidates.extend(url.toLocalFile() for url in mime.urls() if url.isLocalFile())
+        if mime.hasText():
+            candidates.append(mime.text().strip().strip('"').strip("'"))
+
+        paths, seen = [], set()
+        for candidate in candidates:
+            if not candidate or candidate in seen:
+                continue
+            seen.add(candidate)
+            if os.path.splitext(candidate)[1].lower() not in SUPPORTED_EXTENSIONS:
+                continue
+            if not os.path.isfile(candidate):
+                continue
+            paths.append(candidate)
+        return paths
+
+    def _save_pasted_image(self, image) -> str | None:
+        """Escribe el bitmap del portapapeles como PNG y devuelve su ruta (None
+        si falla). El sufijo aleatorio evita pisar un pegado anterior del mismo
+        segundo; el nombre queda legible porque es lo que se ve en la lista."""
+        name = f"Pegado {datetime.now():%Y-%m-%d %H-%M-%S} {uuid.uuid4().hex[:4]}.png"
+        path = os.path.join(get_pasted_images_dir(), name)
+        try:
+            if not image.save(path, "PNG"):
+                logger.error(f"Editor de Imagen: QImage.save() falló al pegar en {path}")
+                return None
+        except Exception as e:
+            logger.error(f"Editor de Imagen: no se pudo guardar la imagen pegada: {e}")
+            return None
+        logger.info(f"Editor de Imagen: imagen pegada del portapapeles -> {path} "
+                    f"({image.width()}x{image.height()}, alfa={image.hasAlphaChannel()})")
+        return path
+
+    def _select_path(self, path: str):
+        """Deja seleccionado lo recién pegado para que se vea al toque en la
+        previsualización. add_files() solo selecciona cuando no había nada
+        seleccionado, que no es el caso si ya se estaba trabajando con otra imagen."""
+        if path in self.files_list:
+            self.tree.setCurrentIndex(self._model.index(self.files_list.index(path), 0))
+
+    def _warn_clipboard_unusable(self):
+        QMessageBox.information(
+            self, self.tr("Nada que pegar"),
+            self.tr("No hay ninguna imagen en el portapapeles.\n\n"
+                    "Copia una imagen (por ejemplo con una captura de pantalla, o con "
+                    "\"Copiar imagen\" en el navegador) o copia archivos de imagen desde "
+                    "el explorador de archivos, y vuelve a intentarlo."),
+        )
+
     def _start_scan(self, paths: list[str]):
         """Enumera archivos/carpetas en un hilo de fondo (ver _PathScanThread) --
         ni siquiera el os.walk() de una carpeta enorme debe bloquear la UI."""
@@ -442,6 +563,12 @@ class ImageQueueWidget(QFrame):
             self.add_files(valid_paths)
 
     def add_files(self, paths):
+        # Normalizar antes de de-duplicar: la misma imagen llega escrita distinto
+        # según por dónde entre -- QUrl.toLocalFile() (arrastrar y soltar, y pegar
+        # archivos copiados en el explorador) devuelve "C:/x/y", mientras que el
+        # diálogo de archivos y las rutas pegadas como texto traen "C:\x\y".
+        # Comparando cadenas sin normalizar, el mismo archivo entra dos veces.
+        paths = [os.path.normpath(p) for p in paths]
         new_paths = [p for p in paths if p not in self._path_set]
         if not new_paths:
             return

@@ -9,20 +9,39 @@ DowP 1 no tiene ningún toggle de GPU/CPU para reescalado -- los 3 motores son
 binarios NCNN-Vulkan, siempre por GPU (sin modo CPU). "Potencia" es lo más parecido
 (concurrencia de hilos/carga GPU, no un on/off de hardware).
 
+Los motores se pueden descargar desde aquí mismo: elegir uno que no esté instalado
+abre el diálogo de confirmación con su peso real (ver confirm_model_download en
+gui/widgets/model_download_prompt.py) y, si se acepta, la descarga corre en segundo
+plano mostrando el porcentaje en la línea de estado de abajo. Ya no hace falta ir a
+Ajustes > Modelos y volver -- la selección a medio hacer no se pierde.
+
+Ojo con la unidad de descarga: en reescalado lo que se baja es el MOTOR completo
+(binario + sus modelos, todo en el mismo zip), no un modelo suelto como en Eliminar
+Fondo -- por eso el diálogo aparece al elegir el motor, y también al elegir un modelo
+si su motor todavía falta.
+
 Solo selección: no dispara ningún reescalado todavía, eso se conecta en un paso
 aparte."""
 from PySide6.QtWidgets import (
-    QFrame, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QLineEdit, QCheckBox,
+    QFrame, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QLineEdit, QCheckBox, QMessageBox,
 )
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Signal, Qt, QTimer
 from PySide6.QtGui import QFontMetrics
 
 from gui.styles import get_theme_token
+from gui.widgets.model_download_prompt import (
+    ModelActionsRow, ModelDownloadWorker, ModelStatusRow, confirm_model_download,
+    format_model_label, open_models_settings,
+)
+from gui.tabs.editing_media.editing_media_icons import get_colored_svg_icon
 from core.constants import (
     UPSCALING_TOOLS, WAIFU2X_MODELS, SRMD_MODELS, UPSCAYL_MODELS_MAP,
     AI_ENGINE_HOLDER, AI_MODEL_HOLDER,
 )
-from core.setup.models_setup import is_upscaling_engine_installed
+from core.setup.models_setup import (
+    is_upscaling_engine_installed, get_upscaling_engine_size_bytes, download_upscaling_engine,
+    delete_upscaling_engine,
+)
 
 _TILE_TOOLTIP = (
     "Tamaño del bloque de procesamiento (VRAM).\n"
@@ -42,6 +61,8 @@ class UpscalePopoverContent(QFrame):
     archivo crudo de Upscayl tomado de UPSCAYL_MODELS_MAP). is_valid es False
     mientras Motor y/o Modelo sigan en su placeholder."""
     selection_changed = Signal(str, str, bool)
+    # Lo emite el botón "Administrar" -- ver RembgPopoverContent.close_popover_requested.
+    close_popover_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -69,14 +90,10 @@ class UpscalePopoverContent(QFrame):
         engine_row = QHBoxLayout()
         engine_row.addWidget(self._label("Motor:"))
         self.combo_engine = QComboBox()
-        self.combo_engine.addItem(AI_ENGINE_HOLDER, None)
-        for key, info in UPSCALING_TOOLS.items():
-            installed = is_upscaling_engine_installed(info)
-            label = f"{info['name']} {'✓' if installed else '✗ (no descargado)'}"
-            self.combo_engine.addItem(label, key)
         self.combo_engine.currentIndexChanged.connect(self._on_engine_changed)
         engine_row.addWidget(self.combo_engine, 1)
         layout.addLayout(engine_row)
+        self._refresh_engine_items()
 
         # Modelo
         model_row = QHBoxLayout()
@@ -125,14 +142,63 @@ class UpscalePopoverContent(QFrame):
         self.check_tta = QCheckBox(self.tr("TTA (Mejor calidad, muy lento)"))
         layout.addWidget(self.check_tta)
 
-        self.lbl_warning = QLabel()
-        self.lbl_warning.setWordWrap(True)
-        self.lbl_warning.setStyleSheet(f"color: {get_theme_token('estado_aviso', '#e6a23c')}; font-size: 11px;")
-        self.lbl_warning.setVisible(False)
-        layout.addWidget(self.lbl_warning)
+        # Estado del motor elegido (instalado / no descargado / descargando N%).
+        # Las descargas en curso se guardan por clave de motor: el popover se
+        # esconde al clickear afuera, pero el QThread sigue vivo mientras el widget
+        # exista -- volver a abrirlo tiene que reencontrar su progreso, no arrancar
+        # de cero ni ofrecer descargar algo que ya se está bajando.
+        self._downloads: dict[str, ModelDownloadWorker] = {}
+
+        # "Eliminar" borra el MOTOR entero (binario + sus modelos), que es como se
+        # instaló -- los modelos de la lista de arriba no existen por separado.
+        self.actions_row = ModelActionsRow(
+            delete_tooltip=self.tr("Borrar del disco el motor seleccionado, con sus modelos"))
+        self.actions_row.delete_requested.connect(self._on_delete_clicked)
+        self.actions_row.manage_requested.connect(self._on_manage_clicked)
+        layout.addWidget(self.actions_row)
+
+        self.status_row = ModelStatusRow()
+        self.status_row.clicked.connect(self._on_manage_clicked)
+        layout.addWidget(self.status_row)
 
         self._set_denoise_visible(False)
         self._resize_label_column()
+
+    def showEvent(self, event):
+        """Al reabrir el popover, releer qué motores hay instalados -- puede
+        haber cambiado desde Ajustes > Modelos (o desde aquí mismo) mientras estaba
+        cerrado."""
+        super().showEvent(event)
+        self._refresh_engine_items()
+        self._update_status()
+
+    def _refresh_engine_items(self):
+        """Repuebla el combo de motores conservando la selección actual. El
+        estado instalado/no instalado va como icono SVG (y el peso, en el tooltip) en
+        vez de un ✓/✗ pegado al nombre: el nombre queda limpio y el icono se tiñe con
+        el color del tema, cosa que un emoji no hace."""
+        current = self.combo_engine.currentData()
+        self.combo_engine.blockSignals(True)
+        self.combo_engine.clear()
+        self.combo_engine.addItem(AI_ENGINE_HOLDER, None)
+        for key, info in UPSCALING_TOOLS.items():
+            if is_upscaling_engine_installed(info):
+                icon = get_colored_svg_icon(
+                    "check_circle.svg", get_theme_token('estado_exito', '#40d66b'), size=14)
+                tooltip = self.tr("Instalado")
+            else:
+                icon = get_colored_svg_icon(
+                    "download.svg", get_theme_token('texto_secundario', '#888888'), size=14)
+                tooltip = self.tr("No descargado")
+            # El peso que se muestra es el del MOTOR completo (binario + sus modelos),
+            # que es la unidad que se descarga -- los modelos de la lista de abajo no
+            # tienen descarga propia, vienen dentro de ese mismo zip.
+            self.combo_engine.addItem(
+                icon, format_model_label(info["name"], get_upscaling_engine_size_bytes(info)), key)
+            self.combo_engine.setItemData(self.combo_engine.count() - 1, tooltip, Qt.ToolTipRole)
+        idx = self.combo_engine.findData(current) if current else -1
+        self.combo_engine.setCurrentIndex(idx if idx >= 0 else 0)
+        self.combo_engine.blockSignals(False)
 
     def _label(self, text: str) -> QLabel:
         lbl = QLabel(self.tr(text))
@@ -184,22 +250,118 @@ class UpscalePopoverContent(QFrame):
             self._set_denoise_visible(False)
         self.combo_model.blockSignals(False)
 
-        self._update_warning()
+        self._update_status()
         self._emit_selection()
+        self._offer_download_if_missing(engine_key)
 
     def _on_model_changed(self, _index: int):
         self._emit_selection()
+        # El modelo elegido no se baja aparte (viene dentro del zip del motor), pero
+        # si el motor falta, elegir un modelo es igual de buen momento para ofrecerlo.
+        if self.combo_model.currentData() is not None:
+            self._offer_download_if_missing(self._current_engine_key())
 
-    def _update_warning(self):
+    # ── Estado del motor y descarga ─────────────────────────────────────────
+    def _update_status(self):
         engine_key = self._current_engine_key()
         info = UPSCALING_TOOLS.get(engine_key)
-        if info and not is_upscaling_engine_installed(info):
-            self.lbl_warning.setText(
-                self.tr("Este motor no está descargado — ve a Ajustes > Modelos para instalarlo.")
-            )
-            self.lbl_warning.setVisible(True)
+        if not info:
+            self.status_row.clear()
+            self.actions_row.set_delete_enabled(False)
+            return
+        downloading = engine_key in self._downloads
+        # Borrar a media descarga dejaría al worker extrayendo sobre una carpeta
+        # recién borrada.
+        self.actions_row.set_delete_enabled(
+            is_upscaling_engine_installed(info) and not downloading)
+        if downloading:
+            # Descarga en curso: manda el porcentaje, no el estado en disco.
+            return
+        if is_upscaling_engine_installed(info):
+            self.status_row.show_ready(self.tr("Motor instalado y listo para usar."))
         else:
-            self.lbl_warning.setVisible(False)
+            # Sin repetir el peso: ya está en el nombre del motor, en el combo
+            # de arriba (ver _refresh_engine_items).
+            self.status_row.show_missing(self.tr(
+                "No descargado — vuelve a elegirlo en la lista para descargarlo."))
+
+    def _on_manage_clicked(self):
+        """Salta a Ajustes > Modelos y cierra este popover -- ver
+        RembgPopoverContent._on_manage_clicked."""
+        if open_models_settings(self):
+            self.close_popover_requested.emit()
+
+    def _on_delete_clicked(self):
+        engine_key = self._current_engine_key()
+        info = UPSCALING_TOOLS.get(engine_key)
+        if not info or not is_upscaling_engine_installed(info):
+            return
+        if QMessageBox.question(
+            self, self.tr("Eliminar motor"),
+            self.tr("¿Eliminar '{0}' del disco?\n\nSe borra el motor completo, con todos "
+                    "sus modelos. Puedes volver a descargarlo cuando quieras.").format(info["name"])
+        ) != QMessageBox.Yes:
+            return
+        if not delete_upscaling_engine(info):
+            self.status_row.show_error(self.tr("No se pudo eliminar el motor."))
+            return
+        self._refresh_engine_items()
+        self._update_status()
+        self._emit_selection()
+
+    def _offer_download_if_missing(self, engine_key):
+        """Ofrece descargar el motor que falta. Se difiere un ciclo de evento
+        a propósito: esto sale de currentIndexChanged, con el desplegable del combo
+        todavía cerrándose -- abrir un modal justo ahí deja el popup a medio cerrar
+        por encima del diálogo."""
+        info = UPSCALING_TOOLS.get(engine_key)
+        if not info or engine_key in self._downloads or is_upscaling_engine_installed(info):
+            return
+        QTimer.singleShot(0, lambda: self._ask_and_download(engine_key))
+
+    def _ask_and_download(self, engine_key: str):
+        info = UPSCALING_TOOLS.get(engine_key)
+        # Revalidar: entre el singleShot y este momento el usuario pudo cambiar de
+        # motor, o pudo terminar una descarga lanzada desde Ajustes > Modelos.
+        if not info or engine_key in self._downloads or is_upscaling_engine_installed(info):
+            self._update_status()
+            return
+        if self._current_engine_key() != engine_key:
+            return
+        accepted = confirm_model_download(
+            self, info["name"], get_upscaling_engine_size_bytes(info),
+            subject=self.tr("motor"),
+            extra_note=self.tr(
+                "El motor trae sus propios modelos de reescalado adentro -- se "
+                "descarga una sola vez y sirve para todos los modelos de esta lista."
+            ),
+        )
+        if not accepted:
+            self._update_status()
+            return
+
+        worker = ModelDownloadWorker(engine_key, download_upscaling_engine, info, parent=self)
+        worker.numeric_progress_signal.connect(self._on_download_progress)
+        worker.finished_signal.connect(self._on_download_finished)
+        self._downloads[engine_key] = worker
+        self.status_row.show_progress(0)
+        worker.start()
+
+    def _on_download_progress(self, pct: int, engine_key: str):
+        if self._current_engine_key() == engine_key:
+            self.status_row.show_progress(pct)
+
+    def _on_download_finished(self, success: bool, message: str, engine_key: str):
+        worker = self._downloads.pop(engine_key, None)
+        if worker is not None:
+            worker.deleteLater()
+        self._refresh_engine_items()
+        if success:
+            self._update_status()
+            return
+        if self._current_engine_key() == engine_key:
+            self.status_row.show_error(self.tr("No se pudo descargar: {0}").format(message))
+        QMessageBox.warning(self, self.tr("Error de descarga"), message)
 
     def is_valid_selection(self) -> bool:
         return self.combo_engine.currentData() is not None and self.combo_model.currentData() is not None

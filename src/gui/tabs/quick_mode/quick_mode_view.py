@@ -163,8 +163,13 @@ class QuickModeTab(QWidget):
     def eventFilter(self, obj, event):
         if event.type() == QEvent.MouseButtonPress and self.recode_options.is_expanded:
             # No competir con un popup interno abierto (ej. el combo de presets):
-            # mientras haya uno activo, dejarle su propio clic.
-            if QApplication.activePopupWidget() is None:
+            # mientras haya uno activo, dejarle su propio clic. Mismo criterio con un
+            # diálogo modal encima: sus clics caen en otra ventana (este filtro está
+            # sobre QApplication y ve toda la app), pero mientras está arriba el
+            # usuario no puede tocar este panel, así que colapsarlo por ese clic es
+            # un efecto colateral -- ver la nota larga en
+            # gui/tabs/image_tools/image_tools_view.py::eventFilter.
+            if QApplication.activePopupWidget() is None and QApplication.activeModalWidget() is None:
                 pos = event.globalPos()
                 bar_rect = QRect(self.recode_bar.mapToGlobal(QPoint(0, 0)), self.recode_bar.size())
                 popup_rect = QRect(self.recode_options.mapToGlobal(QPoint(0, 0)), self.recode_options.size())

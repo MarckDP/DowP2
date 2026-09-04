@@ -47,6 +47,42 @@ def get_execution_providers(use_gpu: bool) -> list[str]:
     return ["CPUExecutionProvider"]
 
 
+# Nombre corto de cada provider de GPU, para poder decirle al usuario QUÉ
+# aceleración se detectó en vez de un "sí/no" a secas.
+_GPU_PROVIDER_LABELS = {
+    "DmlExecutionProvider": "DirectML",
+    "CoreMLExecutionProvider": "CoreML",
+}
+
+
+def get_gpu_provider() -> str | None:
+    """El provider de GPU realmente utilizable en este equipo, o None si solo
+    hay CPU. No es una detección de hardware aparte: se le pregunta a
+    get_execution_providers() (la misma función que arma la sesión de verdad), así
+    que la UI no puede afirmar algo distinto de lo que va a pasar al procesar.
+
+    En la práctica: Windows con un equipo DirectX 12 -> DirectML; macOS -> CoreML;
+    Linux -> None siempre, porque ahí no instalamos onnxruntime-gpu a propósito
+    (ver la nota de arriba). Un Windows sin GPU compatible tampoco expone
+    DmlExecutionProvider, así que también cae en None."""
+    providers = get_execution_providers(use_gpu=True)
+    primary = providers[0] if providers else None
+    return primary if primary and primary != "CPUExecutionProvider" else None
+
+
+def get_gpu_provider_label() -> str | None:
+    """Nombre presentable del provider de GPU detectado ("DirectML", "CoreML"),
+    o None si no hay."""
+    provider = get_gpu_provider()
+    if provider is None:
+        return None
+    return _GPU_PROVIDER_LABELS.get(provider, provider)
+
+
+def has_gpu_acceleration() -> bool:
+    return get_gpu_provider() is not None
+
+
 def build_session_options(providers: list[str]):
     """SessionOptions afinado según el provider principal -- portado de DowP1
     (image_converter.pyc), que llegó a esta configuración específica para evitar

@@ -460,26 +460,87 @@ class TreeListMixin:
             else:
                 media_items = self.controller.get_all_media_files()
 
-            # 1. Pre-filtrado rápido en RAM (0ms)
+            # 1. Pre-filtrado + pre-ordenación, cacheados por contexto (0ms en el
+            # camino de caché). "Cargar más" solo cambia _max_display_count -- ni la
+            # carpeta, ni el filtro, ni la búsqueda, ni el orden -- así que
+            # recalcular el filtrado+ordenado de la carpeta ENTERA en cada click era
+            # el costo real de los freezes con carpetas de decenas de miles de
+            # archivos. La caché se invalida sola si el contenido en disco
+            # realmente cambió: get_media_files_in_folder()/get_all_media_files()
+            # (editing_media_logic.py) devuelven la misma lista por referencia
+            # mientras no haya un rescaneo real, y abajo se compara esa referencia
+            # por identidad (ver comentario ahí sobre por qué no alcanza con id()).
             active_filter = getattr(self, "active_filter", "Todos")
             search_query = self.search_input.text().lower().strip() if hasattr(self, "search_input") else ""
+            sort_by = getattr(self, "sort_by", "nombre")
+            sort_asc = getattr(self, "sort_ascending", True)
+            cache_key = (active_filter, search_query, sort_by, sort_asc)
 
-            filtered_items = []
-            for item in media_items:
-                item_type = item.get("tipo", "")
-                item_name = item.get("nombre", "").lower()
+            # OJO: comparar por identidad (`is`), no por id(media_items) -- id() se
+            # puede RECICLAR si el objeto anterior ya fue liberado (p.ej. el []
+            # efímero que devuelve get_all_media_files() mientras la indexación
+            # async no terminó), y una lista nueva y completamente distinta podría
+            # terminar reusando esa misma dirección de memoria y "matchear" por
+            # error contra una entrada de caché vieja. Guardar la referencia real en
+            # self._filtered_sort_cache_media_items mantiene ese objeto vivo
+            # mientras la caché sea válida, así que la comparación por identidad es
+            # segura sin ese riesgo.
+            if (getattr(self, "_filtered_sort_cache_key", None) == cache_key
+                    and getattr(self, "_filtered_sort_cache_media_items", None) is media_items):
+                filtered_items = self._filtered_sort_cache
+            else:
+                filtered_items = []
+                for item in media_items:
+                    item_type = item.get("tipo", "")
+                    item_name = item.get("nombre", "").lower()
 
-                if active_filter == "Imágenes" and item_type != "imagen":
-                    continue
-                if active_filter == "Videos" and item_type != "video":
-                    continue
-                if active_filter == "Audios" and item_type != "audio":
-                    continue
+                    if active_filter == "Imágenes" and item_type != "imagen":
+                        continue
+                    if active_filter == "Videos" and item_type != "video":
+                        continue
+                    if active_filter == "Audios" and item_type != "audio":
+                        continue
 
-                if search_query and search_query not in item_name:
-                    continue
+                    if search_query and search_query not in item_name:
+                        continue
 
-                filtered_items.append(item)
+                    filtered_items.append(item)
+
+                if filtered_items:
+                    def sort_key(item):
+                        if sort_by == "nombre":
+                            return item.get("nombre", "").lower()
+                        elif sort_by in ["mtime", "ctime"]:
+                            return item.get(sort_by, 0.0)
+                        elif sort_by == "size":
+                            return item.get("size_bytes", 0)
+                        elif sort_by == "tipo":
+                            ext = os.path.splitext(item.get("nombre", ""))[1].lower()
+                            if not ext:
+                                ext = str(item.get("file_type", item.get("tipo", ""))).lower()
+                            return ext
+                        elif sort_by == "ruta":
+                            return item.get("ruta", "").lower()
+                        elif sort_by == "license":
+                            return str(item.get("license", "")).lower()
+                        elif sort_by == "duration":
+                            d = item.get("duration", 0)
+                            if isinstance(d, (int, float)): return float(d)
+                            if "duración" in item:
+                                dur_str = str(item["duración"])
+                                if ":" in dur_str:
+                                    parts = dur_str.split(":")
+                                    if len(parts) == 2:
+                                        try: return float(parts[0])*60 + float(parts[1])
+                                        except: return 0.0
+                            return 0.0
+                        return item.get("nombre", "").lower()
+
+                    filtered_items.sort(key=sort_key, reverse=not sort_asc)
+
+                self._filtered_sort_cache_key = cache_key
+                self._filtered_sort_cache_media_items = media_items
+                self._filtered_sort_cache = filtered_items
 
             # Si no hay ítems filtrados, mostrar mensaje
             if not filtered_items:
@@ -502,46 +563,12 @@ class TreeListMixin:
                     msg = self.tr(f"No hay elementos de tipo '{active_filter}' en esta sección.")
                 else:
                     msg = self.tr("No hay archivos multimedia para mostrar.")
-                
+
                 self.media_model.set_data([{"nombre": msg, "tipo": "empty"}])
+                self._applied_display_paths = []
                 return
 
-            # 2. Pre-ordenación ultrarrápida en RAM (0ms)
-            sort_by = getattr(self, "sort_by", "nombre")
-            sort_asc = getattr(self, "sort_ascending", True)
-
-            def sort_key(item):
-                if sort_by == "nombre":
-                    return item.get("nombre", "").lower()
-                elif sort_by in ["mtime", "ctime"]:
-                    return item.get(sort_by, 0.0)
-                elif sort_by == "size":
-                    return item.get("size_bytes", 0)
-                elif sort_by == "tipo":
-                    ext = os.path.splitext(item.get("nombre", ""))[1].lower()
-                    if not ext:
-                        ext = str(item.get("file_type", item.get("tipo", ""))).lower()
-                    return ext
-                elif sort_by == "ruta":
-                    return item.get("ruta", "").lower()
-                elif sort_by == "license":
-                    return str(item.get("license", "")).lower()
-                elif sort_by == "duration":
-                    d = item.get("duration", 0)
-                    if isinstance(d, (int, float)): return float(d)
-                    if "duración" in item:
-                        dur_str = str(item["duración"])
-                        if ":" in dur_str:
-                            parts = dur_str.split(":")
-                            if len(parts) == 2:
-                                try: return float(parts[0])*60 + float(parts[1])
-                                except: return 0.0
-                    return 0.0
-                return item.get("nombre", "").lower()
-
-            filtered_items.sort(key=sort_key, reverse=not sort_asc)
-
-            # 3. Pasar los datos filtrados y ordenados al modelo MVC
+            # 2. Pasar los datos filtrados y ordenados al modelo MVC
             # Opcional: Límite de vista para evitar exceso de RAM
             max_count = getattr(self, "_max_display_count", 999999) # O lo que prefieras
             if len(filtered_items) > max_count:
@@ -550,6 +577,37 @@ class TreeListMixin:
                 display_items.append({"nombre": "Cargar más", "tipo": "load_more"})
             else:
                 display_items = filtered_items
+
+            # ¿Esto es solo "más página" del mismo listado ya aplicado al modelo
+            # (mismo contexto, mismo orden, y ahora hay más ítems al final -- el
+            # caso típico de "Cargar más")? Si display_items empieza exactamente
+            # igual a lo que ya está en el modelo, insertar solo las filas nuevas en
+            # vez de resetear todo -- así no se pierde ni el scroll ni la selección,
+            # y no hace falta _pending_scroll_restore para este camino. Cualquier
+            # caso que no calce con esto (cambio real de contexto, reducción,
+            # reordenamiento) cae al camino de reset de siempre, sin cambios.
+            new_paths = [it["ruta"] for it in display_items if "ruta" in it]
+            applied = getattr(self, "_applied_display_paths", None)
+            can_append = (
+                applied is not None
+                and len(new_paths) > len(applied)
+                and new_paths[:len(applied)] == applied
+            )
+
+            if can_append:
+                self.media_model.append_items(display_items[len(applied):])
+                self._applied_display_paths = new_paths
+                # No hay reset acá, pero igual hace falta reaplicar la selección: el
+                # click que disparó este refresco (normalmente sobre la fila
+                # "Cargar más") ya seleccionó esa fila de forma nativa en la vista
+                # ANTES de que corriera este método -- restore_selection() es lo que
+                # devuelve la selección al ítem real (target_path), no solo lo que
+                # sobrevive a un reset de modelo. Sin este llamado, "Cargar más"
+                # dejaba la fila "Cargar más" seleccionada y el ítem que el usuario
+                # tenía marcado se veía como perdido.
+                from PySide6.QtCore import QTimer
+                QTimer.singleShot(0, restore_selection)
+                return
 
             if getattr(self, "_pending_scroll_restore", None) is None:
                 scroll_widget = self.media_table if getattr(self, "view_mode", "grid") == "list" and hasattr(self, "media_table") else self.media_list
@@ -560,6 +618,7 @@ class TreeListMixin:
 
             self._refreshing_media_list = True
             self.media_model.set_data(display_items)
+            self._applied_display_paths = new_paths
 
             # Re-seleccionar si es necesario
             from PySide6.QtCore import QTimer

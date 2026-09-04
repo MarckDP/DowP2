@@ -159,7 +159,11 @@ class ImageToolsTab(QWidget):
         self.upscale_popover_content.selection_changed.connect(self._on_upscale_selection_changed)
 
         # ── Grupo 1: Herramientas IA ──────────────────────────────────────────
-        self.btn_upscale = PopoverTriggerButton(host=self, content=self.upscale_popover_content)
+        self.btn_upscale = PopoverTriggerButton(
+            host=self, content=self.upscale_popover_content,
+            on_right_click=lambda: self._deactivate_on_right_click(
+                self.btn_upscale, self.upscale_popover_content),
+        )
         self.btn_upscale.setFixedSize(32, 32)
         self.btn_upscale.setIconSize(QSize(18, 18))
         self.btn_upscale.setCursor(Qt.PointingHandCursor)
@@ -172,7 +176,11 @@ class ImageToolsTab(QWidget):
         self.rembg_popover_content = RembgPopoverContent()
         self.rembg_popover_content.selection_changed.connect(self._on_rembg_selection_changed)
 
-        self.btn_rembg = PopoverTriggerButton(host=self, content=self.rembg_popover_content)
+        self.btn_rembg = PopoverTriggerButton(
+            host=self, content=self.rembg_popover_content,
+            on_right_click=lambda: self._deactivate_on_right_click(
+                self.btn_rembg, self.rembg_popover_content),
+        )
         self.btn_rembg.setFixedSize(32, 32)
         self.btn_rembg.setIconSize(QSize(18, 18))
         self.btn_rembg.setCursor(Qt.PointingHandCursor)
@@ -186,7 +194,11 @@ class ImageToolsTab(QWidget):
         self.resize_popover_content = ResizePopoverContent()
         self.resize_popover_content.selection_changed.connect(self._on_resize_selection_changed)
 
-        self.btn_resize = PopoverTriggerButton(host=self, content=self.resize_popover_content)
+        self.btn_resize = PopoverTriggerButton(
+            host=self, content=self.resize_popover_content,
+            on_right_click=lambda: self._deactivate_on_right_click(
+                self.btn_resize, self.resize_popover_content),
+        )
         self.btn_resize.setFixedSize(32, 32)
         self.btn_resize.setIconSize(QSize(18, 18))
         self.btn_resize.setCursor(Qt.PointingHandCursor)
@@ -405,6 +417,20 @@ class ImageToolsTab(QWidget):
             if btn is not opened_btn and btn.is_open():
                 btn.set_open(False)
 
+    def _deactivate_on_right_click(self, btn, popover_content) -> bool:
+        """Handler de on_right_click para Reescalar/Eliminar Fondo/Redimensionar.
+        En estos tres botones el reparto es estricto: el clic izquierdo abre el
+        popover para configurar, y el derecho sirve únicamente para apagar la
+        herramienta -- con una configuración activa la desactiva en el acto (vuelve
+        el popover a su placeholder) y lo cierra si estaba abierto; sin nada activo
+        no hace nada. Siempre devuelve True para consumir el clic, así el derecho
+        nunca termina abriendo el popover. Canvas queda intacto: no pasa handler,
+        y su clic derecho sigue abriendo sus opciones."""
+        if popover_content.is_active():
+            popover_content.deactivate()
+            btn.set_open(False)
+        return True
+
     def _on_upscale_selection_changed(self, engine_key: str, model_key: str, is_valid: bool):
         self.selected_upscale_engine = engine_key or None
         self.selected_upscale_model = model_key or None
@@ -424,7 +450,7 @@ class ImageToolsTab(QWidget):
         (el default), gris si lo es."""
         if is_active:
             self.btn_resize.setIcon(get_colored_svg_icon("resize.svg", "#000000", size=18))
-            self.btn_resize.setToolTip(self.tr("Redimensionar — activo"))
+            self.btn_resize.setToolTip(self.tr("Redimensionar — activo (clic derecho: desactivar)"))
             self.btn_resize.setStyleSheet(f"""
                 QPushButton {{
                     min-width: 32px; max-width: 32px;
@@ -459,7 +485,7 @@ class ImageToolsTab(QWidget):
         """Mismo criterio visual que _style_upscale_button -- ver ese método."""
         if is_valid:
             self.btn_rembg.setIcon(get_colored_svg_icon("background_replace.svg", "#000000", size=18))
-            self.btn_rembg.setToolTip(self.tr("Eliminar Fondo (IA) — configuración lista"))
+            self.btn_rembg.setToolTip(self.tr("Eliminar Fondo (IA) — configuración lista (clic derecho: desactivar)"))
             self.btn_rembg.setStyleSheet(f"""
                 QPushButton {{
                     min-width: 32px; max-width: 32px;
@@ -497,7 +523,7 @@ class ImageToolsTab(QWidget):
         subclip, no genérica."""
         if is_valid:
             self.btn_upscale.setIcon(get_colored_svg_icon("frame_person.svg", "#000000", size=18))
-            self.btn_upscale.setToolTip(self.tr("Reescalar con IA — configuración lista"))
+            self.btn_upscale.setToolTip(self.tr("Reescalar con IA — configuración lista (clic derecho: desactivar)"))
             self.btn_upscale.setStyleSheet(f"""
                 QPushButton {{
                     min-width: 32px; max-width: 32px;

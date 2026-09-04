@@ -11,6 +11,8 @@ como para meterlas aquí:
   2. Cerrar el popover en clicks afuera -- instalar un eventFilter en QApplication como
      ya hace quick_mode_view.py, chequeando `not btn.geometry_contains_global(pos)`.
 """
+from typing import Callable, Optional
+
 from PySide6.QtWidgets import QPushButton, QWidget
 from PySide6.QtCore import Signal, QRect, QEvent
 
@@ -19,12 +21,21 @@ class PopoverTriggerButton(QPushButton):
     opened = Signal()
     closed = Signal()
 
-    def __init__(self, host: QWidget, content: QWidget, parent=None, left_click_opens: bool = True):
+    def __init__(self, host: QWidget, content: QWidget, parent=None, left_click_opens: bool = True,
+                 on_right_click: Optional[Callable[[], bool]] = None):
         """`left_click_opens=False` deja el clic izquierdo completamente libre para
         que quien use el botón lo cablee a otra cosa (ej. Canvas: clic izquierdo
         activa/desactiva edición directa, sin abrir este popover) -- el popover sigue
         disponible igual vía clic derecho (ver contextMenuEvent) o llamando
-        toggle_popover()/set_open() a mano."""
+        toggle_popover()/set_open() a mano.
+
+        `on_right_click`, si se pasa, se llama primero en cada clic derecho (ver
+        contextMenuEvent) y decide si lo consume: devolver True significa "ya me
+        encargué de este clic, no toques el popover" (ej. Reescalar/Eliminar Fondo/
+        Redimensionar: el clic derecho desactiva la configuración en el acto, sin
+        menú intermedio, y no hace nada si no hay nada activo). Devolver False cae
+        al comportamiento de siempre (abrir/cerrar el popover), que es lo que usa
+        Canvas para ofrecer sus opciones por clic derecho."""
         super().__init__(parent)
         self._host = host
         self.content = content
@@ -32,6 +43,7 @@ class PopoverTriggerButton(QPushButton):
         self.content.hide()
         self._is_open = False
         self._repositioning = False
+        self._on_right_click = on_right_click
 
         # Escuchar cambios de layout/visibilidad del contenido para reajustar tamaño en vivo
         self.content.installEventFilter(self)
@@ -48,8 +60,13 @@ class PopoverTriggerButton(QPushButton):
         return super().eventFilter(obj, event)
 
     def contextMenuEvent(self, event):
-        """Clic derecho: siempre abre/cierra el popover, sin importar qué haga el
-        clic izquierdo en este botón en particular."""
+        """Clic derecho: si hay on_right_click y devuelve True, el clic ya quedó
+        atendido por quien usa el botón y acá no se hace nada más. Si no hay
+        handler, o devuelve False, abre/cierra el popover -- igual que siempre, sin
+        importar qué haga el clic izquierdo en este botón en particular."""
+        if self._on_right_click is not None and self._on_right_click():
+            event.accept()
+            return
         self.toggle_popover()
         event.accept()
 

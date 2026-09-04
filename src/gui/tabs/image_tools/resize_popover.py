@@ -119,6 +119,17 @@ class ResizePopoverContent(QFrame):
     def is_valid_selection(self) -> bool:
         return True
 
+    def is_active(self) -> bool:
+        """Ver UpscalePopoverContent.is_active(). Acá "activo" es tener elegido un
+        preset distinto de "No escalar (Original)" -- mismo criterio con el que se
+        pinta el botón en verde (ver _on_preset_changed)."""
+        return self._current_preset_value() is not None
+
+    def deactivate(self):
+        """Vuelve el preset a "No escalar (Original)" -- dispara
+        selection_changed(False) vía la cascada existente (_on_preset_changed)."""
+        self.combo_preset.setCurrentIndex(0)
+
     def get_settings(self) -> dict:
         value = self._current_preset_value()
         interpolation_method = self.combo_interpolation.currentData() or "Lanczos (Mejor Calidad)"

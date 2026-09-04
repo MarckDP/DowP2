@@ -204,6 +204,18 @@ class UpscalePopoverContent(QFrame):
     def is_valid_selection(self) -> bool:
         return self.combo_engine.currentData() is not None and self.combo_model.currentData() is not None
 
+    def is_active(self) -> bool:
+        """API común a los tres popovers de la barra lateral (Reescalar/Eliminar
+        Fondo/Redimensionar) para que ImageToolsTab pregunte "¿hay algo que
+        desactivar?" sin conocer los internos de cada uno -- ver
+        ImageToolsTab._deactivate_on_right_click."""
+        return self.is_valid_selection()
+
+    def deactivate(self):
+        """Vuelve Motor a su placeholder -- dispara selection_changed(is_valid=False)
+        vía la cascada existente (_on_engine_changed limpia Modelo también)."""
+        self.combo_engine.setCurrentIndex(0)
+
     def _emit_selection(self):
         engine_key = self.combo_engine.currentData()
         model_key = self.combo_model.currentData()

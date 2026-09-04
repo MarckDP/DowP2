@@ -280,6 +280,15 @@ class RembgPopoverContent(QFrame):
     def is_valid_selection(self) -> bool:
         return self.combo_family.currentData() is not None and self.combo_model.currentData() is not None
 
+    def is_active(self) -> bool:
+        """Ver UpscalePopoverContent.is_active()."""
+        return self.is_valid_selection()
+
+    def deactivate(self):
+        """Vuelve Familia a su placeholder -- dispara selection_changed(is_valid=False)
+        vía la cascada existente (_on_family_changed limpia Modelo también)."""
+        self.combo_family.setCurrentIndex(0)
+
     def _emit_selection(self):
         family_key = self.combo_family.currentData()
         model_key = self.combo_model.currentData()

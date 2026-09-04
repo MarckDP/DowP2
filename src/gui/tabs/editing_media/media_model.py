@@ -401,6 +401,30 @@ class MediaTableModel(QAbstractTableModel):
                 self._path_to_row[item["ruta"]] = idx
         self.endResetModel()
 
+    def append_items(self, new_items: list, replace_trailing_sentinel: bool = True):
+        """Agrega ítems al final sin resetear el modelo -- usado cuando "Cargar más"
+        extiende el mismo listado ya mostrado, para no perder la posición de scroll
+        ni la selección (a diferencia de set_data(), pensado para reemplazos reales
+        de contexto: carpeta/colección/filtro/búsqueda distintos, donde sí hace
+        falta el reset completo)."""
+        if replace_trailing_sentinel and self._media_items and \
+                self._media_items[-1].get("tipo") in ("load_more", "empty"):
+            last_row = len(self._media_items) - 1
+            self.beginRemoveRows(QModelIndex(), last_row, last_row)
+            self._media_items.pop()
+            self.endRemoveRows()
+
+        if not new_items:
+            return
+        first_row = len(self._media_items)
+        last_row = first_row + len(new_items) - 1
+        self.beginInsertRows(QModelIndex(), first_row, last_row)
+        self._media_items.extend(new_items)
+        for idx, item in enumerate(new_items, start=first_row):
+            if "ruta" in item:
+                self._path_to_row[item["ruta"]] = idx
+        self.endInsertRows()
+
     def get_item(self, index: QModelIndex):
         if index.isValid() and 0 <= index.row() < len(self._media_items):
             return self._media_items[index.row()]

@@ -53,6 +53,15 @@ def _get_session(model_path: str, use_gpu: bool):
         if session is not None:
             return session
 
+        # Solo un modelo en memoria a la vez: si ya hay otro cargado, desalojarlo
+        # antes de cargar el nuevo. Cada sesión ONNX puede pesar 200-900 MB en
+        # RAM/VRAM — acumular varias haría explotar la memoria del usuario.
+        if _sessions:
+            old_keys = list(_sessions.keys())
+            logger.info(f"Eliminar Fondo: desalojando {len(old_keys)} sesión(es) anterior(es) "
+                        f"para dar paso a {os.path.basename(model_path)}")
+            _sessions.clear()
+
         import onnxruntime as ort
         providers = get_execution_providers(use_gpu)
         sess_options = build_session_options(providers)

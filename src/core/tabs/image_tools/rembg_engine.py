@@ -93,13 +93,32 @@ def clear_sessions() -> int:
     que no quede nada cacheado entre lotes distintos, y también a mano desde
     Ajustes > Modelos, donde ese número es lo que se le muestra al usuario."""
     import gc
+    import os
     with _sessions_lock:
         freed = len(_sessions)
         if not freed:
             return 0
         logger.debug(f"Eliminar Fondo: liberando {freed} sesión(es) ONNX.")
         _sessions.clear()
+
+    # gc.collect() doble: Python usa 3 generaciones de recolección; el segundo
+    # pase recoge objetos que quedaron en la generación siguiente tras el primero.
     gc.collect()
+    gc.collect()
+
+    # En Windows, forzar al OS a reclamar las páginas de memoria que el proceso ya
+    # no usa (quedan mapeadas pero inactivas tras liberar la sesión ONNX). Esto
+    # baja el "Working Set" visible en Task Manager sin costo funcional: si el
+    # proceso vuelve a necesitar esas páginas, el OS las trae de vuelta del pagefile
+    # con un page fault transparente.
+    if os.name == "nt":
+        try:
+            import ctypes
+            handle = ctypes.windll.kernel32.GetCurrentProcess()
+            ctypes.windll.kernel32.SetProcessWorkingSetSize(handle, -1, -1)
+        except Exception as e:
+            logger.debug(f"Eliminar Fondo: no se pudo recortar el working set: {e}")
+
     return freed
 
 

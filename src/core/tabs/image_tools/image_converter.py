@@ -90,53 +90,63 @@ class ImageConverter:
                     target_size = (int(width), int(height))
 
             img = self._load_image(input_path, input_ext, target_size, maintain_aspect, options)
-            report(40, "loading")
-            if cancellation_event and cancellation_event.is_set():
-                return False, "Cancelado por el usuario."
+            try:
+                report(40, "loading")
+                if cancellation_event and cancellation_event.is_set():
+                    return False, "Cancelado por el usuario."
 
-            # Los formatos vectoriales ya se renderizaron directo al tamaño objetivo
-            # dentro de _load_image (DPI/escala calculados ahí) -- un resize posterior
-            # solo aplica a raster/RAW, que se cargan siempre a tamaño nativo.
-            if resize_enabled and target_size and input_ext not in _VECTOR_EXTS:
-                report(45, "resize")
-                img = self._resize_raster_image(img, target_size, maintain_aspect, options)
-                report(55, "resize")
-            if cancellation_event and cancellation_event.is_set():
-                return False, "Cancelado por el usuario."
+                # Los formatos vectoriales ya se renderizaron directo al tamaño objetivo
+                # dentro de _load_image (DPI/escala calculados ahí) -- un resize posterior
+                # solo aplica a raster/RAW, que se cargan siempre a tamaño nativo.
+                if resize_enabled and target_size and input_ext not in _VECTOR_EXTS:
+                    report(45, "resize")
+                    img = self._resize_raster_image(img, target_size, maintain_aspect, options)
+                    report(55, "resize")
+                if cancellation_event and cancellation_event.is_set():
+                    return False, "Cancelado por el usuario."
 
-            # Eliminar Fondo IA -- mismo orden que usaba DowP1 (Redimensionar ->
-            # Eliminar Fondo -> Reescalar IA): se corta el fondo ANTES de reescalar,
-            # así el reescalado IA trabaja sobre el recorte, no sobre fondo que se
-            # va a tirar.
-            if options.get("rembg_enabled", False):
-                report(55, "rembg")
-                img = self._apply_rembg(img, options, report)
-                report(70, "rembg")
-            if cancellation_event and cancellation_event.is_set():
-                return False, "Cancelado por el usuario."
+                # Eliminar Fondo IA -- mismo orden que usaba DowP1 (Redimensionar ->
+                # Eliminar Fondo -> Reescalar IA): se corta el fondo ANTES de reescalar,
+                # así el reescalado IA trabaja sobre el recorte, no sobre fondo que se
+                # va a tirar.
+                if options.get("rembg_enabled", False):
+                    report(55, "rembg")
+                    img = self._apply_rembg(img, options, report)
+                    report(70, "rembg")
+                if cancellation_event and cancellation_event.is_set():
+                    return False, "Cancelado por el usuario."
 
-            # Reescalar IA -- son ejes independientes de Eliminar Fondo, no se
-            # descartan entre sí (se puede recortar Y reescalar en el mismo lote).
-            if options.get("upscale_enabled", False):
-                report(70, "upscale")
-                img = self._apply_ai_upscale(img, options, cancellation_event, report)
-                report(85, "upscale")
+                # Reescalar IA -- son ejes independientes de Eliminar Fondo, no se
+                # descartan entre sí (se puede recortar Y reescalar en el mismo lote).
+                if options.get("upscale_enabled", False):
+                    report(70, "upscale")
+                    img = self._apply_ai_upscale(img, options, cancellation_event, report)
+                    report(85, "upscale")
 
-            # Canvas (preset del menú, ajuste de lote) -- último paso antes de
-            # guardar, mismo orden que DowP1 (resize -> upscale IA -> canvas).
-            if options.get("canvas_enabled", False):
-                report(85, "canvas")
-                img = self._apply_canvas(img, options)
-                report(92, "canvas")
+                # Canvas (preset del menú, ajuste de lote) -- último paso antes de
+                # guardar, mismo orden que DowP1 (resize -> upscale IA -> canvas).
+                if options.get("canvas_enabled", False):
+                    report(85, "canvas")
+                    img = self._apply_canvas(img, options)
+                    report(92, "canvas")
 
-            report(93, "saving")
-            if output_format == "NO CONVERTIR":
-                self._save_passthrough(img, input_ext, output_path, options)
-            else:
-                self._save_as(img, output_format, output_path, options)
+                report(93, "saving")
+                if output_format == "NO CONVERTIR":
+                    self._save_passthrough(img, input_ext, output_path, options)
+                else:
+                    self._save_as(img, output_format, output_path, options)
 
-            report(100, "saving")
-            return True, "Conversión completada."
+                report(100, "saving")
+                return True, "Conversión completada."
+            finally:
+                # Cerrar la imagen PIL explícitamente para liberar file handles y buffers
+                # mapeados en memoria (decodificadores HEIC/RAW/PSD retienen bloques
+                # grandes). Sin esto, quedan vivos hasta que el GC los recoja, que en
+                # lotes de muchas imágenes puede ser mucho después.
+                try:
+                    img.close()
+                except Exception:
+                    pass
         except UnsupportedFormatError as e:
             logger.warning(f"Convertir: {input_path} -> {e}")
             return False, str(e)

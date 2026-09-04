@@ -100,11 +100,26 @@ def build_session_options(providers: list[str]):
     opts = ort.SessionOptions()
     primary = providers[0] if providers else None
 
+    # Desactivar el arena allocator de CPU en todos los providers: el BFC arena
+    # retiene bloques grandes de memoria para reutilizarlos entre runs, lo cual es
+    # bueno para rendimiento en inferencia repetida pero impide que la memoria se
+    # devuelva al OS al destruir la sesión (el síntoma: la RAM no vuelve a bajar
+    # tras presionar "Liberar"). Sin arena, cada run es ~5-10% más lento pero la
+    # memoria se libera de verdad al hacer clear_sessions().
+    opts.enable_cpu_mem_arena = False
+
     if primary == "DmlExecutionProvider":
         opts.enable_mem_pattern = False
         opts.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
         opts.inter_op_num_threads = 1
         opts.intra_op_num_threads = 1
+        # DirectML usa buffers de staging CPU↔GPU que también quedan retenidos --
+        # enable_mem_reuse=False fuerza a que se liberen tras cada sesión, mismo
+        # tradeoff (un poco más lento, pero la memoria vuelve al OS de verdad).
+        try:
+            opts.enable_mem_reuse = False
+        except AttributeError:
+            pass  # Disponible desde ORT ≥1.17, ignorar en versiones anteriores
     elif primary == "CPUExecutionProvider":
         opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
         opts.execution_mode = ort.ExecutionMode.ORT_PARALLEL

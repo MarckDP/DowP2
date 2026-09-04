@@ -22,15 +22,9 @@ from core.utils.config_manager import get_config
 
 __version__ = "2.0.0"
 
-# Registrar el soporte de HEIC/HEIF en Pillow una sola vez al arrancar: pillow-heif no
-# se auto-registra solo con importarlo, hace falta este llamado explícito para que
-# Image.open() reconozca .heic/.heif (si no, Image.open() los rechaza igual que si la
-# librería no estuviera instalada).
-try:
-    import pillow_heif
-    pillow_heif.register_heif_opener()
-except ImportError:
-    pass
+# pillow_heif (soporte HEIC/HEIF) se registra bajo demanda la primera vez que se
+# necesita, en core/tabs/image_tools/image_converter.py -- no hace falta cargarlo
+# aquí al arrancar, ahorrando ~5-10 MB de RAM para quien no use herramientas de imagen.
 
 from PySide6.QtCore import QObject, QEvent, Qt
 from PySide6.QtWidgets import QPushButton, QCheckBox, QRadioButton, QComboBox, QTabBar, QStyledItemDelegate

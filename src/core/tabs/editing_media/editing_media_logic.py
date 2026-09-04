@@ -729,7 +729,7 @@ class EditingMediaController(QObject):
     def get_all_media_files(self) -> list:
         """Directorios (raíz): escanéa SOLO las carpetas físicas indexadas, sin mezclar
         colecciones -- un archivo que solo vive en una colección (Favoritos, Subclips,
-        Default, ...) no aparece acá salvo que su carpeta contenedora también esté
+        Default, ...) no aparece aquí salvo que su carpeta contenedora también esté
         indexada de verdad."""
         cache_key = "__all_folders__"
         if hasattr(self, "_media_cache") and cache_key in self._media_cache:

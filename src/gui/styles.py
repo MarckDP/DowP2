@@ -55,6 +55,37 @@ def generate_triangle_svg(color: str) -> str:
     
     return svg_path.replace("\\", "/")
 
+def generate_tinted_svg(icon_name: str, color_hex: str) -> str:
+    """
+    Toma un SVG de assets/icons/svg, le aplica un color inyectando una regla CSS,
+    y lo guarda en la caché temporal. Retorna la ruta normalizada al SVG resultante.
+    """
+    safe_color = color_hex.replace("#", "").replace(" ", "")
+    safe_name = icon_name.replace(".svg", "")
+    out_name = f"{safe_name}_{safe_color}.svg"
+    svg_out_path = os.path.join(_TEMP_DIR, out_name)
+
+    if not os.path.exists(svg_out_path):
+        src_path = os.path.join(get_src_dir(), "assets", "icons", "svg", f"{safe_name}.svg")
+        if not os.path.exists(src_path):
+            return ""
+        
+        try:
+            with open(src_path, "r", encoding="utf-8") as f:
+                svg_content = f.read()
+                
+            idx = svg_content.find('>')
+            if idx != -1:
+                style_block = f'<style>* {{ fill: {color_hex} !important; }}</style>'
+                svg_content = svg_content[:idx+1] + style_block + svg_content[idx+1:]
+                
+            with open(svg_out_path, "w", encoding="utf-8") as f:
+                f.write(svg_content)
+        except Exception as e:
+            logger.error(f"Error generando SVG tintado {out_name}: {e}")
+            
+    return svg_out_path.replace("\\", "/")
+
 
 def _generate_spinbox_symbol_svg(symbol: str, color: str) -> str:
     """
@@ -317,6 +348,41 @@ def set_button_variant(btn, variant: str):
     btn.update()
 
 
+# Valor con el que Qt representa "sin límite" en maximumWidth()/maximumHeight().
+_QT_WIDGET_SIZE_MAX = 16777215
+
+
+def _apply_fixed_size_qss(btn):
+    """Vuelca al QSS del propio botón el tamaño que quien llama ya fijó con
+    setFixedSize(). Sin esto, un botón de icono sale rectangular por más que se
+    pida cuadrado.
+
+    El motivo: QStyleSheetStyle::polish() recalcula el minimumSize del widget a
+    partir de la hoja de estilos y PISA el que había dejado setFixedSize(). Alcanza
+    con que alguna regla aplicable declare geometría -- y la regla genérica
+    `QPushButton` de _base.qss declara `min-height: 18px` -- para que Qt dé por
+    sentado que manda el QSS. El MÁXIMO sí sobrevive, así que el botón terminaba en
+    min=(32,22) / max=(32,32) y el layout lo dibujaba con el alto de su sizeHint:
+    22 px con un icono de 18. Reordenar las llamadas no sirve, porque el polish se
+    repite en cada show().
+
+    `padding: 0px` va incluido a propósito, y no es cosmético: min-width/min-height
+    de Qt miden la caja de CONTENIDO, así que con el `padding: 2px` que trae
+    #pathToolButton un mínimo de 32 pediría 36 y dejaría el mínimo por encima del
+    máximo. Con padding 0 -- y `border: none`, que es lo que ya usan estas
+    variantes -- la caja de contenido coincide con la del botón y la cuenta cierra
+    exacta (comprobado a 30, 32 y 34 px).
+
+    El tamaño se lee de maximumSize(), que es donde setFixedSize() lo dejó intacto,
+    para que ningún llamador tenga que repetir un número que ya declaró."""
+    width, height = btn.maximumWidth(), btn.maximumHeight()
+    if width >= _QT_WIDGET_SIZE_MAX or height >= _QT_WIDGET_SIZE_MAX:
+        # Sin tamaño fijo (o fijo en un solo eje, ej. un botón con texto): que siga
+        # mandando el sizeHint de siempre, no hay nada que reponer.
+        return
+    btn.setStyleSheet(f"min-width: {width}px; min-height: {height}px; padding: 0px;")
+
+
 def apply_folder_browse_button_style(btn, tooltip=None, icon_size=18):
     """
     Aplica el estilo unificado al botón de examinar/configurar carpeta o ruta.
@@ -331,6 +397,9 @@ def apply_folder_browse_button_style(btn, tooltip=None, icon_size=18):
     if not btn.objectName():
         btn.setObjectName("pathToolButton")
     set_button_variant(btn, "accent-solid")
+    # Después de set_button_variant(): es su repolish el que descarta el tamaño
+    # fijo, así que reponerlo antes no serviría de nada.
+    _apply_fixed_size_qss(btn)
     if tooltip:
         btn.setToolTip(tooltip)
 
@@ -349,6 +418,9 @@ def apply_folder_open_button_style(btn, tooltip=None, icon_size=18):
     if not btn.objectName() and not btn.text():
         btn.setObjectName("pathToolButton")
     set_button_variant(btn, "accent-solid")
+    # Después de set_button_variant(): es su repolish el que descarta el tamaño
+    # fijo, así que reponerlo antes no serviría de nada.
+    _apply_fixed_size_qss(btn)
     if tooltip:
         btn.setToolTip(tooltip)
 
@@ -367,6 +439,9 @@ def apply_download_action_button_style(btn, tooltip=None, icon_size=18):
     if not btn.objectName():
         btn.setObjectName("pathToolButton")
     set_button_variant(btn, "accent-solid")
+    # Después de set_button_variant(): es su repolish el que descarta el tamaño
+    # fijo, así que reponerlo antes no serviría de nada.
+    _apply_fixed_size_qss(btn)
     if tooltip:
         btn.setToolTip(tooltip)
 
@@ -627,6 +702,35 @@ def create_checkerboard_pixmap(width: int, height: int, square_size: int = 10):
             painter.fillRect(c * square_size, r * square_size, square_size, square_size, color)
     painter.end()
     return pix
+
+
+VIEWER_CHIP_MARGIN = 10
+
+
+def create_viewer_info_chip(parent):
+    """Etiqueta flotante sobre un visor de imagen ("Original: 1920×1080 px").
+
+    Vive aquí, junto a create_checkerboard_pixmap(), porque la comparten los dos
+    visores del Editor de Imagen -- CompareViewer y ZoomableImageViewer -- y tienen
+    que verse idénticos: es el MISMO cuadro, que sigue en su sitio se entre o se
+    salga de la vista comparativa. Duplicando el QSS en cada visor, la primera
+    corrección de estilo que tocara solo uno los desalinearía.
+
+    Nace oculta: quien la use la muestra cuando tiene un tamaño real que poner."""
+    from PySide6.QtWidgets import QLabel
+    lbl = QLabel(parent)
+    lbl.setStyleSheet(f"""
+        QLabel {{
+            background-color: rgba(0, 0, 0, 170);
+            color: {get_theme_token('texto_principal', '#ffffff')};
+            border-radius: 4px;
+            padding: 3px 8px;
+            font-size: 11px;
+            font-weight: bold;
+        }}
+    """)
+    lbl.hide()
+    return lbl
 
 
 def create_colored_circle_icon(color_hex: str, size: int = 12):

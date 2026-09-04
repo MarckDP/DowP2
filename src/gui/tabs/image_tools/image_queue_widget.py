@@ -285,7 +285,7 @@ class ImageQueueWidget(QFrame):
         self.btn_add_files.setToolTip(self.tr("Agregar archivos de imagen"))
         self.btn_add_files.clicked.connect(self._on_add_files_clicked)
 
-        self.btn_add_folder = QPushButton(self.tr("Carpeta"))
+        self.btn_add_folder = QPushButton(self.tr("Carpetas"))
         self.btn_add_folder.setProperty("variant", "secondary")
         self.btn_add_folder.setCursor(Qt.PointingHandCursor)
         self.btn_add_folder.setToolTip(self.tr("Agregar todas las imágenes de una carpeta"))
@@ -298,7 +298,11 @@ class ImageQueueWidget(QFrame):
         self.btn_clear.clicked.connect(self.clear_queue)
 
         self.btn_paste = QPushButton(self.tr("Pegar"))
-        self.btn_paste.setProperty("variant", "secondary")
+        # accent-solid (verde plano, hover lima) y no "secondary": Pegar es la vía de
+        # entrada rápida de la cola -- se merece el mismo peso visual que el resto de
+        # las acciones verdes de la app (carpeta, play, descargar), no el gris de los
+        # botones neutros de al lado.
+        self.btn_paste.setProperty("variant", "accent-solid")
         self.btn_paste.setCursor(Qt.PointingHandCursor)
         self.btn_paste.setToolTip(self.tr(
             "Pegar una imagen del portapapeles (captura de pantalla, \"copiar imagen\" "

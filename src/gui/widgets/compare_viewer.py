@@ -14,7 +14,10 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QPointF, QRectF
 from PySide6.QtGui import QPixmap, QPainter, QColor, QPen
 
-from gui.styles import create_checkerboard_pixmap, get_theme_token
+from gui.styles import (
+    VIEWER_CHIP_MARGIN, create_checkerboard_pixmap, create_viewer_info_chip,
+    get_theme_token,
+)
 
 _DIVIDER_GRAB_MARGIN = 8
 _HANDLE_RADIUS = 7
@@ -97,8 +100,11 @@ class CompareViewer(QGraphicsView):
         self._panning = False
         self._pan_start = None
 
-        self._lbl_before = self._make_chip()
-        self._lbl_after = self._make_chip()
+        # Mismo chip que usa ZoomableImageViewer fuera de la vista comparativa
+        # (ver gui/styles.create_viewer_info_chip): el cuadro de "Original: W×H px"
+        # es el mismo a los dos lados del toggle, no dos etiquetas parecidas.
+        self._lbl_before = create_viewer_info_chip(self)
+        self._lbl_after = create_viewer_info_chip(self)
 
     def _build_checker_tile(self) -> QPixmap:
         square = 10
@@ -124,21 +130,6 @@ class CompareViewer(QGraphicsView):
                 painter.setClipRect(content_vp)
                 painter.drawTiledPixmap(viewport_rect, self._checker_tile)
         painter.restore()
-
-    def _make_chip(self) -> QLabel:
-        lbl = QLabel(self)
-        lbl.setStyleSheet(f"""
-            QLabel {{
-                background-color: rgba(0, 0, 0, 170);
-                color: {get_theme_token('texto_principal', '#ffffff')};
-                border-radius: 4px;
-                padding: 3px 8px;
-                font-size: 11px;
-                font-weight: bold;
-            }}
-        """)
-        lbl.hide()
-        return lbl
 
     # ------------------------------------------------------------------
     # API pública
@@ -300,6 +291,6 @@ class CompareViewer(QGraphicsView):
         painter.end()
 
     def _position_chips(self):
-        margin = 10
+        margin = VIEWER_CHIP_MARGIN
         self._lbl_before.move(margin, margin)
         self._lbl_after.move(max(margin, self.width() - self._lbl_after.width() - margin), margin)

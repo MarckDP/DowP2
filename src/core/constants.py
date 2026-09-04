@@ -830,26 +830,59 @@ UPSCAYL_MODELS_MAP = {
 
 # --- CONSTANTES DE REESCALADO (IA) ---
 
-# Definimos el modelo interno y las escalas permitidas para cada opción
+# Escalas y niveles de ruido REALES de cada motor. No salen de la documentación:
+# se sacaron corriendo cada binario con -h y después probando valor por valor
+# contra una imagen de prueba, porque las dos fuentes se contradicen y el binario
+# es el que manda. Lo que se encontró:
+#
+#   - upscayl-bin: su -h dice "custom output scale (can be 2, 3, 4)", pero es
+#     mentira -- acepta cualquier entero >= 1 (probados 1,2,3,4,5,6,7,8,16,32,
+#     todos devuelven la imagen al tamaño exacto pedido). Internamente repite
+#     pasadas del modelo x4 hasta pasarse y remuestrea hacia abajo, por eso las
+#     escalas altas cuestan varias pasadas. El 0 sí es inválido: el proceso
+#     termina con código 0 pero deja un archivo corrupto.
+#   - waifu2x-ncnn-vulkan: 1/2/4/8/16/32 y nada más -- el 3x que la app venía
+#     ofreciendo para los tres motores por igual moría con "invalid scale
+#     argument". Atencion con el 1x (solo denoise, sin agrandar): necesita los
+#     modelos noiseN_model.param, que SOLO trae models-cunet -- las dos carpetas
+#     upconv_7_* traen únicamente noiseN_scale2.0x_model, así que ahí 1x falla.
+#     Por eso las escalas van por modelo y no por motor.
+#   - srmd-ncnn-vulkan: 2/3/4 (lo único que ya estaba bien) y ruido -1 a 10 --
+#     la app solo ofrecía hasta 3, dejando 7 niveles afuera.
+
+UPSCAYL_SCALES = ["1x", "2x", "3x", "4x", "6x", "8x", "16x"]
+
+_WAIFU2X_SCALES = ["1x", "2x", "4x", "8x", "16x", "32x"]
+# Sin 1x: ver arriba (upconv_7_* no trae modelos de solo-denoise).
+_WAIFU2X_SCALES_UPCONV = ["2x", "4x", "8x", "16x", "32x"]
+
+SRMD_SCALES = ["2x", "3x", "4x"]
+
+# Etiquetas de -n. La escala de Waifu2x es corta y con nombre; la de SRMD llega a
+# 10 y es un continuo, así que solo se nombran los extremos.
+WAIFU2X_DENOISE_LEVELS = ["-1 (Ninguna)", "0 (Baja)", "1 (Media)", "2 (Alta)", "3 (Máxima)"]
+SRMD_DENOISE_LEVELS = (
+    ["-1 (Ninguna)", "0 (Baja)"] + [str(n) for n in range(1, 10)] + ["10 (Máxima)"]
+)
 
 WAIFU2X_MODELS = {
     "CU-Net (Alta Calidad)": {
         "model": "models-cunet",
-        "scales": ["1x", "2x", "4x", "8x", "16x", "32x"]
+        "scales": _WAIFU2X_SCALES
     },
     "Anime Style Art (Clásico)": {
         "model": "models-upconv_7_anime_style_art_rgb",
-        "scales": ["1x", "2x", "4x", "8x", "16x", "32x"]
+        "scales": _WAIFU2X_SCALES_UPCONV
     },
     "Photo (Fotos Reales)": {
         "model": "models-upconv_7_photo",
-        "scales": ["1x", "2x", "4x", "8x", "16x", "32x"]
+        "scales": _WAIFU2X_SCALES_UPCONV
     },
 }
 
 SRMD_MODELS = {
     "Estándar (General)": {
         "model": "models-srmd",
-        "scales": ["2x", "3x", "4x"]
+        "scales": SRMD_SCALES
     }
 }

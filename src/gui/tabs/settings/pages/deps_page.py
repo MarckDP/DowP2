@@ -32,7 +32,7 @@ from core.setup.wpc_setup import (
 )
 from core.setup.ghostscript_setup import (
     check_ghostscript, download_ghostscript, get_local_version as gs_local,
-    get_install_info as gs_install_info,
+    get_remote_version as gs_remote, get_install_info as gs_install_info,
 )
 
 
@@ -348,12 +348,14 @@ class FFmpegOptionsPanel(QFrame):
 
         self._btn_restore = QPushButton(self.tr("Restaurar ({0} Essentials)").format(FFMPEG_RECOMMENDED_VERSION))
         self._btn_restore.setCursor(Qt.PointingHandCursor)
+        set_button_variant(self._btn_restore, "accent-solid")
         self._btn_restore.setToolTip(self.tr("Descarga y restaura la versión base recomendada y probada de DowP ({0} Essentials)").format(FFMPEG_RECOMMENDED_VERSION))
         self._btn_restore.clicked.connect(self._on_restore_clicked)
         actions_row.addWidget(self._btn_restore)
 
         self._btn_download = QPushButton(self.tr("Descargar"))
         self._btn_download.setCursor(Qt.PointingHandCursor)
+        set_button_variant(self._btn_download, "secondary")
         self._btn_download.setMinimumWidth(110)
         self._btn_download.clicked.connect(self._on_download_clicked)
         actions_row.addWidget(self._btn_download)
@@ -483,24 +485,24 @@ class FFmpegOptionsPanel(QFrame):
                 self._status_badge.setStyleSheet("color: #4CAF50; font-size: 12px; font-weight: bold;")
                 self._version_summary.setText(f"Versión: {ver} ({variant_tag})")
                 self._btn_download.setText(self.tr("Reinstalar"))
-                self._btn_download.setStyleSheet("")
+                set_button_variant(self._btn_download, "secondary")
             else:
                 self._status_badge.setText("✗ Falta")
                 self._status_badge.setStyleSheet("color: #F44336; font-size: 12px; font-weight: bold;")
                 self._version_summary.setText("No instalado")
                 self._btn_download.setText(self.tr("Descargar"))
-                self._btn_download.setStyleSheet("background-color: #007BFF; color: white; border: none; font-weight: bold;")
+                set_button_variant(self._btn_download, "accent-blue")
 
             # Restaurar button state (habilita volver a Essentials recomendada si está en Full, Nightly o Custom)
             local_ver = ffmpeg_local() or ""
             if FFMPEG_RECOMMENDED_VERSION in local_ver and "essentials" in local_ver.lower():
                 self._btn_restore.setDisabled(True)
                 self._btn_restore.setText(self.tr("Recomendada Activa ({0})").format(FFMPEG_RECOMMENDED_VERSION))
-                self._btn_restore.setStyleSheet("")
+                set_button_variant(self._btn_restore, "secondary")
             else:
                 self._btn_restore.setDisabled(False)
                 self._btn_restore.setText(self.tr("Restaurar ({0} Essentials)").format(FFMPEG_RECOMMENDED_VERSION))
-                self._btn_restore.setStyleSheet("background-color: #28A745; color: white; border: none; padding: 6px 14px; border-radius: 6px; font-weight: bold;")
+                set_button_variant(self._btn_restore, "accent-solid")
 
     def _on_mode_changed(self, btn_id):
         mode = "custom" if btn_id == 1 else "managed"
@@ -656,7 +658,7 @@ class FFmpegOptionsPanel(QFrame):
             self._version_summary.setText(f"Versión: {local_ver} (Nueva: {remote_ver})")
             self._version_summary.setStyleSheet("color: #FFC107; font-weight: bold; font-size: 12px;")
             self._btn_download.setText(self.tr("Actualizar"))
-            self._btn_download.setStyleSheet("background-color: #007BFF; color: white; border: none; font-weight: bold;")
+            set_button_variant(self._btn_download, "accent-blue")
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -796,6 +798,7 @@ class YTDLPAndPOTPanel(QFrame):
 
         self._ytdlp_btn_action = QPushButton(self.tr("Descargar"))
         self._ytdlp_btn_action.setCursor(Qt.PointingHandCursor)
+        set_button_variant(self._ytdlp_btn_action, "secondary")
         self._ytdlp_btn_action.setMinimumWidth(110)
         self._ytdlp_btn_action.clicked.connect(self._on_ytdlp_action_clicked)
         ytdlp_desc_row.addWidget(self._ytdlp_btn_action, 0, Qt.AlignVCenter)
@@ -860,9 +863,10 @@ class YTDLPAndPOTPanel(QFrame):
         self._bgutil_status.setStyleSheet("color: #888; font-size: 11px;")
         row_bgutil.addWidget(self._bgutil_status)
         row_bgutil.addStretch()
-        self._bgutil_btn = QPushButton(self.tr("Actualizado"))
-        self._bgutil_btn.setFixedWidth(100)
+        self._bgutil_btn = QPushButton(self.tr("Comprobando..."))
+        self._bgutil_btn.setMinimumWidth(110)
         self._bgutil_btn.setCursor(Qt.PointingHandCursor)
+        set_button_variant(self._bgutil_btn, "secondary")
         self._bgutil_btn.clicked.connect(self._on_bgutil_action)
         row_bgutil.addWidget(self._bgutil_btn)
         root.addLayout(row_bgutil)
@@ -882,8 +886,9 @@ class YTDLPAndPOTPanel(QFrame):
         row_wpc.addWidget(self._wpc_status)
         row_wpc.addStretch()
         self._wpc_btn = QPushButton(self.tr("Instalar"))
-        self._wpc_btn.setFixedWidth(100)
+        self._wpc_btn.setMinimumWidth(110)
         self._wpc_btn.setCursor(Qt.PointingHandCursor)
+        set_button_variant(self._wpc_btn, "secondary")
         self._wpc_btn.clicked.connect(self._on_wpc_action)
         row_wpc.addWidget(self._wpc_btn)
         root.addLayout(row_wpc)
@@ -998,9 +1003,9 @@ class YTDLPAndPOTPanel(QFrame):
             v_text = f"Versión: {self.ytdlp_local_ver}" if self.ytdlp_local_ver else self.tr("Versión: Desconocida")
             self._ytdlp_version_summary.setText(v_text)
             self._ytdlp_version_summary.setStyleSheet("color: #AAAAAA; font-size: 12px;")
-            self._ytdlp_btn_action.setText(self.tr("Actualizado"))
-            self._ytdlp_btn_action.setDisabled(True)
-            self._ytdlp_btn_action.setStyleSheet("")
+            self._ytdlp_btn_action.setText(self.tr("Reinstalar"))
+            self._ytdlp_btn_action.setDisabled(False)
+            set_button_variant(self._ytdlp_btn_action, "secondary")
         else:
             self._ytdlp_status_badge.setText(self.tr("✗ Falta"))
             self._ytdlp_status_badge.setStyleSheet("color: #F44336; font-weight: bold; font-size: 12px;")
@@ -1008,7 +1013,7 @@ class YTDLPAndPOTPanel(QFrame):
             self._ytdlp_version_summary.setStyleSheet("color: #F44336; font-size: 12px;")
             self._ytdlp_btn_action.setText(self.tr("Descargar"))
             self._ytdlp_btn_action.setDisabled(False)
-            self._ytdlp_btn_action.setStyleSheet("background-color: #007BFF; color: white; border: none; font-weight: bold;")
+            set_button_variant(self._ytdlp_btn_action, "accent-blue")
 
     def set_ytdlp_searching_updates(self):
         if self.is_ytdlp_installed:
@@ -1042,13 +1047,13 @@ class YTDLPAndPOTPanel(QFrame):
 
             self._ytdlp_btn_action.setText(btn_text)
             self._ytdlp_btn_action.setDisabled(False)
-            self._ytdlp_btn_action.setStyleSheet("background-color: #007BFF; color: white; border: none; font-weight: bold;")
+            set_button_variant(self._ytdlp_btn_action, "accent-blue")
         else:
             self._ytdlp_version_summary.setText(f"Versión: {self.ytdlp_local_ver}")
             self._ytdlp_version_summary.setStyleSheet("color: #AAAAAA; font-size: 12px;")
-            self._ytdlp_btn_action.setText(self.tr("Actualizado"))
-            self._ytdlp_btn_action.setDisabled(True)
-            self._ytdlp_btn_action.setStyleSheet("")
+            self._ytdlp_btn_action.setText(self.tr("Reinstalar"))
+            self._ytdlp_btn_action.setDisabled(False)
+            set_button_variant(self._ytdlp_btn_action, "secondary")
 
     def _on_ytdlp_action_clicked(self):
         cfg = get_config()
@@ -1069,7 +1074,7 @@ class YTDLPAndPOTPanel(QFrame):
         else:
             self._ytdlp_progress_bar.hide()
             self._ytdlp_progress_msg.hide()
-            self._ytdlp_btn_action.setStyleSheet("")
+            set_button_variant(self._ytdlp_btn_action, "secondary")
             self.check_ytdlp_status()
 
     def update_ytdlp_progress_msg(self, msg):
@@ -1087,8 +1092,8 @@ class YTDLPAndPOTPanel(QFrame):
             ver = potprovider_local() or "?"
             self._bgutil_status.setText(f"✓ Instalado  v{ver}")
             self._bgutil_status.setStyleSheet("color: #4CAF50; font-size: 11px;")
-            self._bgutil_btn.setText(self.tr("Actualizado"))
-            self._bgutil_btn.setDisabled(True)
+            self._bgutil_btn.setText(self.tr("Reinstalar"))
+            self._bgutil_btn.setDisabled(False)
             set_button_variant(self._bgutil_btn, "secondary")
             self._bgutil_btn.setVisible(True)
         else:
@@ -1105,8 +1110,8 @@ class YTDLPAndPOTPanel(QFrame):
             ver = wpc_local() or "?"
             self._wpc_status.setText(f"✓ Instalado  v{ver}")
             self._wpc_status.setStyleSheet("color: #4CAF50; font-size: 11px;")
-            self._wpc_btn.setText(self.tr("Actualizado"))
-            self._wpc_btn.setDisabled(True)
+            self._wpc_btn.setText(self.tr("Reinstalar"))
+            self._wpc_btn.setDisabled(False)
             set_button_variant(self._wpc_btn, "secondary")
         else:
             self._wpc_status.setText(self.tr("✗ No instalado"))
@@ -1176,8 +1181,8 @@ class YTDLPAndPOTPanel(QFrame):
         else:
             self._bgutil_status.setText(f"✓ Instalado  v{local_ver}")
             self._bgutil_status.setStyleSheet("color: #4CAF50; font-size: 11px;")
-            self._bgutil_btn.setText(self.tr("Actualizado"))
-            self._bgutil_btn.setDisabled(True)
+            self._bgutil_btn.setText(self.tr("Reinstalar"))
+            self._bgutil_btn.setDisabled(False)
             set_button_variant(self._bgutil_btn, "secondary")
 
     def _on_bgutil_action(self):
@@ -1227,8 +1232,8 @@ class YTDLPAndPOTPanel(QFrame):
         else:
             self._wpc_status.setText(f"✓ Instalado  v{local_ver}")
             self._wpc_status.setStyleSheet("color: #4CAF50; font-size: 11px;")
-            self._wpc_btn.setText(self.tr("Actualizado"))
-            self._wpc_btn.setDisabled(True)
+            self._wpc_btn.setText(self.tr("Reinstalar"))
+            self._wpc_btn.setDisabled(False)
             set_button_variant(self._wpc_btn, "secondary")
 
     def _on_wpc_action(self):
@@ -1329,6 +1334,7 @@ class DenoCardPanel(QFrame):
 
         self._btn_action = QPushButton(self.tr("Descargar"))
         self._btn_action.setCursor(Qt.PointingHandCursor)
+        set_button_variant(self._btn_action, "secondary")
         self._btn_action.setMinimumWidth(110)
         self._btn_action.clicked.connect(self._on_action_clicked)
         bottom_row.addWidget(self._btn_action, 0, Qt.AlignVCenter)
@@ -1366,9 +1372,9 @@ class DenoCardPanel(QFrame):
             v_text = f"Versión: {self.local_ver}" if self.local_ver else self.tr("Versión: Desconocida")
             self._version_summary.setText(v_text)
             self._version_summary.setStyleSheet("color: #AAAAAA; font-size: 12px;")
-            self._btn_action.setText(self.tr("Actualizado"))
-            self._btn_action.setDisabled(True)
-            self._btn_action.setStyleSheet("")
+            self._btn_action.setText(self.tr("Reinstalar"))
+            self._btn_action.setDisabled(False)
+            set_button_variant(self._btn_action, "secondary")
         else:
             self._status_badge.setText(self.tr("✗ Falta"))
             self._status_badge.setStyleSheet("color: #F44336; font-weight: bold; font-size: 12px;")
@@ -1376,7 +1382,7 @@ class DenoCardPanel(QFrame):
             self._version_summary.setStyleSheet("color: #F44336; font-size: 12px;")
             self._btn_action.setText(self.tr("Descargar"))
             self._btn_action.setDisabled(False)
-            self._btn_action.setStyleSheet("background-color: #007BFF; color: white; border: none; font-weight: bold;")
+            set_button_variant(self._btn_action, "accent-blue")
 
     def set_searching_updates(self):
         if self.is_installed:
@@ -1396,13 +1402,13 @@ class DenoCardPanel(QFrame):
             self._version_summary.setStyleSheet("color: #FFC107; font-weight: bold; font-size: 12px;")
             self._btn_action.setText(self.tr("Actualizar"))
             self._btn_action.setDisabled(False)
-            self._btn_action.setStyleSheet("background-color: #007BFF; color: white; border: none; font-weight: bold;")
+            set_button_variant(self._btn_action, "accent-blue")
         else:
             self._version_summary.setText(f"Versión: {self.local_ver}")
             self._version_summary.setStyleSheet("color: #AAAAAA; font-size: 12px;")
-            self._btn_action.setText(self.tr("Actualizado"))
-            self._btn_action.setDisabled(True)
-            self._btn_action.setStyleSheet("")
+            self._btn_action.setText(self.tr("Reinstalar"))
+            self._btn_action.setDisabled(False)
+            set_button_variant(self._btn_action, "secondary")
 
     def _on_action_clicked(self):
         version = "latest" if self._btn_action.text() == self.tr("Actualizar") else None
@@ -1422,7 +1428,7 @@ class DenoCardPanel(QFrame):
         else:
             self._progress_bar.hide()
             self._progress_msg.hide()
-            self._btn_action.setStyleSheet("")
+            set_button_variant(self._btn_action, "secondary")
             self.check_status()
 
     def update_progress_msg(self, msg):
@@ -1530,6 +1536,7 @@ class GhostscriptCardPanel(QFrame):
 
         self._btn_action = QPushButton(self.tr("Descargar"))
         self._btn_action.setCursor(Qt.PointingHandCursor)
+        set_button_variant(self._btn_action, "secondary")
         self._btn_action.setMinimumWidth(110)
         self._btn_action.clicked.connect(self._on_action_clicked)
         windows_layout.addWidget(self._btn_action, 0, Qt.AlignVCenter)
@@ -1567,6 +1574,7 @@ class GhostscriptCardPanel(QFrame):
 
         self._btn_copy = QPushButton(self.tr("Copiar"))
         self._btn_copy.setCursor(Qt.PointingHandCursor)
+        set_button_variant(self._btn_copy, "secondary")
         self._btn_copy.setFixedWidth(90)
         self._btn_copy.setToolTip(self.tr("Copiar el comando al portapapeles"))
         self._btn_copy.clicked.connect(self._on_copy_command_clicked)
@@ -1574,6 +1582,7 @@ class GhostscriptCardPanel(QFrame):
 
         self._btn_verify = QPushButton(self.tr("Verificar"))
         self._btn_verify.setCursor(Qt.PointingHandCursor)
+        set_button_variant(self._btn_verify, "secondary")
         self._btn_verify.setFixedWidth(90)
         self._btn_verify.setToolTip(self.tr("Volver a comprobar si Ghostscript ya está instalado"))
         self._btn_verify.clicked.connect(self._on_verify_clicked)
@@ -1630,7 +1639,7 @@ class GhostscriptCardPanel(QFrame):
                 self._version_summary.setText(self.tr("No instalado"))
                 self._version_summary.setStyleSheet("color: #F44336; font-size: 12px;")
                 self._system_hint_lbl.setText(self.tr(
-                    "No se detectó Ghostscript vía {0}. Copiá el comando, corrélo en tu terminal "
+                    "No se detectó Ghostscript vía {0}. Copia el comando, ejecútalo en tu terminal "
                     "y después presiona \"Verificar\"."
                 ).format(self._pkg_label))
                 self._system_hint_lbl.setStyleSheet("color: #FFC107; font-size: 11px;")
@@ -1639,11 +1648,15 @@ class GhostscriptCardPanel(QFrame):
         if self.is_installed:
             self._status_badge.setText(self.tr("✓ Instalado"))
             self._status_badge.setStyleSheet("color: #4CAF50; font-weight: bold; font-size: 12px;")
-            self._version_summary.setText(f"Versión: {self.local_ver}")
+            # Mismo resguardo que la rama de Mac/Linux: la version se lee del binario
+            # (`gs --version`), asi que puede no llegar, y "Versión: None" no informa
+            # de nada.
+            self._version_summary.setText(
+                f"Versión: {self.local_ver}" if self.local_ver else self.tr("Versión: Desconocida"))
             self._version_summary.setStyleSheet("color: #AAAAAA; font-size: 12px;")
             self._btn_action.setText(self.tr("Reinstalar"))
             self._btn_action.setDisabled(False)
-            self._btn_action.setStyleSheet("")
+            set_button_variant(self._btn_action, "secondary")
         else:
             self._status_badge.setText(self.tr("✗ Falta"))
             self._status_badge.setStyleSheet("color: #F44336; font-weight: bold; font-size: 12px;")
@@ -1651,7 +1664,49 @@ class GhostscriptCardPanel(QFrame):
             self._version_summary.setStyleSheet("color: #F44336; font-size: 12px;")
             self._btn_action.setText(self.tr("Descargar"))
             self._btn_action.setDisabled(False)
-            self._btn_action.setStyleSheet("background-color: #007BFF; color: white; border: none; font-weight: bold;")
+            set_button_variant(self._btn_action, "accent-blue")
+
+    def set_searching_updates(self):
+        """Solo tiene efecto en Windows. En Mac/Linux el binario lo instala y
+        actualiza el gestor de paquetes del sistema, no DowP, asi que no hay ninguna
+        actualizacion que buscar aqui: la tarjeta ya remite al comando del gestor."""
+        if self._is_windows and self.is_installed:
+            self._version_summary.setText(f"Versión: {self.local_ver} (Buscando...)")
+
+    def set_update_available(self, remote_ver):
+        """Resultado del chequeo. `remote_ver` a None significa que la consulta no
+        se pudo hacer (sin conexion, o GitHub sin responder); en ese caso se deja la
+        version instalada tal cual, sin afirmar que esta al dia."""
+        if not self._is_windows or not self.is_installed:
+            return
+
+        # Comparacion exacta de cadenas: los dos lados vienen ya normalizados como
+        # "10.07.1" -- uno de `gs --version` y el otro del nombre del release -- a
+        # diferencia de yt-dlp o Deno, donde hace falta limpiar prefijos.
+        # Con remote_ver o local_ver a None no se sabe nada, y eso NO es lo mismo que
+        # estar al dia: se vuelve al estado neutro, boton incluido. Dejar solo la
+        # etiqueta en neutro y el boton en "Actualizar" de un chequeo anterior
+        # ofreceria una actualizacion que ya no se esta anunciando en ningun lado.
+        has_update = bool(remote_ver and self.local_ver
+                          and str(remote_ver).strip() != str(self.local_ver).strip())
+
+        if has_update:
+            self._version_summary.setText(f"Versión: {self.local_ver} (Nueva: {remote_ver})")
+            self._version_summary.setStyleSheet("color: #FFC107; font-weight: bold; font-size: 12px;")
+            self._btn_action.setText(self.tr("Actualizar"))
+            self._btn_action.setStyleSheet(
+                "background-color: #007BFF; color: white; border: none; font-weight: bold;")
+        else:
+            self._version_summary.setText(
+                f"Versión: {self.local_ver}" if self.local_ver else self.tr("Versión: Desconocida"))
+            self._version_summary.setStyleSheet("color: #AAAAAA; font-size: 12px;")
+            # Se mantiene "Reinstalar" habilitado, a diferencia del resto de las
+            # tarjetas, que pasan a un "Actualizado" desactivado: reinstalar es la
+            # forma de reparar una extraccion a medias y esta tarjeta la ofrece
+            # siempre, este o no al dia.
+            self._btn_action.setText(self.tr("Reinstalar"))
+            set_button_variant(self._btn_action, "secondary")
+        self._btn_action.setDisabled(False)
 
     def _on_action_clicked(self):
         self.set_downloading_state(True)
@@ -1693,7 +1748,7 @@ class GhostscriptCardPanel(QFrame):
         else:
             self._progress_bar.hide()
             self._progress_msg.hide()
-            self._btn_action.setStyleSheet("")
+            set_button_variant(self._btn_action, "secondary")
             self.check_status()
 
     def update_progress_msg(self, msg):
@@ -1819,6 +1874,17 @@ class DependenciesPage(QWidget):
             {"id": "ytdlp", "local_func": ytdlp_local, "remote_func": ytdlp_remote, "channel": ytdlp_channel},
             {"id": "deno",  "local_func": deno_local,  "remote_func": deno_remote},
         ]
+
+        # Ghostscript solo se comprueba en Windows, y solo si ya esta instalado: es
+        # la unica plataforma donde DowP baja y gestiona el binario, asi que es la
+        # unica donde puede aplicar la actualizacion que encuentre. En Mac/Linux lo
+        # gestiona el gestor de paquetes del sistema y anunciar alli una version
+        # nueva seria senalar algo sobre lo que la app no puede actuar.
+        if platform.system() == "Windows" and self.gs_panel.is_installed:
+            self.gs_panel.set_searching_updates()
+            update_configs.append(
+                {"id": "ghostscript", "local_func": gs_local, "remote_func": gs_remote})
+
         self.update_worker = UpdateCheckWorker(update_configs)
         self.update_worker.finished_signal.connect(self.on_update_check_finished)
         self.update_worker.start()
@@ -1850,6 +1916,11 @@ class DependenciesPage(QWidget):
                 self.deno_panel.local_ver = results["deno"]["local"]
             if self.deno_panel.is_installed:
                 self.deno_panel.set_update_available(results["deno"]["remote"])
+
+        if "ghostscript" in results:
+            if results["ghostscript"]["local"]:
+                self.gs_panel.local_ver = results["ghostscript"]["local"]
+            self.gs_panel.set_update_available(results["ghostscript"]["remote"])
 
     def start_download(self, dep_id, version=None):
         channel = None

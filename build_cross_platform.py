@@ -148,7 +148,7 @@ args = [
     # onnxruntime (rembg / futuros modelos de IA) trae binarios nativos pesados
     # (DirectML.dll en Windows, dylibs de CoreML en macOS, .so en Linux) que el
     # análisis estático de PyInstaller no siempre detecta -- collect-all los
-    # arrastra completos. No hace falta ramificar por SO acá: requirements.txt
+    # arrastra completos. No hace falta ramificar por SO aquí: requirements.txt
     # ya resuelve con marcadores de entorno que este venv tenga instalado
     # onnxruntime-directml en Windows u onnxruntime estándar en Mac/Linux (ver
     # ese archivo), así que este --collect-all siempre apunta al paquete

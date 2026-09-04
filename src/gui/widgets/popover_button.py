@@ -61,7 +61,7 @@ class PopoverTriggerButton(QPushButton):
 
     def contextMenuEvent(self, event):
         """Clic derecho: si hay on_right_click y devuelve True, el clic ya quedó
-        atendido por quien usa el botón y acá no se hace nada más. Si no hay
+        atendido por quien usa el botón y aquí no se hace nada más. Si no hay
         handler, o devuelve False, abre/cierra el popover -- igual que siempre, sin
         importar qué haga el clic izquierdo en este botón en particular."""
         if self._on_right_click is not None and self._on_right_click():

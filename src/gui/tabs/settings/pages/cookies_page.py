@@ -6,7 +6,7 @@ from core.utils.config_manager import get_config, save_config
 from core.setup.ytdlp_setup import get_ytdlp_path
 from core.setup.ffmpeg_setup import check_ffmpeg, get_ffmpeg_dir
 from gui.widgets.combo_box import AutoPopupComboBox
-from gui.styles import apply_folder_browse_button_style
+from gui.styles import apply_folder_browse_button_style, generate_tinted_svg
 from core.utils.paths import get_src_dir
 import os
 import sys
@@ -297,10 +297,10 @@ class CookiesPage(QWidget):
         self.test_status_label.setText(message)
         icons_dir = os.path.join(get_src_dir(), "assets", "icons", "svg")
         if success:
-            self.test_status_label.setIcon(QIcon(os.path.join(icons_dir, "check_circle_green.svg")))
+            self.test_status_label.setIcon(QIcon(generate_tinted_svg("check_circle", "#40d66b")))
             self.test_status_label.setStyleSheet("border: none; background: transparent; color: #40d66b; padding: 0px;") # estado_exito
         else:
-            self.test_status_label.setIcon(QIcon(os.path.join(icons_dir, "error_red.svg")))
+            self.test_status_label.setIcon(QIcon(generate_tinted_svg("error", "#ff6b5f")))
             self.test_status_label.setStyleSheet("border: none; background: transparent; color: #ff6b5f; padding: 0px;") # estado_error
 
     def browse_file(self):

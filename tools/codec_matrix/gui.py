@@ -84,7 +84,7 @@ class CodecMatrixGUI:
     def _run_matrix(self):
         path = self.ffmpeg_path.get()
         if not path or not os.path.exists(path):
-            messagebox.showerror("Error", "Elegí un ejecutable de ffmpeg válido primero.")
+            messagebox.showerror("Error", "Elige un ejecutable de ffmpeg válido primero.")
             return
         self.run_btn.config(state=tk.DISABLED)
         self.build_btn.config(state=tk.DISABLED)

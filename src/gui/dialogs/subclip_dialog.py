@@ -8,10 +8,10 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QSize, QTimer, Signal, QPoint, QEvent, QMimeData, QUrl
 from PySide6.QtGui import QIcon, QPainter, QColor, QDrag
 
-from gui.styles import get_theme_token, apply_cut_button_style
+from gui.styles import get_theme_token, apply_cut_button_style, set_button_variant
 from gui.widgets.send_state_button import SendButtonState
 from gui.widgets.media_trim_player_widget import MediaTrimPlayerWidget
-from gui.tabs.editing_media.editing_media_icons import get_svg_icon
+from gui.tabs.editing_media.editing_media_icons import get_svg_icon, get_colored_svg_icon
 from core.services.editor_integration_manager import EditorIntegrationManager
 from core.utils.subclip_export import export_subclip
 from core.logger.logger_manager import logger
@@ -21,7 +21,7 @@ def _start_file_drag(source_widget, paths: list):
     """Inicia un QDrag nativo (arrastrar-y-soltar hacia otra app: DaVinci/Premiere/
     Explorador/etc.) con los archivos locales de `paths`. Mismo mecanismo que ya usa
     Gestor de Medios para arrastrar ítems fuera de la app (ver _DragCleanupMixin en
-    editing_media_view.py), aplicado acá a mano porque el origen no es una vista
+    editing_media_view.py), aplicado aquí a mano porque el origen no es una vista
     respaldada por modelo (QAbstractItemView), sino un botón/widget suelto."""
     if not paths:
         return
@@ -294,25 +294,25 @@ class SubclipEditorDialog(QDialog):
         content_layout.addWidget(self.trim_player, 70)
 
         # Botón para Añadir Subclip, insertado en la barra de controles del reproductor
-        # justo después del botón "Out", igual que en el diseño original.
+        # justo a la derecha del botón "Out", con estilo unificado de la app (icono negro sobre verde).
         self.btn_add_subclip = QPushButton()
-        self.btn_add_subclip.setIcon(get_svg_icon("add.svg"))
+        self.btn_add_subclip.setCursor(Qt.PointingHandCursor)
+        dis_color = get_theme_token("texto_deshabilitado", "#777777")
+        self.btn_add_subclip.setIcon(get_colored_svg_icon("add.svg", "#000000", size=18, disabled_color_hex=dis_color))
         self.btn_add_subclip.setIconSize(QSize(18, 18))
         self.btn_add_subclip.setFixedSize(32, 32)
         self.btn_add_subclip.setToolTip(self.tr("Añadir subclip"))
-        self.btn_add_subclip.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {get_theme_token('acento_secundario', '#1DC038')};
-                border: none;
-                border-radius: 6px;
-            }}
-            QPushButton:hover {{
-                background-color: {get_theme_token('acento_primario', '#B9E640')};
-            }}
-        """)
+        self.btn_add_subclip.setObjectName("pathToolButton")
+        set_button_variant(self.btn_add_subclip, "accent-solid")
         self.btn_add_subclip.clicked.connect(self._add_current_subclip)
-        self.trim_player.ctrl_bar.insertSpacing(9, 8)
-        self.trim_player.ctrl_bar.insertWidget(10, self.btn_add_subclip)
+
+        # Ubicar a la derecha del botón "Out" (btn_set_out)
+        out_idx = self.trim_player.ctrl_bar.indexOf(self.trim_player.btn_set_out)
+        if out_idx != -1:
+            self.trim_player.ctrl_bar.insertSpacing(out_idx + 1, 8)
+            self.trim_player.ctrl_bar.insertWidget(out_idx + 2, self.btn_add_subclip)
+        else:
+            self.trim_player.ctrl_bar.addWidget(self.btn_add_subclip)
 
         # ── Columna Derecha: Lista de Subclips Guardados + Enviar NLE ─────────
         right_widget = QWidget()
@@ -393,7 +393,7 @@ class SubclipEditorDialog(QDialog):
         # puntos in/out a un editor externo conectado), este botón no depende de tener
         # ningún editor conectado. Deshabilitado si no hay subclips guardados todavía --
         # a propósito no cae a "cortar el rango actual" como sí hace "Enviar" (ver
-        # conversación: acá el usuario debe guardar el subclip primero).
+        # conversación: aquí el usuario debe guardar el subclip primero).
         self.btn_physical_cut = _DraggableCutButton(on_drag_paths=self._collect_all_subclip_paths)
         self.btn_physical_cut.setFixedSize(32, 32)
         self.btn_physical_cut.setIconSize(QSize(18, 18))
@@ -601,7 +601,7 @@ class SubclipEditorDialog(QDialog):
         # unique_suffix=False: respeta el nombre tal cual está en la lista (el default
         # "_clip{NN}" que pone el diálogo, o lo que el usuario haya escrito a mano) --
         # sin agregarle "_subclip_NN". Eso solo aplica al gesto de arrastre en la
-        # waveform del Gestor de Medios, no acá.
+        # waveform del Gestor de Medios, no aquí.
         path = export_subclip(self.media_path, sc["in"], sc["out"], base_name=sc["name"], unique_suffix=False)
         if not path:
             logger.error(f"[SubclipDialog] Falló el corte físico de '{sc['name']}'.")

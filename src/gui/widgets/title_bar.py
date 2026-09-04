@@ -118,7 +118,7 @@ class CustomTitleBar(QWidget):
         # Minimizar
         self.btn_min = QPushButton(self)
         self.btn_min.setObjectName("titleBarMinimize")
-        self.btn_min.setIcon(_icon("minus.svg"))
+        self.btn_min.setIcon(_icon("minimize.svg"))
         self.btn_min.setToolTip("Minimizar")
         self.btn_min.setStyleSheet(
             self._BTN_BASE.format(
@@ -131,7 +131,7 @@ class CustomTitleBar(QWidget):
         # Maximizar / Restaurar
         self.btn_max = QPushButton(self)
         self.btn_max.setObjectName("titleBarMaximize")
-        self.btn_max.setIcon(_icon("maximize.svg"))
+        self.btn_max.setIcon(_icon("fullscreen.svg"))
         self.btn_max.setToolTip("Maximizar")
         self.btn_max.setStyleSheet(
             self._BTN_BASE.format(
@@ -170,12 +170,12 @@ class CustomTitleBar(QWidget):
         win = self._window()
         if win.isMaximized():
             win.showNormal()
-            self.btn_max.setIcon(_icon("maximize.svg"))
+            self.btn_max.setIcon(_icon("fullscreen.svg"))
             self.btn_max.setToolTip("Maximizar")
         else:
             win.showMaximized()
-            # Reutilizamos minimize.svg como icono de "restaurar" (↙↗)
-            self.btn_max.setIcon(_icon("minimize.svg"))
+            # Restaurar icono
+            self.btn_max.setIcon(_icon("fullscreen_exit.svg"))
             self.btn_max.setToolTip("Restaurar")
 
     def _on_close(self):
@@ -197,7 +197,7 @@ class CustomTitleBar(QWidget):
             if win.isMaximized():
                 # Al arrastrar desde maximizado: restaurar y reposicionar
                 win.showNormal()
-                self.btn_max.setIcon(_icon("maximize.svg"))
+                self.btn_max.setIcon(_icon("fullscreen.svg"))
                 self.btn_max.setToolTip("Maximizar")
                 # Recalcular punto de drag para que el cursor quede sobre la barra
                 self._drag_start_pos = QPoint(

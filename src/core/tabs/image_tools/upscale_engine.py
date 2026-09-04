@@ -12,7 +12,10 @@ import time
 import multiprocessing
 
 from core.logger.logger_manager import logger
-from core.constants import UPSCALING_TOOLS, WAIFU2X_MODELS, SRMD_MODELS, UPSCAYL_MODELS_MAP
+from core.constants import (
+    UPSCALING_TOOLS, WAIFU2X_MODELS, SRMD_MODELS, UPSCAYL_MODELS_MAP,
+    UPSCAYL_SCALES, SRMD_SCALES,
+)
 from core.setup.models_setup import get_engine_exe_path
 from core.utils.paths import get_models_dir
 
@@ -48,6 +51,61 @@ def _resolve_threads(power_label: str) -> str:
     return _POWER_THREADS.get(power_label, _auto_threads())
 
 
+# Rango de -n aceptado por cada motor, comprobado pasándole valores fuera de rango
+# a los binarios: uno más y contestan "invalid noise argument" y se van con error.
+_DENOISE_RANGE = {"Waifu2x": (-1, 3), "SRMD": (-1, 10)}
+
+
+def _scale_int(text, default: int = 4) -> int:
+    try:
+        return int(str(text).strip().lower().rstrip("x"))
+    except (TypeError, ValueError):
+        return default
+
+
+def _valid_scales(engine: str, model_key: str) -> list[int]:
+    """Escalas que el binario acepta de verdad para esta combinación (ver el bloque
+    de escalas en core/constants.py). Vacío = sin lista cerrada (Upscayl)."""
+    if engine == "Waifu2x":
+        info = WAIFU2X_MODELS.get(model_key) or WAIFU2X_MODELS["CU-Net (Alta Calidad)"]
+        return [_scale_int(s) for s in info["scales"]]
+    if engine == "SRMD":
+        info = SRMD_MODELS.get(model_key)
+        return [_scale_int(s) for s in (info["scales"] if info else SRMD_SCALES)]
+    return []
+
+
+def _clamp_scale(engine: str, model_key: str, requested: str) -> str:
+    """Último filtro antes de armar el comando. El popover ya solo ofrece escalas
+    válidas, pero las opciones también llegan desde ajustes guardados y desde la cola
+    de conversión, y un valor viejo (ej. el 3x que la app ofrecía para los tres
+    motores por igual, que Waifu2x rechaza) haría fallar el reescalado entero en vez
+    de reescalar con lo más parecido que sí existe."""
+    wanted = _scale_int(requested)
+    if engine == "Upscayl":
+        # Sin lista cerrada: acepta cualquier entero >= 1. Se topea en la mayor que
+        # se ofrece porque más allá son varias pasadas del modelo por imagen.
+        return str(max(1, min(wanted, _scale_int(UPSCAYL_SCALES[-1]))))
+    allowed = _valid_scales(engine, model_key)
+    if wanted in allowed:
+        return str(wanted)
+    below = [s for s in allowed if s <= wanted]
+    chosen = below[-1] if below else min(allowed)
+    logger.warning(
+        f"Reescalar IA: {engine} no acepta escala x{wanted} con el modelo "
+        f"'{model_key}' -- se usa x{chosen} en su lugar.")
+    return str(chosen)
+
+
+def _clamp_denoise(engine: str, requested) -> str:
+    low, high = _DENOISE_RANGE.get(engine, (-1, 3))
+    try:
+        value = int(str(requested).strip().split(" ")[0])
+    except (TypeError, ValueError):
+        value = 2
+    return str(max(low, min(value, high)))
+
+
 def _model_dir_for(engine: str, model_key: str) -> str:
     """Directorio -m para Waifu2x/SRMD -- carpeta propia por familia de modelo
     (ej. models-cunet), a diferencia de Upscayl que comparte una sola carpeta."""
@@ -60,13 +118,13 @@ def _model_dir_for(engine: str, model_key: str) -> str:
 
 def _build_cmd(exe: str, input_path: str, output_path: str, options: dict) -> list[str]:
     engine = options["upscale_engine"]
-    scale = (options.get("upscale_scale") or "4x").replace("x", "")
+    model_key = options.get("upscale_model") or ""
+    scale = _clamp_scale(engine, model_key, options.get("upscale_scale") or "4x")
     tile = str(options.get("upscale_tile") or "0")
     threads = _resolve_threads(options.get("upscale_power", "Automático"))
     tta = bool(options.get("upscale_tta"))
 
     if engine == "Upscayl":
-        model_key = options.get("upscale_model") or ""
         # UPSCAYL_MODELS_MAP: clave = nombre crudo del archivo, valor = etiqueta
         # amigable -- el popover guarda la clave cruda en currentData(), así que aquí
         # ya viene resuelto (no hace falta invertir el mapa).
@@ -93,8 +151,8 @@ def _build_cmd(exe: str, input_path: str, output_path: str, options: dict) -> li
         return cmd
 
     # Waifu2x y SRMD -- misma forma (-n es nivel de ruido, no nombre de modelo).
-    model_dir = _model_dir_for(engine, options.get("upscale_model") or "")
-    denoise = str(options.get("upscale_denoise", "2 (Alta)")).split(" ")[0]
+    model_dir = _model_dir_for(engine, model_key)
+    denoise = _clamp_denoise(engine, options.get("upscale_denoise", "2 (Alta)"))
     cmd = [exe, "-i", input_path, "-o", output_path, "-m", model_dir, "-n", denoise,
            "-s", scale, "-t", tile, "-f", "png", "-j", threads]
     if tta:

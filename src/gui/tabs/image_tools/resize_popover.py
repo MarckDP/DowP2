@@ -59,7 +59,7 @@ class ResizePopoverContent(QFrame):
         lbl_preset = QLabel(self.tr("Preset de escalado:"))
         lbl_preset.setObjectName("menuLabel")
         layout.addWidget(lbl_preset)
-        self.combo_preset = AutoPopupComboBox()
+        self.combo_preset = AutoPopupComboBox(fit_contents=True)
         self.combo_preset.setItemDelegate(CheckmarkComboDelegate(self.combo_preset))
         for label, value in _PRESETS:
             self.combo_preset.addItem(self.tr(label), value)
@@ -90,7 +90,7 @@ class ResizePopoverContent(QFrame):
         self.lbl_interp = QLabel(self.tr("Método de interpolación:"))
         self.lbl_interp.setObjectName("menuLabel")
         layout.addWidget(self.lbl_interp)
-        self.combo_interpolation = AutoPopupComboBox()
+        self.combo_interpolation = AutoPopupComboBox(fit_contents=True)
         self.combo_interpolation.setItemDelegate(CheckmarkComboDelegate(self.combo_interpolation))
         for label in INTERPOLATION_METHODS:
             self.combo_interpolation.addItem(label, label)
@@ -120,7 +120,7 @@ class ResizePopoverContent(QFrame):
         return True
 
     def is_active(self) -> bool:
-        """Ver UpscalePopoverContent.is_active(). Acá "activo" es tener elegido un
+        """Ver UpscalePopoverContent.is_active(). Aquí "activo" es tener elegido un
         preset distinto de "No escalar (Original)" -- mismo criterio con el que se
         pinta el botón en verde (ver _on_preset_changed)."""
         return self._current_preset_value() is not None

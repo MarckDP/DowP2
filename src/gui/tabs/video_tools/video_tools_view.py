@@ -427,7 +427,7 @@ class VideoToolsTab(QWidget):
         # (parpadeo visible) antes de corregirse. El freeze real al maximizar no era
         # este cálculo en sí, sino el setStyleSheet() en cascada que CollapsiblePanel
         # hacía en cada cambio de modo (ver collapsible_panel.py) -- ya reemplazado por
-        # setProperty()+polish(), mucho más barato -- así que correrlo síncrono acá ya
+        # setProperty()+polish(), mucho más barato -- así que correrlo síncrono aquí ya
         # no bloquea perceptiblemente y evita el parpadeo.
         self._update_responsive_mode()
 

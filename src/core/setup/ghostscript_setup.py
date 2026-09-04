@@ -25,6 +25,7 @@ tarjeta de Ajustes usa para sugerir el comando correcto según el SO/gestor de
 paquetes detectado)."""
 import os
 import platform
+import re
 import shutil
 import subprocess
 import tempfile
@@ -35,11 +36,22 @@ import requests
 from core.logger.logger_manager import logger
 from core.utils.paths import get_bin_root_dir
 
+# Version y URL de respaldo: es lo que se instala si la consulta a GitHub falla
+# (sin red, API caida o con el limite de peticiones agotado). El camino normal ya
+# no pasa por aqui -- ver get_remote_release(), que resuelve ambas cosas contra el
+# ultimo release publicado.
 GS_VERSION = "10.07.1"
 _GS_INSTALLER_URL = (
     "https://github.com/ArtifexSoftware/ghostpdl-downloads/releases/download/"
     "gs10071/gs10071w64.exe"
 )
+
+_GS_LATEST_RELEASE_API = (
+    "https://api.github.com/repos/ArtifexSoftware/ghostpdl-downloads/releases/latest"
+)
+# Acepta tanto "10.07.1" como "9.52": el repositorio publico ambos formatos.
+_GS_VERSION_RE = re.compile(r"(\d+(?:\.\d+)+)")
+_GS_WINDOWS_ASSET_SUFFIX = "w64.exe"
 # 7-Zip.x64 16.2.1 -- verificado en vivo: ZIP plano, trae tools/7z.exe +
 # tools/7z.dll (el 7-Zip completo, con soporte NSIS vía plugin -- a diferencia
 # de "7-Zip.CommandLine", cuyo 7za.exe es la build standalone SIN plugins y
@@ -176,21 +188,80 @@ def get_gs_exe_path() -> str | None:
 
 
 def get_local_version() -> str | None:
-    """Versión detectada -- fija (GS_VERSION) en Windows porque DowP controla
-    el build que extrae; en Mac/Linux se lee de `gs --version` porque la elige
-    el usuario/el gestor de paquetes, no DowP."""
-    if platform.system() == "Windows":
-        return GS_VERSION if check_ghostscript() else None
-    exe = _find_system_gs()
-    if not exe:
+    """Version instalada, leida siempre del propio binario con `gs --version`.
+
+    En Windows esto antes devolvia la constante GS_VERSION sin preguntarle a nadie,
+    porque DowP extraia siempre el mismo instalador fijado. Desde que la descarga
+    resuelve el ultimo release publicado (ver get_remote_release), esa constante ya
+    no describe lo que hay en disco: tras actualizar seguiria informando la version
+    vieja, y el chequeo de actualizaciones ofreceria eternamente la misma
+    actualizacion ya instalada."""
+    exe = get_gs_exe_path()
+    if not exe or not check_ghostscript():
         return None
     try:
         result = subprocess.run(
             [exe, "--version"], capture_output=True, text=True, timeout=10,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
         return result.stdout.strip() or None
-    except Exception:
+    except Exception as e:
+        logger.error(f"Ghostscript: no se pudo leer la version instalada: {e}")
         return None
+
+
+def get_remote_release() -> tuple[str, str] | None:
+    """(version, url del instalador de Windows) del ultimo Ghostscript estable,
+    consultado a la API de GitHub. None si no se pudo averiguar.
+
+    Se consulta /releases/latest y no la lista completa a proposito: GitHub ya
+    excluye ahi borradores y release candidates, mientras que en la lista cruda las
+    rc aparecen intercaladas por fecha (gs10080rc1 figura por delante de la ultima
+    estable), de modo que recorrerla a mano se arriesga a ofrecer una rc como si
+    fuera definitiva.
+
+    La URL se toma del propio asset en vez de armarla concatenando: el instalador
+    sigue el patron "<tag>w64.exe" en los releases recientes, pero el historial
+    tiene excepciones (el release gs926 publica gs926aw64.exe), asi que es mas
+    seguro leer lo que la API informa que deducirlo."""
+    try:
+        response = requests.get(
+            _GS_LATEST_RELEASE_API, timeout=15,
+            headers={"Accept": "application/vnd.github+json"},
+        )
+        response.raise_for_status()
+        data = response.json()
+    except Exception as e:
+        logger.error(f"Ghostscript: no se pudo consultar la ultima version en GitHub: {e}")
+        return None
+
+    installer_url = next(
+        (a.get("browser_download_url") for a in data.get("assets", [])
+         if str(a.get("name", "")).endswith(_GS_WINDOWS_ASSET_SUFFIX)),
+        None,
+    )
+    if not installer_url:
+        logger.warning("Ghostscript: el ultimo release no publica instalador para Windows.")
+        return None
+
+    # La version sale del nombre del release ("Ghostscript/GhostPDL 10.07.1"). Si
+    # ese campo viene vacio -- ocurre, por ejemplo, en el release gs10050 -- se
+    # devuelve None en lugar de deducirla del tag: el tag es una cadena de digitos
+    # sin separadores (gs10071) que no se puede repartir en 10.07.1 sin adivinar, y
+    # una version mal leida haria anunciar actualizaciones inexistentes.
+    match = _GS_VERSION_RE.search(data.get("name") or "")
+    if not match:
+        logger.warning("Ghostscript: no se pudo leer el numero de version del ultimo release.")
+        return None
+    return match.group(1), installer_url
+
+
+def get_remote_version() -> str | None:
+    """Ultima version estable publicada, o None si no se pudo consultar. Envoltorio
+    de get_remote_release() con la forma que espera el chequeo de actualizaciones
+    de Ajustes > Dependencias (ver UpdateCheckWorker en deps_page.py)."""
+    release = get_remote_release()
+    return release[0] if release else None
 
 
 def download_ghostscript(progress_callback=None) -> tuple[bool, str]:
@@ -199,17 +270,31 @@ def download_ghostscript(progress_callback=None) -> tuple[bool, str]:
     get_managed_ghostscript_dir()."""
     if platform.system() != "Windows":
         label, cmd = get_install_info()
-        return False, f"En este SO, instalá Ghostscript vía {label}: {cmd}"
+        return False, f"En este SO, instala Ghostscript vía {label}: {cmd}"
 
     try:
         seven_zip = _ensure_7zip_tool(progress_callback)
         if not seven_zip:
             return False, "No se pudo preparar la herramienta de extracción (7-Zip)."
 
+        # Se instala el ultimo release publicado; si GitHub no responde se cae al
+        # instalador fijado en _GS_INSTALLER_URL, que sigue siendo una version
+        # valida. Es preferible instalar una version algo vieja que dejar al usuario
+        # sin Ghostscript porque la API no estaba disponible en ese momento.
+        release = get_remote_release()
+        if release:
+            version, installer_url = release
+            logger.info(f"Ghostscript: ultimo release publicado: {version}")
+        else:
+            installer_url = _GS_INSTALLER_URL
+            logger.warning(
+                f"Ghostscript: no se pudo resolver el ultimo release, se usa la "
+                f"version de respaldo {GS_VERSION}.")
+
         with tempfile.TemporaryDirectory(prefix="dowp_ghostscript_") as tmp_dir:
             installer_path = os.path.join(tmp_dir, "gs_installer.exe")
-            logger.info(f"Ghostscript: descargando instalador desde {_GS_INSTALLER_URL}")
-            r = requests.get(_GS_INSTALLER_URL, stream=True, timeout=60)
+            logger.info(f"Ghostscript: descargando instalador desde {installer_url}")
+            r = requests.get(installer_url, stream=True, timeout=60)
             r.raise_for_status()
             total_size = int(r.headers.get("content-length", 0))
             downloaded = 0

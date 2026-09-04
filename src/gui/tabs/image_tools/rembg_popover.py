@@ -49,12 +49,13 @@ aparte."""
 import platform
 
 from PySide6.QtWidgets import (
-    QFrame, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QCheckBox, QSlider, QMessageBox,
+    QFrame, QVBoxLayout, QHBoxLayout, QLabel, QCheckBox, QSlider, QMessageBox,
 )
 from PySide6.QtCore import Signal, Qt, QTimer
 from PySide6.QtGui import QFontMetrics
 
 from gui.styles import get_theme_token
+from gui.widgets.combo_box import AutoPopupComboBox
 from gui.widgets.model_download_prompt import (
     ModelActionsRow, ModelDownloadWorker, ModelStatusRow, confirm_model_download,
     format_model_label, open_models_settings,
@@ -146,7 +147,7 @@ class RembgPopoverContent(QFrame):
         # Motor (familia del modelo)
         family_row = QHBoxLayout()
         family_row.addWidget(self._label("Motor:"))
-        self.combo_family = QComboBox()
+        self.combo_family = AutoPopupComboBox(fit_contents=True)
         self.combo_family.addItem(AI_ENGINE_HOLDER, None)
         self.combo_family.currentIndexChanged.connect(self._on_family_changed)
         family_row.addWidget(self.combo_family, 1)
@@ -155,7 +156,7 @@ class RembgPopoverContent(QFrame):
         # Modelo
         model_row = QHBoxLayout()
         model_row.addWidget(self._label("Modelo:"))
-        self.combo_model = QComboBox()
+        self.combo_model = AutoPopupComboBox(fit_contents=True)
         self.combo_model.addItem(AI_MODEL_HOLDER, None)
         self.combo_model.currentIndexChanged.connect(self._on_model_changed)
         model_row.addWidget(self.combo_model, 1)

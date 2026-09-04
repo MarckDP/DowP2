@@ -379,11 +379,36 @@ QPushButton#btnFragments:hover {
         stop:0 {{boton_fragmentos_fin}}, stop:1 {{boton_fragmentos_inicio}});
 }
 
+/* Marcado / toggle encendido (ej. "Comparar" del Editor de Imagen): naranja PLANO
+   con aro, no degradado -- el degradado ya está tomado por los estados normal y
+   hover, así que un toggle activo necesita otra cosa para no verse idéntico al
+   apagado. El padding baja 2px justo lo que mide el borde: sin eso el botón
+   cambiaría de tamaño al marcarlo y empujaría la fila de al lado.
+   Va ANTES de :disabled a propósito -- misma especificidad, gana el último, y un
+   botón deshabilitado tiene que verse deshabilitado aunque quede marcado. */
+QPushButton[variant="accent-orange"]:checked {
+    background: none;
+    background-color: {{boton_fragmentos_fin}};
+    color: {{boton_fragmentos_texto}};
+    border: 2px solid {{boton_fragmentos_texto}};
+    padding: 4px 14px;
+}
+
+QPushButton[variant="accent-orange"]:checked:hover {
+    background: none;
+    background-color: {{boton_fragmentos_inicio}};
+}
+
 QPushButton[variant="accent-orange"]:disabled,
 QPushButton#btnFragments:disabled {
     background: none;
     background-color: {{fondo_terciario}};
     color: {{texto_secundario}};
+    /* Borde y padding vuelven a los del estado base: si el botón queda marcado y
+       encima deshabilitado, sin esto se arrastraba el aro de :checked y seguía
+       leyéndose como "encendido" estando apagado. */
+    border: none;
+    padding: 6px 16px;
 }
 
 /* 6. Destructivo / Peligro (Rojo) */

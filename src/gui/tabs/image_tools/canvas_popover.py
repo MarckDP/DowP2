@@ -12,10 +12,11 @@ matemática pero contra un PIL.Image real, en un paso aparte)."""
 from PySide6.QtCore import Signal, QRectF, QPointF
 from PySide6.QtGui import QFontMetrics
 from PySide6.QtWidgets import (
-    QFrame, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QLineEdit,
+    QFrame, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
 )
 
 from gui.styles import get_theme_token
+from gui.widgets.combo_box import AutoPopupComboBox
 from core.constants import (
     CANVAS_OPTIONS, CANVAS_PRESET_SIZES, CANVAS_POSITIONS, CANVAS_OVERFLOW_MODES,
 )
@@ -91,7 +92,7 @@ class CanvasPopoverContent(QFrame):
 
         option_row = QHBoxLayout()
         option_row.addWidget(self._label("Ajuste:"))
-        self.combo_option = QComboBox()
+        self.combo_option = AutoPopupComboBox(fit_contents=True)
         self.combo_option.addItems(CANVAS_OPTIONS)
         # textActivated (no currentTextChanged): dispara SIEMPRE que el usuario
         # elige algo del desplegable, incluso si re-elige la opción que ya estaba
@@ -131,7 +132,7 @@ class CanvasPopoverContent(QFrame):
 
         self.position_row = QHBoxLayout()
         self.position_row.addWidget(self._label("Posición:"))
-        self.combo_position = QComboBox()
+        self.combo_position = AutoPopupComboBox(fit_contents=True)
         self.combo_position.addItems(CANVAS_POSITIONS)
         self.combo_position.currentTextChanged.connect(self._on_fields_edited)
         self.position_row.addWidget(self.combo_position, 1)
@@ -139,7 +140,7 @@ class CanvasPopoverContent(QFrame):
 
         self.overflow_row = QHBoxLayout()
         self.overflow_row.addWidget(self._label("Si excede:"))
-        self.combo_overflow = QComboBox()
+        self.combo_overflow = AutoPopupComboBox(fit_contents=True)
         self.combo_overflow.addItems(CANVAS_OVERFLOW_MODES)
         self.combo_overflow.setCurrentText("Centrar (puede recortar)")
         self.overflow_row.addWidget(self.combo_overflow, 1)

@@ -227,7 +227,7 @@ class PresetBar(QWidget):
                     self, self.tr("Marca de agua no incluida"),
                     self.tr(
                         "Este preset usa una imagen de marca de agua ({0}); el archivo de "
-                        "imagen no viaja dentro del .json exportado — compartilo aparte si "
+                        "imagen no viaja dentro del .json exportado — compártelo aparte si "
                         "vas a usar este preset en otra PC."
                     ).format(os.path.basename(watermark_path)),
                 )

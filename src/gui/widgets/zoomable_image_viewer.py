@@ -26,7 +26,10 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QRectF, QPointF, QRect, QPoint, QLineF, Signal
 from PySide6.QtGui import QPixmap, QPainter, QBrush, QPen, QColor, QPainterPath, QTransform, QImage, QFont
 
-from gui.styles import create_checkerboard_pixmap, get_theme_token
+from gui.styles import (
+    VIEWER_CHIP_MARGIN, create_checkerboard_pixmap, create_viewer_info_chip,
+    get_theme_token,
+)
 
 _MIN_SCALE = 0.05
 _MAX_SCALE = 40.0
@@ -125,6 +128,26 @@ class ZoomableImageViewer(QGraphicsView):
         self.setFrameShape(QGraphicsView.NoFrame)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+
+        # Chip "Original: W×H px" arriba a la izquierda -- el MISMO que muestra
+        # CompareViewer en ese lado (ver gui/styles.create_viewer_info_chip), para
+        # que el dato no aparezca y desaparezca al entrar y salir de la vista
+        # comparativa: la resolución de partida es igual de útil editando.
+        # Siempre el tamaño NATIVO de la imagen cargada, no el del canvas -- el canvas
+        # tiene su propio indicador, que sale mientras se lo arrastra (_draw_size_badge).
+        self._lbl_native_size = create_viewer_info_chip(self)
+
+    def _update_native_size_chip(self):
+        if self._native_size is None:
+            self._lbl_native_size.hide()
+            return
+        self._lbl_native_size.setText(
+            self.tr("Original: {0}×{1} px").format(self._native_size.width(),
+                                                   self._native_size.height()))
+        self._lbl_native_size.adjustSize()
+        self._lbl_native_size.move(VIEWER_CHIP_MARGIN, VIEWER_CHIP_MARGIN)
+        self._lbl_native_size.show()
+        self._lbl_native_size.raise_()
 
     def _build_checker_tile(self) -> QPixmap:
         # Tile de 2x2 cuadros (no 1x1): así el patrón alterna correctamente al
@@ -325,6 +348,7 @@ class ZoomableImageViewer(QGraphicsView):
         # que abrir ningún popover primero) ANTES de encuadrar la vista.
         self._reset_edit_state()
         self._fit_canvas_into_view()
+        self._update_native_size_chip()
 
     def image_size(self):
         return self._native_size
@@ -335,6 +359,7 @@ class ZoomableImageViewer(QGraphicsView):
         self._native_size = None
         self._user_zoomed = False
         self._reset_edit_state()
+        self._update_native_size_chip()
 
     def _reset_edit_state(self):
         # "pan" por defecto -- el canvas queda inicializado (para el borde de

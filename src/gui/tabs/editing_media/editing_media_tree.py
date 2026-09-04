@@ -72,7 +72,7 @@ class TreeListMixin:
 
         # 2b. Carpeta "Default": colección virtual (sin carpeta física real detrás) donde
         # cae por defecto un archivo indexado individualmente (ver dropEvent más abajo).
-        # Se muestra acá, dentro de Directorios, aunque técnicamente vive en
+        # Se muestra aquí, dentro de Directorios, aunque técnicamente vive en
         # self.controller.collections igual que las de Colecciones -- por eso se excluye
         # explícitamente del loop de Colecciones unas líneas más abajo, para no duplicarla.
         default_item = QTreeWidgetItem(self.physical_root, ["Default"])
@@ -597,7 +597,7 @@ class TreeListMixin:
             if can_append:
                 self.media_model.append_items(display_items[len(applied):])
                 self._applied_display_paths = new_paths
-                # No hay reset acá, pero igual hace falta reaplicar la selección: el
+                # No hay reset aquí, pero igual hace falta reaplicar la selección: el
                 # click que disparó este refresco (normalmente sobre la fila
                 # "Cargar más") ya seleccionó esa fila de forma nativa en la vista
                 # ANTES de que corriera este método -- restore_selection() es lo que

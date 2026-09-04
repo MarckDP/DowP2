@@ -608,7 +608,7 @@ class MainWindow(QMainWindow):
             # nativeEvent() más abajo, no quitando el frame a nivel de Qt.
             pass
         else:
-            # Mac/Linux: acá el frame sí se saca a nivel de Qt (como siempre) --
+            # Mac/Linux: aquí el frame sí se saca a nivel de Qt (como siempre) --
             # WM_NCCALCSIZE es Windows-only, así que sin este flag quedaría el título
             # nativo del sistema apilado encima del CustomTitleBar propio. El snap de
             # bordes en estas plataformas ya se resuelve en title_bar.py con
@@ -746,7 +746,7 @@ class MainWindow(QMainWindow):
         # IsZoomed(hWnd) en vez de self.isMaximized(): este mensaje nativo llega
         # DURANTE la transición maximizada<->normal, y el estado que Qt cree tener
         # (isMaximized()) puede no estar actualizado todavía en ese instante --
-        # usarlo acá hacía que, al restaurar, siguiéramos recortando al área del
+        # usarlo aquí hacía que, al restaurar, siguiéramos recortando al área del
         # monitor (pensado solo para maximizada) sobre el tamaño ya restaurado,
         # rompiendo visualmente toda la UI hasta minimizar/restaurar de nuevo.
         # IsZoomed() consulta el estado nativo real en el momento exacto del mensaje.

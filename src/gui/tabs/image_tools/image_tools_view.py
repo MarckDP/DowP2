@@ -334,7 +334,13 @@ class ImageToolsTab(QWidget):
         # _on_file_selected/_show_editable_view); la comparación antes/después
         # queda como vista explícita bajo demanda, no como estado permanente.
         self.btn_compare_result = QPushButton(self.tr("Comparar"))
-        self.btn_compare_result.setProperty("variant", "secondary")
+        # accent-orange (degradado naranja, mismo que "Fragmentos"/"Buscar
+        # actualizaciones") y accent-blue para Copiar (el degradado azul del botón
+        # SOLO de Proceso Avanzado). Los dos ya traen su propio :disabled plano en
+        # _base.qss, que es justo el estado que hace falta aqui: ninguno de los dos
+        # tiene sentido hasta que la fila tenga un resultado convertido, y de eso se
+        # encarga _refresh_title_and_copy_button().
+        self.btn_compare_result.setProperty("variant", "accent-orange")
         self.btn_compare_result.setCursor(Qt.PointingHandCursor)
         self.btn_compare_result.setToolTip(self.tr("Ver comparación antes/después del resultado"))
         self.btn_compare_result.setCheckable(True)
@@ -342,7 +348,7 @@ class ImageToolsTab(QWidget):
         self.btn_compare_result.toggled.connect(self._on_compare_toggled)
         title_row.addWidget(self.btn_compare_result)
         self.btn_copy_result = QPushButton(self.tr("Copiar"))
-        self.btn_copy_result.setProperty("variant", "secondary")
+        self.btn_copy_result.setProperty("variant", "accent-blue")
         self.btn_copy_result.setCursor(Qt.PointingHandCursor)
         self.btn_copy_result.setToolTip(self.tr("Copiar la imagen resultante al portapapeles"))
         self.btn_copy_result.setEnabled(False)
@@ -1479,7 +1485,7 @@ class ImageToolsTab(QWidget):
         # (parpadeo visible) antes de corregirse. El freeze real al maximizar no era
         # este cálculo en sí, sino el setStyleSheet() en cascada que CollapsiblePanel
         # hacía en cada cambio de modo (ver collapsible_panel.py) -- ya reemplazado por
-        # setProperty()+polish(), mucho más barato -- así que correrlo síncrono acá ya
+        # setProperty()+polish(), mucho más barato -- así que correrlo síncrono aquí ya
         # no bloquea perceptiblemente y evita el parpadeo.
         self._update_responsive_mode()
 

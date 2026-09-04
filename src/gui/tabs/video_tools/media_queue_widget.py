@@ -289,14 +289,16 @@ class MediaQueueWidget(QFrame):
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(6)
 
-        self.btn_add_files = QPushButton(self.tr("Agregar Archivos"))
+        self.btn_add_files = QPushButton(self.tr("Archivos"))
         self.btn_add_files.setProperty("variant", "secondary")
         self.btn_add_files.setCursor(Qt.PointingHandCursor)
+        self.btn_add_files.setToolTip(self.tr("Agregar archivos multimedia"))
         self.btn_add_files.clicked.connect(self._on_add_files_clicked)
 
-        self.btn_add_folder = QPushButton(self.tr("Agregar Carpeta"))
+        self.btn_add_folder = QPushButton(self.tr("Carpetas"))
         self.btn_add_folder.setProperty("variant", "secondary")
         self.btn_add_folder.setCursor(Qt.PointingHandCursor)
+        self.btn_add_folder.setToolTip(self.tr("Agregar todos los medios de una carpeta"))
         self.btn_add_folder.clicked.connect(self._on_add_folder_clicked)
 
         self.btn_clear = QPushButton(self.tr("Limpiar Todo"))

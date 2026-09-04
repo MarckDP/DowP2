@@ -398,7 +398,7 @@ Do you want to continue?</translation>
     <message>
         <location filename="../../gui/tabs/video_tools/advanced_recode_panel.py" line="435"/>
         <location filename="../../gui/tabs/video_tools/advanced_recode_panel.py" line="748"/>
-        <source>Seleccioná un archivo en la cola para estimar el peso.</source>
+        <source>Selecciona un archivo en la cola para estimar el peso.</source>
         <translation>Select a file in the queue to estimate the size.</translation>
     </message>
     <message>

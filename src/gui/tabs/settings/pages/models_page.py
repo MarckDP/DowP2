@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
     QPushButton, QMessageBox, QProgressBar, QFileDialog, QDialog,
     QLineEdit, QSpinBox, QDialogButtonBox, QFormLayout,
 )
-from PySide6.QtCore import Qt, QThread, Signal, QUrl
+from PySide6.QtCore import Qt, QThread, Signal, QUrl, QSize
 from PySide6.QtGui import QDesktopServices
 from core.utils.i18n import logger
 from core.utils.cache_manager import format_bytes
@@ -23,10 +23,16 @@ from core.tabs.image_tools import rembg_engine
 from core.utils.onnx_providers import get_gpu_provider_label
 from core.utils.hardware_detector import get_cached_gpu_name
 from gui.widgets.toggle_switch import ToggleSwitch
-# ModelDownloadWorker vivía acá, pero los popovers del Editor de Imagen ahora
+# ModelDownloadWorker vivía aquí, pero los popovers del Editor de Imagen ahora
 # también descargan modelos (ver gui/widgets/model_download_prompt.py) y no tiene
 # sentido tener dos copias del mismo QThread.
 from gui.widgets.model_download_prompt import ModelDownloadWorker, format_model_label
+from gui.styles import (
+    get_theme_token,
+    set_button_variant,
+    apply_download_action_button_style,
+    apply_folder_open_button_style,
+)
 from gui.tabs.editing_media.editing_media_icons import get_colored_svg_icon
 
 
@@ -107,7 +113,7 @@ class ImportOnnxDialog(QDialog):
             self.lbl_probe.setText(self.tr("Tamaño detectado: {0}x{1}").format(height, width))
             self.lbl_probe.setStyleSheet("color: #4CAF50; font-size: 11px;")
         else:
-            self.lbl_probe.setText(self.tr("No se pudo detectar el tamaño -- confirmalo a mano."))
+            self.lbl_probe.setText(self.tr("No se pudo detectar el tamaño -- confírmalo a mano."))
             self.lbl_probe.setStyleSheet("color: #FFC107; font-size: 11px;")
 
     def get_values(self) -> tuple[str, int]:
@@ -178,20 +184,20 @@ class ModelRow(QFrame):
             layout.addWidget(lbl_locked, 0, Qt.AlignVCenter)
             return
 
-        self.btn_download = QPushButton(self.tr("Descargar"))
-        self.btn_download.setFixedHeight(28)
-        self.btn_download.setFixedWidth(90)
+        self.btn_download = QPushButton()
+        self.btn_download.setFixedSize(32, 32)
         self.btn_download.setCursor(Qt.PointingHandCursor)
+        apply_download_action_button_style(self.btn_download, self.tr("Descargar"), icon_size=18)
         self.btn_download.clicked.connect(lambda: self.download_requested.emit(self.row_id))
 
-        self.btn_folder = QPushButton(self.tr("Carpeta"))
-        self.btn_folder.setFixedHeight(28)
-        self.btn_folder.setFixedWidth(80)
+        self.btn_folder = QPushButton()
+        self.btn_folder.setFixedSize(32, 32)
         self.btn_folder.setCursor(Qt.PointingHandCursor)
+        apply_folder_open_button_style(self.btn_folder, self.tr("Abrir carpeta"), icon_size=18)
         self.btn_folder.clicked.connect(self._open_folder)
 
         self.btn_delete = QPushButton(self.tr("Eliminar"))
-        self.btn_delete.setFixedHeight(28)
+        self.btn_delete.setFixedHeight(32)
         self.btn_delete.setFixedWidth(80)
         self.btn_delete.setCursor(Qt.PointingHandCursor)
         self.btn_delete.setProperty("variant", "danger")
@@ -220,17 +226,22 @@ class ModelRow(QFrame):
     def refresh_status(self):
         if self.gated:
             return
+        dis_color = get_theme_token("texto_deshabilitado", "#777777")
         if self.is_installed():
             size = get_folder_size(self.path_for_size)
             self.lbl_status.setText(f"{self.tr('Instalado')} ({format_bytes(size)})")
             self.lbl_status.setStyleSheet("color: #4CAF50; font-size: 11px; font-weight: bold;")
-            self.btn_download.setText(self.tr("Reinstalar"))
+            self.btn_download.setIcon(get_colored_svg_icon("check_circle.svg", "#000000", size=18, disabled_color_hex=dis_color))
+            self.btn_download.setIconSize(QSize(18, 18))
+            self.btn_download.setToolTip(self.tr("Instalado (clic para reinstalar)"))
             self.btn_folder.setDisabled(False)
             self.btn_delete.setDisabled(False)
         else:
             self.lbl_status.setText(self.tr("No descargado"))
             self.lbl_status.setStyleSheet("color: #888888; font-size: 11px;")
-            self.btn_download.setText(self.tr("Descargar"))
+            self.btn_download.setIcon(get_colored_svg_icon("download.svg", "#000000", size=18, disabled_color_hex=dis_color))
+            self.btn_download.setIconSize(QSize(18, 18))
+            self.btn_download.setToolTip(self.tr("Descargar"))
             self.btn_folder.setDisabled(True)
             self.btn_delete.setDisabled(True)
 
@@ -244,6 +255,7 @@ class ModelRow(QFrame):
         if is_downloading:
             self.lbl_status.setText(self.tr("Descargando..."))
             self.lbl_status.setStyleSheet("color: #FFC107; font-size: 11px; font-weight: bold;")
+            self.btn_download.setToolTip(self.tr("Descargando..."))
 
     def set_progress(self, pct: int):
         self.progress_bar.setValue(pct)
@@ -312,7 +324,9 @@ class ModelsPage(QWidget):
         import_desc.setWordWrap(True)
         import_row.addWidget(import_desc, 1)
         self.btn_import_custom = QPushButton(self.tr("Importar modelo ONNX..."))
+        self.btn_import_custom.setFixedHeight(32)
         self.btn_import_custom.setCursor(Qt.PointingHandCursor)
+        set_button_variant(self.btn_import_custom, "accent-solid")
         self.btn_import_custom.clicked.connect(self._on_import_custom_clicked)
         import_row.addWidget(self.btn_import_custom, 0, Qt.AlignVCenter)
         self.content_layout.addLayout(import_row)
@@ -388,8 +402,9 @@ class ModelsPage(QWidget):
         # "Liberar" solo tiene algo que hacer con la opción encendida: apagada, el
         # modelo ya se libera solo al terminar cada lote.
         self.btn_free_memory = QPushButton(self.tr("Liberar"))
+        self.btn_free_memory.setFixedHeight(32)
         self.btn_free_memory.setCursor(Qt.PointingHandCursor)
-        self.btn_free_memory.setProperty("variant", "secondary")
+        set_button_variant(self.btn_free_memory, "accent-solid")
         self.btn_free_memory.setToolTip(self.tr(
             "Descargar ahora los modelos que queden cargados, estén en la memoria de "
             "la GPU o en la RAM, sin cerrar la aplicación"))

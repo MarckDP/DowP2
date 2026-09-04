@@ -38,6 +38,7 @@ from core.logger.logger_manager import logger
 from core.utils.paths import get_src_dir
 from gui.styles import (
     get_theme_token,
+    generate_tinted_svg,
     apply_player_play_button_style,
     apply_player_loop_button_style,
     apply_edit_subclip_button_style,
@@ -1169,8 +1170,10 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
 
         # Obtener rutas absolutas para las imágenes del árbol
         src_dir = get_src_dir()
-        closed_arrow = os.path.join(src_dir, "assets", "icons", "svg", "tree_closed.svg").replace("\\", "/")
-        open_arrow = os.path.join(src_dir, "assets", "icons", "svg", "tree_open.svg").replace("\\", "/")
+        color_closed = get_theme_token("texto_secundario", "#888888")
+        color_open = get_theme_token("acento_primario", "#B9E640")
+        closed_arrow = generate_tinted_svg("arrow_right", color_closed)
+        open_arrow = generate_tinted_svg("arrow_drop_down", color_open)
 
         # Estilo para el árbol de carpetas (Columna Izquierda)
         tree_style = f"""

@@ -22,7 +22,7 @@ class TabBarDragHoverSwitcher(QObject):
 
         # QTabBar no acepta drops por defecto; lo habilitamos únicamente para poder
         # recibir DragEnter/DragMove y detectar el hover -- nunca procesamos un Drop
-        # real acá.
+        # real aquí.
         self.tab_bar.setAcceptDrops(True)
         self.tab_bar.installEventFilter(self)
 

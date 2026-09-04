@@ -3,7 +3,7 @@ import os
 from PySide6.QtCore import Qt, QRect, QSize, QObject
 from PySide6.QtGui import QPainter, QColor, QPixmap, QPalette
 from PySide6.QtWidgets import (
-    QComboBox, QStyle, QStyleOptionComboBox, QStyledItemDelegate, 
+    QComboBox, QStyle, QStyleOptionComboBox, QStyledItemDelegate,
     QStyleOptionViewItem, QApplication
 )
 from PySide6.QtSvg import QSvgRenderer
@@ -157,6 +157,11 @@ class CheckmarkComboDelegate(QStyledItemDelegate):
             painter.restore()
 
 
+# Rect de referencia para medir cuánto ancho se queda el estilo (ver _chrome_width).
+# Cualquier valor holgado sirve: solo se usa como base de una resta.
+_CHROME_PROBE_WIDTH = 1000
+
+
 class AutoPopupComboBox(QComboBox):
     """QComboBox que desacopla el ancho del popup (desplegable) del ancho de la caja cerrada,
     haciendo que el popup siempre se ajuste al contenido de sus opciones.
@@ -166,14 +171,38 @@ class AutoPopupComboBox(QComboBox):
       y redimensiona el contenedor del popup a esa medida exacta, en lugar de heredar el ancho total
       de la caja cerrada.
     - Caja cerrada, TEXTO: `paintEvent()` dibuja la etiqueta actual a mano en el rect real disponible
-      (SC_ComboBoxEditField) para evitar recortes prematuros causados por el padding del QSS."""
+      (SC_ComboBoxEditField) para evitar recortes prematuros causados por el padding del QSS.
 
-    def __init__(self, parent=None):
+    `fit_contents=True` suma una condición más: que la CAJA CERRADA pida en su
+    sizeHint() el ancho del ítem más largo, para que un layout que pueda crecer la
+    haga crecer en vez de elidir. Es opcional porque la mayoría de los combos de la
+    app viven en paneles de ancho fijo, donde eso no aporta nada (el layout ignora
+    el sizeHint) y solo agranda el mínimo. Lo usan los popovers del Editor de Imagen,
+    que sí se dimensionan solos según su contenido (ver popover_button.py)."""
+
+    def __init__(self, parent=None, fit_contents: bool = False):
         super().__init__(parent)
+        self._fit_contents = fit_contents
         self.setSizeAdjustPolicy(QComboBox.AdjustToContents)
         self.setItemDelegate(CheckmarkComboDelegate(self))
         if self.view():
             self.view().setAttribute(Qt.WA_StyledBackground, True)
+
+    def _chrome_width(self, height: int) -> int:
+        """Ancho que el estilo se reserva para sí (padding del QSS + bordes + flecha),
+        MEDIDO contra un rect de referencia en vez de estimado con un número mágico.
+
+        Hace falta porque QComboBox.sizeHint() no suma el padding cuando viene de la
+        hoja de estilos: el ítem más largo "entra" según sizeHint, el layout le da
+        exactamente ese ancho, y después paintEvent() lo dibuja en SC_ComboBoxEditField
+        -- que es más angosto -- y sale elidido. Preguntándole al estilo por el mismo
+        rect que usa paintEvent, la cuenta cierra sola con cualquier tema o fuente."""
+        opt = QStyleOptionComboBox()
+        self.initStyleOption(opt)
+        opt.rect = QRect(0, 0, _CHROME_PROBE_WIDTH, max(1, height))
+        field = self.style().subControlRect(
+            QStyle.ComplexControl.CC_ComboBox, opt, QStyle.SubControl.SC_ComboBoxEditField, self)
+        return max(0, _CHROME_PROBE_WIDTH - field.width())
 
     def _widest_item_text_width(self) -> int:
         fm = self.fontMetrics()
@@ -202,11 +231,21 @@ class AutoPopupComboBox(QComboBox):
 
     def sizeHint(self):
         hint = super().sizeHint()
-        if self.placeholderText():
-            fm = self.fontMetrics()
-            w = fm.horizontalAdvance(self.placeholderText()) + 42
-            if w > hint.width():
-                hint.setWidth(w)
+        fm = self.fontMetrics()
+        text_width = fm.horizontalAdvance(self.placeholderText()) if self.placeholderText() else 0
+        if self._fit_contents:
+            icon_w = self.iconSize().width() + 6
+            for i in range(self.count()):
+                w = fm.horizontalAdvance(self.itemText(i))
+                if not self.itemIcon(i).isNull():
+                    w += icon_w
+                text_width = max(text_width, w)
+        if text_width:
+            # +2: el margen de seguridad que paintEvent() le resta al rect antes de
+            # dibujar, para que el texto no toque la línea de la flecha.
+            needed = text_width + self._chrome_width(hint.height()) + 2
+            if needed > hint.width():
+                hint.setWidth(needed)
         return hint
 
     def showPopup(self):

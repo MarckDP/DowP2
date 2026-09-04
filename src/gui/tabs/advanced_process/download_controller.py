@@ -244,10 +244,12 @@ class DownloadController(QObject):
         """Jobs del QueueManager que le corresponden a ESTA pestaña (Proceso Avanzado).
         El QueueManager es compartido con Herramientas Multimedia (jobs "RECODE") - sin
         este filtro, encolar una recodificación desde la otra pestaña contaminaba el
-        progreso agregado de aquí ("X de Y completados" contando recodificaciones ajenas)
-        y los logs de esta clase (ver conversación: aparecían mensajes "Fallo en
-        descarga" para jobs que en realidad eran recodificaciones)."""
-        return [j for j in self.queue_mgr.get_all_jobs() if j.job_type in ("DOWNLOAD", "PLAYLIST")]
+        progreso agregado de aquí. Ahora se incluyen los jobs RECODE propios
+        (los que están en _recode_by_download) para que el modo lotes espere
+        su finalización antes de marcar todo como "Completado"."""
+        return [j for j in self.queue_mgr.get_all_jobs() 
+                if j.job_type in ("DOWNLOAD", "PLAYLIST") or 
+                   (j.job_type == "RECODE" and j.job_id in self._recode_by_download)]
 
     def update_queue_main_progress(self):
         """
@@ -441,6 +443,11 @@ class DownloadController(QObject):
                             title=job.title,
                             download_key=job_id,
                         )
+                else:
+                    # Archivos sin recodificar en modo lotes (o playlist): se envían al editor
+                    if job.final_filepath:
+                        actual_path = self._find_actual_downloaded_file(job.final_filepath)
+                        self._send_to_editor_if_enabled(actual_path or job.final_filepath, job.request_data)
         elif status in ("FAILED", "CANCELLED"):
             job = self.queue_mgr.get_job(job_id)
             err_msg = job.error_message if job else ""
@@ -695,8 +702,7 @@ class DownloadController(QObject):
             results["all_ok"] = results["all_ok"] and ok
             if final_path:
                 results["final_paths"].append(final_path)
-                if target == _SOLO_RECODE_KEY:
-                    self._send_to_editor_if_enabled(final_path, request_data)
+                self._send_to_editor_if_enabled(final_path, request_data)
             remaining = self._group_pending.get(target, 1) - 1
             self._group_pending[target] = remaining
             if remaining > 0:
@@ -722,6 +728,11 @@ class DownloadController(QObject):
                     self.tab.tr("Recodificación cancelada") if status == "CANCELLED" else self.tab.tr("Error al recodificar")
                 )
                 card.update_progress(100, speed_text="", status_text=text)
+            
+            if status == "COMPLETED" and final_path:
+                self._send_to_editor_if_enabled(final_path, request_data)
+                
+        self.update_queue_main_progress()
 
     def on_open_output_path_clicked(self):
         path = self.tab.output_options.output_path_input.text().strip()

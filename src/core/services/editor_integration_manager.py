@@ -248,6 +248,14 @@ class EditorIntegrationManager(QObject):
         if status == "COMPLETED" and self.active_editor:
             job = self._queue_mgr.get_job(job_id)
             if job and job.final_filepath:
+                # Ignorar recodificaciones (generan temporales que se envían desde cada pestaña tras limpiar)
+                if job.job_type == "RECODE":
+                    return
+                # Ignorar descargas si van a recodificarse justo después (la pestaña enviará el recodificado)
+                if job.job_type in ("DOWNLOAD", "PLAYLIST"):
+                    if job.request_data and job.request_data.get("recode_enabled"):
+                        return
+                        
                 self.process_completed_job(job)
 
     def process_completed_job(self, job):

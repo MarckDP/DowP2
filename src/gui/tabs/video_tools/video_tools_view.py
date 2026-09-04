@@ -1059,6 +1059,15 @@ class VideoToolsTab(QWidget):
             note = self._recode_job_notes.pop(job_id, None)
             status_text = self.tr("Completado ({0})").format(note) if note else self.tr("Completado")
             self.queue_widget.update_file_status(file_path, status_text)
+            
+            # Enviar el archivo final al editor (el QueueManager ignora los trabajos RECODE)
+            from core.services.editor_integration_manager import EditorIntegrationManager
+            editor_mgr = EditorIntegrationManager.get_instance()
+            if editor_mgr and editor_mgr.is_auto_send_enabled:
+                output_path = job.config.get("output_path")
+                if output_path:
+                    editor_mgr.process_raw_download(output_path, job.request_data if job else {})
+                
             self._check_all_finished()
         elif status == JobStatus.FAILED:
             rollback_backup(self._recode_backups.pop(job_id, None))

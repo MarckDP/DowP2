@@ -379,24 +379,21 @@ QPushButton#btnFragments:hover {
         stop:0 {{boton_fragmentos_fin}}, stop:1 {{boton_fragmentos_inicio}});
 }
 
-/* Marcado / toggle encendido (ej. "Comparar" del Editor de Imagen): naranja PLANO
-   con aro, no degradado -- el degradado ya está tomado por los estados normal y
-   hover, así que un toggle activo necesita otra cosa para no verse idéntico al
-   apagado. El padding baja 2px justo lo que mide el borde: sin eso el botón
-   cambiaría de tamaño al marcarlo y empujaría la fila de al lado.
+/* Marcado / toggle encendido (ej. "Comparar" del Editor de Imagen): cambia a un
+   estilo plano, no iluminado, sin borde adicional para no alterar su diseño base.
    Va ANTES de :disabled a propósito -- misma especificidad, gana el último, y un
    botón deshabilitado tiene que verse deshabilitado aunque quede marcado. */
 QPushButton[variant="accent-orange"]:checked {
     background: none;
-    background-color: {{boton_fragmentos_fin}};
-    color: {{boton_fragmentos_texto}};
-    border: 2px solid {{boton_fragmentos_texto}};
-    padding: 4px 14px;
+    background-color: {{fondo_secundario}};
+    color: {{texto_principal}};
+    border: none;
+    padding: 6px 16px;
 }
 
 QPushButton[variant="accent-orange"]:checked:hover {
     background: none;
-    background-color: {{boton_fragmentos_inicio}};
+    background-color: {{fondo_terciario}};
 }
 
 QPushButton[variant="accent-orange"]:disabled,

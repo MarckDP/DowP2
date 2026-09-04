@@ -357,12 +357,29 @@ class QuickDownloadController(QObject):
         for task in list(self.active_workers):
             task["cancellation_event"].set()
         self.active_workers.clear()
+        
+        # Cancelar todas las recodificaciones en curso
+        for job_id in list(self._recode_by_download.keys()):
+            self.queue_mgr.cancel_job(job_id)
+            
         self.is_downloading = False
         self.controls_state_changed.emit(True)
         self.download_text_changed.emit(self.tr("Descargar") if hasattr(self, "tr") else "Descargar")
         self.progress_updated.emit(0, self.tr("Descargas canceladas") if hasattr(self, "tr") else "Descargas canceladas", "wait")
         if self.tab.taskbar_manager:
             self.tab.taskbar_manager.stop()
+
+    def cancel_row(self, row):
+        """Cancela las descargas y recodificaciones asociadas a una fila específica."""
+        # Cancelar descargas
+        for task in list(self.active_workers):
+            if row in task.get("item_rows", []):
+                task["cancellation_event"].set()
+                
+        # Cancelar recodificaciones
+        for job_id, recode_row in list(self._recode_by_download.items()):
+            if recode_row == row:
+                self.queue_mgr.cancel_job(job_id)
 
     def _find_actual_downloaded_file(self, filepath):
         """Busca el archivo real descargado ignorando extensiones temporales."""
@@ -672,6 +689,21 @@ class QuickDownloadController(QObject):
             return False
         return True
 
+    def _parse_duration_to_seconds(self, duration_str: str) -> float:
+        """Convierte una cadena de duración (ej. 00:03:20) a segundos."""
+        if not duration_str or duration_str == "0":
+            return 0.0
+        try:
+            parts = duration_str.split(":")
+            if len(parts) == 3:
+                return float(parts[0]) * 3600 + float(parts[1]) * 60 + float(parts[2])
+            elif len(parts) == 2:
+                return float(parts[0]) * 60 + float(parts[1])
+            else:
+                return float(duration_str)
+        except Exception:
+            return 0.0
+
     def _start_post_download_recode(self, actual_path, request_data, row, title,
                                      fragment_position=None, fragment_total=None):
         """
@@ -708,11 +740,20 @@ class QuickDownloadController(QObject):
             logger.error(f"QuickModeTab: No se pudo poner en cuarentena '{actual_path}': {e}")
             return False
 
+        # Obtener duración real para que la barra de progreso funcione
+        from core.tabs.editing_media.ffprobe_metadata_manager import FFprobeMetadataManager
+        duration_sec = 0.0
+        try:
+            meta = FFprobeMetadataManager.get_instance().get_metadata_instant(backup_path, "video")
+            duration_sec = self._parse_duration_to_seconds(meta.get("duración", "0"))
+        except Exception as e:
+            logger.error(f"QuickModeTab: No se pudo obtener duración de {backup_path}: {e}")
+
         recode_job_id = self.queue_mgr.add_job({
             "input_path": backup_path,
             "output_path": out_file,
             "settings": settings,
-            "duration_sec": 0.0,
+            "duration_sec": duration_sec,
             "title": f"Recode: {title}",
         }, "RECODE")
 

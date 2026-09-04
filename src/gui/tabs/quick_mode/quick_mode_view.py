@@ -414,8 +414,8 @@ class QuickModeTab(QWidget):
             if idx < len(self.controller.current_item_keys):
                 self.controller.current_item_keys.pop(idx)
                 
-            if self.controller.is_downloading and not self.controller.current_item_rows:
-                self.controller.cancel_download()
+        # Delegamos en el controller cancelar los procesos (descargas/recodificaciones) asociados a esta fila
+        self.controller.cancel_row(row)
                 
         self.activity_panel.remove_row(row)
 

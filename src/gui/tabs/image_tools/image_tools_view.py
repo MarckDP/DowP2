@@ -1449,6 +1449,13 @@ class ImageToolsTab(QWidget):
         settings = self._active_convert_settings or {}
         uses_ai = bool(settings.get("upscale_enabled") or settings.get("rembg_enabled"))
         self._files_with_ai_edit[input_path] = uses_ai
+        
+        # Enviar al editor si corresponde
+        from core.services.editor_integration_manager import EditorIntegrationManager
+        editor_mgr = EditorIntegrationManager.get_instance()
+        if editor_mgr and editor_mgr.is_auto_send_enabled:
+            editor_mgr.process_raw_download(output_path, {})
+            
         if input_path != self._current_filepath:
             return
         self._refresh_title_and_copy_button(input_path)

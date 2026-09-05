@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QScrollArea, QApplication,
     QPushButton, QButtonGroup, QLineEdit, QFileDialog, QMessageBox, QProgressDialog,
 )
-from PySide6.QtCore import Qt, QSize, QEvent, QUrl, QStandardPaths, QThread, Signal
+from PySide6.QtCore import Qt, QSize, QEvent, QUrl, QStandardPaths, QThread, Signal, QTimer
 from PySide6.QtGui import QDesktopServices, QPixmap
 
 from core.setup.ghostscript_setup import check_ghostscript, download_ghostscript
@@ -1006,6 +1006,21 @@ class ImageToolsTab(QWidget):
         pixmap = QPixmap(output_path)
         if not pixmap.isNull():
             QApplication.clipboard().setPixmap(pixmap)
+            # Feedback visual
+            original_text = self.btn_copy_result.text()
+            self.btn_copy_result.setText(self.tr("¡Copiado!"))
+            # Opcional: Cambiar estilo para dar énfasis (si el tema lo soporta) o simplemente dejar el texto.
+            self.btn_copy_result.setProperty("variant", "success")
+            self.btn_copy_result.style().unpolish(self.btn_copy_result)
+            self.btn_copy_result.style().polish(self.btn_copy_result)
+            
+            def restore_button():
+                self.btn_copy_result.setText(original_text)
+                self.btn_copy_result.setProperty("variant", "accent-blue")
+                self.btn_copy_result.style().unpolish(self.btn_copy_result)
+                self.btn_copy_result.style().polish(self.btn_copy_result)
+            
+            QTimer.singleShot(1500, restore_button)
         else:
             QMessageBox.warning(
                 self, self.tr("No se pudo copiar"),

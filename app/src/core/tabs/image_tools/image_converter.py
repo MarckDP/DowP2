@@ -463,7 +463,8 @@ class ImageConverter:
         writers = {
             "PNG": self._save_as_png, "JPG": self._save_as_jpg, "JPEG": self._save_as_jpg,
             "WEBP": self._save_as_webp, "AVIF": self._save_as_avif, "PDF": self._save_as_pdf,
-            "TIFF": self._save_as_tiff, "ICO": self._save_as_ico, "BMP": self._save_as_bmp,
+            "TIFF": self._save_as_tiff, "ICO": self._save_as_ico, "ICNS": self._save_as_icns,
+            "BMP": self._save_as_bmp,
         }
         writer = writers.get(output_format)
         if not writer:
@@ -544,6 +545,36 @@ class ImageConverter:
         sizes_dict = options.get("ico_sizes", {})
         selected = [size for size, on in sizes_dict.items() if on] or [32, 256]
         save_img.save(output_path, "ICO", sizes=[(s, s) for s in selected])
+
+    def _save_as_icns(self, img, output_path, options):
+        save_img = img if img.mode == "RGBA" else img.convert("RGBA")
+        # ICNS requiere imágenes cuadradas. Si no lo es, rellenamos con transparente.
+        w, h = save_img.size
+        if w != h:
+            side = max(w, h)
+            square_img = Image.new("RGBA", (side, side), (0, 0, 0, 0))
+            square_img.paste(save_img, ((side - w) // 2, (side - h) // 2))
+            save_img = square_img
+            
+        sizes_dict = options.get("icns_sizes", {})
+        # Pillow genera las variaciones internamente para ICNS si provees la original.
+        # Aquí proveemos la imagen base al mayor tamaño seleccionado y Pillow se encarga,
+        # o podemos generar la lista de imágenes explícitamente para asegurar compatibilidad.
+        selected = sorted([size for size, on in sizes_dict.items() if on], reverse=True)
+        if not selected:
+            selected = [1024, 512, 128, 32]
+            
+        # Generar las distintas resoluciones
+        images = []
+        for s in selected:
+            if s == save_img.size[0]:
+                images.append(save_img)
+            else:
+                images.append(save_img.resize((s, s), Image.Resampling.LANCZOS))
+                
+        # Guardar (la primera es la principal, append_images provee las resoluciones extra)
+        if images:
+            images[0].save(output_path, "ICNS", append_images=images[1:])
 
     def _save_as_bmp(self, img, output_path, options):
         img.convert("RGB").save(output_path, "BMP")

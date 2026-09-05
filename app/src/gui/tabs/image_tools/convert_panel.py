@@ -2,7 +2,7 @@
 import os
 
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel, QComboBox, QCheckBox,
+    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QFrame, QLabel, QComboBox, QCheckBox,
     QSlider, QScrollArea, QSizePolicy, QStackedWidget,
 )
 from PySide6.QtCore import Signal, Qt
@@ -11,7 +11,8 @@ from gui.styles import get_theme_token
 from gui.widgets.combo_box import CheckmarkComboDelegate, AutoPopupComboBox
 from core.tabs.image_tools.convert_options import (
     OUTPUT_FORMATS, JPG_SUBSAMPLING_OPTIONS, TIFF_COMPRESSION_OPTIONS,
-    ICO_SIZES, ICO_DEFAULT_SIZES, default_options_for_format,
+    ICO_SIZES, ICO_DEFAULT_SIZES, ICNS_SIZES, ICNS_DEFAULT_SIZES,
+    default_options_for_format,
 )
 
 _MAX_VISIBLE_COMBO_ITEMS = 12
@@ -28,6 +29,7 @@ class ConvertPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._ico_checkboxes = {}
+        self._icns_checkboxes = {}
         self._init_ui()
         self._on_format_changed()
 
@@ -103,6 +105,7 @@ class ConvertPanel(QWidget):
             "PDF": QWidget(parent),  # sin opciones propias
             "TIFF": self._build_tiff_page(parent),
             "ICO": self._build_ico_page(parent),
+            "ICNS": self._build_icns_page(parent),
             "BMP": self._build_bmp_page(parent),
         }
         self._format_page_index = {}
@@ -212,12 +215,31 @@ class ConvertPanel(QWidget):
         page = QWidget(parent)
         v = QVBoxLayout(page)
         v.addWidget(QLabel(self.tr("Tamaños a incluir:"), page))
-        for size in ICO_SIZES:
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        for i, size in enumerate(ICO_SIZES):
             chk = QCheckBox(f"{size}×{size}", page)
             chk.setChecked(size in ICO_DEFAULT_SIZES)
             chk.toggled.connect(self._emit_validity)
-            v.addWidget(chk)
+            grid.addWidget(chk, i // 3, i % 3)
             self._ico_checkboxes[size] = chk
+        v.addLayout(grid)
+        v.addStretch()
+        return page
+
+    def _build_icns_page(self, parent) -> QWidget:
+        page = QWidget(parent)
+        v = QVBoxLayout(page)
+        v.addWidget(QLabel(self.tr("Tamaños a incluir:"), page))
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        for i, size in enumerate(ICNS_SIZES):
+            chk = QCheckBox(f"{size}×{size}", page)
+            chk.setChecked(size in ICNS_DEFAULT_SIZES)
+            chk.toggled.connect(self._emit_validity)
+            grid.addWidget(chk, i // 3, i % 3)
+            self._icns_checkboxes[size] = chk
+        v.addLayout(grid)
         v.addStretch()
         return page
 
@@ -240,8 +262,11 @@ class ConvertPanel(QWidget):
     # ─── API pública ─────────────────────────────────────────────
 
     def is_valid(self) -> bool:
-        if self.combo_format.currentData() == "ICO":
+        fmt = self.combo_format.currentData()
+        if fmt == "ICO":
             return any(chk.isChecked() for chk in self._ico_checkboxes.values())
+        if fmt == "ICNS":
+            return any(chk.isChecked() for chk in self._icns_checkboxes.values())
         return True
 
     def get_status(self) -> tuple[bool, str]:
@@ -276,6 +301,8 @@ class ConvertPanel(QWidget):
             settings["tiff_transparency"] = self.chk_tiff_transparency.isChecked()
         elif fmt == "ICO":
             settings["ico_sizes"] = {size: chk.isChecked() for size, chk in self._ico_checkboxes.items()}
+        elif fmt == "ICNS":
+            settings["icns_sizes"] = {size: chk.isChecked() for size, chk in self._icns_checkboxes.items()}
         elif fmt == "BMP":
             settings["bmp_rle"] = self.chk_bmp_rle.isChecked()
 

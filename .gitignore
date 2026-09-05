@@ -49,3 +49,16 @@ build/
 *.njsproj
 *.sln
 *.sw?
+*.swp
+*.swo
+
+# Project specific
+basura/
+bin/
+logs/
+scratch/
+*.log
+
+# Codec matrix tooling (tools/codec_matrix/): salida regenerable, no versionar
+app/tools/codec_matrix/_tmp_probe/
+app/tools/codec_matrix/runs/

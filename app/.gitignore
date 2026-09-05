@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environments
+.venv/
+venv/
+ENV/
+env/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Project specific
+basura/
+bin/
+logs/
+scratch/
+*.log
+
+# Codec matrix tooling (tools/codec_matrix/): salida regenerable, no versionar
+tools/codec_matrix/_tmp_probe/
+tools/codec_matrix/runs/
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store

@@ -1,0 +1,2232 @@
+{
+  "schema_version": "3.0",
+  "source": {
+    "name": "Wikipedia — Comparison of video container formats",
+    "url": "https://en.wikipedia.org/wiki/Comparison_of_video_container_formats",
+    "retrieved": "2026-08-15",
+    "scope": "Video and audio coding-format compatibility matrices"
+  },
+  "containers": {
+    "mkv": {
+      "name": "Matroska",
+      "extensions": [
+        ".mkv",
+        ".mk3d",
+        ".mka",
+        ".mks"
+      ]
+    },
+    "mp4": {
+      "name": "MPEG-4 Part 14",
+      "extensions": [
+        ".mp4",
+        ".m4v",
+        ".m4a",
+        ".m4b",
+        ".m4p"
+      ]
+    },
+    "qtff": {
+      "name": "QuickTime File Format",
+      "extensions": [
+        ".mov",
+        ".qt"
+      ]
+    },
+    "asf": {
+      "name": "Advanced Systems Format",
+      "extensions": [
+        ".asf",
+        ".wmv",
+        ".wma"
+      ]
+    },
+    "avi": {
+      "name": "Audio Video Interleave",
+      "extensions": [
+        ".avi"
+      ]
+    },
+    "mxf": {
+      "name": "Material Exchange Format",
+      "extensions": [
+        ".mxf"
+      ]
+    },
+    "ps_ts": {
+      "name": "MPEG Program Stream / Transport Stream",
+      "extensions": [
+        ".ps",
+        ".m2p",
+        ".ts",
+        ".tsv",
+        ".mpg",
+        ".mpeg",
+        ".mpv",
+        ".m1v"
+      ]
+    },
+    "3gp": {
+      "name": "3GPP",
+      "extensions": [
+        ".3gp"
+      ]
+    },
+    "3g2": {
+      "name": "3GPP2",
+      "extensions": [
+        ".3g2"
+      ]
+    }
+  },
+  "video_codecs": {
+    "MPEG-H HEVC (H.265)": {
+      "type": "lossy_or_lossless",
+      "initial_release": "2013-06",
+      "license": "Patent encumbered",
+      "container_support": {
+        "mkv": {
+          "level": "full"
+        },
+        "mp4": {
+          "level": "full"
+        },
+        "qtff": {
+          "level": "full"
+        },
+        "asf": {
+          "level": "full"
+        },
+        "avi": {
+          "level": "full"
+        },
+        "mxf": {
+          "level": "full"
+        },
+        "ps_ts": {
+          "level": "full"
+        },
+        "3gp": {
+          "level": "full"
+        },
+        "3g2": {
+          "level": "full"
+        }
+      }
+    },
+    "MPEG-4 AVC (H.264)": {
+      "type": "lossy_or_lossless",
+      "initial_release": "2004-08",
+      "license": "Patent encumbered",
+      "container_support": {
+        "mkv": {
+          "level": "full"
+        },
+        "mp4": {
+          "level": "full"
+        },
+        "qtff": {
+          "level": "full"
+        },
+        "asf": {
+          "level": "full"
+        },
+        "avi": {
+          "level": "full"
+        },
+        "mxf": {
+          "level": "full"
+        },
+        "ps_ts": {
+          "level": "full"
+        },
+        "3gp": {
+          "level": "full"
+        },
+        "3g2": {
+          "level": "full"
+        }
+      }
+    },
+    "AV1": {
+      "type": "lossy_or_lossless",
+      "initial_release": "2018-03",
+      "license": "Patent claims",
+      "container_support": {
+        "mkv": {
+          "level": "full"
+        },
+        "mp4": {
+          "level": "full"
+        },
+        "qtff": {
+          "level": "none"
+        },
+        "asf": {
+          "level": "none"
+        },
+        "avi": {
+          "level": "none"
+        },
+        "mxf": {
+          "level": "none"
+        },
+        "ps_ts": {
+          "level": "planned"
+        },
+        "3gp": {
+          "level": "none"
+        },
+        "3g2": {
+          "level": "none"
+        }
+      }
+    },
+    "VP9": {
+      "type": "lossy_or_lossless",
+      "initial_release": "2013-06",
+      "license": "Patent claims",
+      "container_support": {
+        "mkv": {
+          "level": "full"
+        },
+        "mp4": {
+          "level": "full"
+        },
+        "qtff": {
+          "level": "none"
+        },
+        "asf": {
+          "level": "full"
+        },
+        "avi": {
+          "level": "full"
+        },
+        "mxf": {
+          "level": "none"
+        },
+        "ps_ts": {
+          "level": "none"
+        },
+        "3gp": {
+          "level": "none"
+        },
+        "3g2": {
+          "level": "none"
+        }
+      }
+    },
+    "VP8": {
+      "type": "lossy_or_lossless",
+      "initial_release": "2008-09",
+      "license": "Patent claims",
+      "container_support": {
+        "mkv": {
+          "level": "full"
+        },
+        "mp4": {
+          "level": "full"
+        },
+        "qtff": {
+          "level": "none"
+        },
+        "asf": {
+          "level": "full"
+        },
+        "avi": {
+          "level": "full"
+        },
+        "mxf": {
+          "level": "none"
+        },
+        "ps_ts": {
+          "level": "none"
+        },
+        "3gp": {
+          "level": "none"
+        },
+        "3g2": {
+          "level": "none"
+        }
+      }
+    },
+    "Dirac": {
+      "type": "lossy_or_lossless",
+      "initial_release": "2008-03",
+      "license": "Patent-free",
+      "container_support": {
+        "mkv": {
+          "level": "indirect",
+          "via": "vcm"
+        },
+        "mp4": {
+          "level": "none"
+        },
+        "qtff": {
+          "level": "full"
+        },
+        "asf": {
+          "level": "none"
+        },
+        "avi": {
+          "level": "requires_external",
+          "requires": "Dirac"
+        },
+        "mxf": {
+          "level": "none"
+        },
+        "ps_ts": {
+          "level": "private"
+        },
+        "3gp": {
+          "level": "none"
+        },
+        "3g2": {
+          "level": "none"
+        }
+      }
+    },
+    "MVC": {
+      "type": "stereoscopic",
+      "initial_release": "2009-05",
+      "license": "Patent encumbered",
+      "container_support": {
+        "mkv": {
+          "level": "full"
+        },
+        "mp4": {
+          "level": "none"
+        },
+        "qtff": {
+          "level": "none"
+        },
+        "asf": {
+          "level": "none"
+        },
+        "avi": {
+          "level": "none"
+        },
+        "mxf": {
+          "level": "none"
+        },
+        "ps_ts": {
+          "level": "none"
+        },
+        "3gp": {
+          "level": "full"
+        },
+        "3g2": {
+          "level": "full"
+        }
+      }
+    },
+    "MPEG-1 Video": {
+      "type": "lossy",
+      "initial_release": "1993-08",
+      "license": "Expired patents",
+      "container_support": {
+        "mkv": {
+          "level": "full"
+        },
+        "mp4": {
+          "level": "full"
+        },
+        "qtff": {
+          "level": "full"
+        },
+        "asf": {
+          "level": "full"
+        },
+        "avi": {
+          "level": "full"
+        },
+        "mxf": {
+          "level": "full"
+        },
+        "ps_ts": {
+          "level": "full"
+        },
+        "3gp": {
+          "level": "none"
+        },
+        "3g2": {
+          "level": "none"
+        }
+      }
+    },
+    "MPEG-2 Video": {
+      "type": "lossy",
+      "initial_release": "1996-05",
+      "license": "Expired patents",
+      "container_support": {
+        "mkv": {
+          "level": "full"
+        },
+        "mp4": {
+          "level": "full"
+        },
+        "qtff": {
+          "level": "full"
+        },
+        "asf": {
+          "level": "full"
+        },
+        "avi": {
+          "level": "full"
+        },
+        "mxf": {
+          "level": "full"
+        },
+        "ps_ts": {
+          "level": "full"
+        },
+        "3gp": {
+          "level": "none"
+        },
+        "3g2": {
+          "level": "none"
+        }
+      }
+    },
+    "MPEG-4 Visual": {
+      "type": "lossy",
+      "initial_release": "1999-12",
+      "license": "Expired patents",
+      "container_support": {
+        "mkv": {
+          "level": "full"
+        },
+        "mp4": {
+          "level": "full"
+        },
+        "qtff": {
+          "level": "partial",
+          "note": "First edition"
+        },
+        "asf": {
+          "level": "full"
+        },
+        "avi": {
+          "level": "full"
+        },
+        "mxf": {
+          "level": "full"
+        },
+        "ps_ts": {
+          "level": "full"
+        },
+        "3gp": {
+          "level": "full"
+        },
+        "3g2": {
+          "level": "full"
+        }
+      }
+    },
+    "Microsoft MPEG4 V2": {
+      "type": "lossy",
+      "initial_release": "2003",
+      "license": "Patent encumbered, proprietary",
+      "container_support": {
+        "mkv": {
+          "level": "full"
+        },
+        "mp4": {
+          "level": "nonstandard"
+        },
+        "qtff": {
+          "level": "nonstandard"
+        },
+        "asf": {
+          "level": "full"
+        },
+        "avi": {
+          "level": "full"
+        },
+        "mxf": {
+          "level": "none"
+        },
+        "ps_ts": {
+          "level": "none"
+        },
+        "3gp": {
+          "level": "none"
+        },
+        "3g2": {
+          "level": "none"
+        }
+      }
+    },
+    "VC-1": {
+      "type": "lossy",
+      "initial_release": "2006-02",
+      "license": "Patent encumbered",
+      "container_support": {
+        "mkv": {
+          "level": "indirect",
+          "via": "vcm"
+        },
+        "mp4": {
+          "level": "full"
+        },
+        "qtff": {
+          "level": "full"
+        },
+        "asf": {
+          "level": "full"
+        },
+        "avi": {
+          "level": "full"
+        },
+        "mxf": {
+          "level": "full"
+        },
+        "ps_ts": {
+          "level": "none"
+        },
+        "3gp": {
+          "level": "none"
+        },
+        "3g2": {
+          "level": "none"
+        }
+      }
+    },
+    "H.263": {
+      "type": "lossy",
+      "initial_release": "1996-03",
+      "license": "Patent encumbered",
+      "container_support": {
+        "mkv": {
+          "level": "none"
+        },
+        "mp4": {
+          "level": "full"
+        },
+        "qtff": {
+          "level": "full"
+        },
+        "asf": {
+          "level": "full"
+        },
+        "avi": {
+          "level": "full"
+        },
+        "mxf": {
+          "level": "none"
+        },
+        "ps_ts": {
+          "level": "none"
+        },
+        "3gp": {
+          "level": "full"
+        },
+        "3g2": {
+          "level": "full"
+        }
+      }
+    },
+    "Theora": {
+      "type": "lossy",
+      "initial_release": "2004-06",
+      "license": "Free license",
+      "container_support": {
+        "mkv": {
+          "level": "full"
+        },
+        "mp4": {
+          "level": "none"
+        },
+        "qtff": {
+          "level": "none"
+        },
+        "asf": {
+          "level": "none"
+        },
+        "avi": {
+          "level": "requires_external",
+          "requires": "ffdshow"
+        },
+        "mxf": {
+          "level": "none"
+        },
+        "ps_ts": {
+          "level": "none"
+        },
+        "3gp": {
+          "level": "none"
+        },
+        "3g2": {
+          "level": "none"
+        }
+      }
+    },
+    "Cinepak": {
+      "type": "lossy",
+      "initial_release": "1991",
+      "license": "Proprietary",
+      "container_support": {
+        "mkv": {
+          "level": "full"
+        },
+        "mp4": {
+          "level": "none"
+        },
+        "qtff": {
+          "level": "full"
+        },
+        "asf": {
+          "level": "none"
+        },
+        "avi": {
+          "level": "full"
+        },
+        "mxf": {
+          "level": "none"
+        },
+        "ps_ts": {
+          "level": "none"
+        },
+        "3gp": {
+          "level": "none"
+        },
+        "3g2": {
+          "level": "none"
+        }
+      }
+    },
+    "Sorenson": {
+      "type": "lossy",
+      "initial_release": "1998-03",
+      "license": "Proprietary",
+      "container_support": {
+        "mkv": {
+          "level": "full"
+        },
+        "mp4": {
+          "level": "none"
+        },
+        "qtff": {
+          "level": "partial",
+          "note": "Versions 1 and 3"
+        },
+        "asf": {
+          "level": "none"
+        },
+        "avi": {
+          "level": "partial",
+          "note": "Version 1"
+        },
+        "mxf": {
+          "level": "none"
+        },
+        "ps_ts": {
+          "level": "none"
+        },
+        "3gp": {
+          "level": "none"
+        },
+        "3g2": {
+          "level": "none"
+        }
+      }
+    },
+    "RealVideo": {
+      "type": "lossy",
+      "initial_release": "1997-02",
+      "license": "Proprietary",
+      "container_support": {
+        "mkv": {
+          "level": "partial",
+          "note": "RV10, RV20, RV30, RV40"
+        },
+        "mp4": {
+          "level": "partial",
+          "note": "RV60"
+        },
+        "qtff": {
+          "level": "none"
+        },
+        "asf": {
+          "level": "none"
+        },
+        "avi": {
+          "level": "nonstandard"
+        },
+        "mxf": {
+          "level": "none"
+        },
+        "ps_ts": {
+          "level": "none"
+        },
+        "3gp": {
+          "level": "none"
+        },
+        "3g2": {
+          "level": "none"
+        }
+      }
+    },
+    "VP6": {
+      "type": "lossy",
+      "initial_release": "2003-05",
+      "license": "Proprietary",
+      "container_support": {
+        "mkv": {
+          "level": "none"
+        },
+        "mp4": {
+          "level": "none"
+        },
+        "qtff": {
+          "level": "none"
+        },
+        "asf": {
+          "level": "none"
+        },
+        "avi": {
+          "level": "requires_external",
+          "requires": "VP6"
+        },
+        "mxf": {
+          "level": "none"
+        },
+        "ps_ts": {
+          "level": "none"
+        },
+        "3gp": {
+          "level": "none"
+        },
+        "3g2": {
+          "level": "none"
+        }
+      }
+    },
+    "DV": {
+      "type": "intra_frame",
+      "initial_release": "1995",
+      "license": "Proprietary",
+      "container_support": {
+        "mkv": {
+          "level": "indirect",
+          "via": "vcm"
+        },
+        "mp4": {
+          "level": "partial",
+          "note": "DVCPRO HD"
+        },
+        "qtff": {
+          "level": "partial",
+          "note": "DV 25"
+        },
+        "asf": {
+          "level": "full"
+        },
+        "avi": {
+          "level": "full"
+        },
+        "mxf": {
+          "level": "full"
+        },
+        "ps_ts": {
+          "level": "none"
+        },
+        "3gp": {
+          "level": "none"
+        },
+        "3g2": {
+          "level": "none"
+        }
+      }
+    },
+    "M-JPEG": {
+      "type": "intra_frame",
+      "initial_release": "1994-05",
+      "license": "Expired patents",
+      "container_support": {
+        "mkv": {
+          "level": "indirect",
+          "via": "vcm"
+        },
+        "mp4": {
+          "level": "full"
+        },
+        "qtff": {
+          "level": "full"
+        },
+        "asf": {
+          "level": "full"
+        },
+        "avi": {
+          "level": "full"
+        },
+        "mxf": {
+          "level": "none"
+        },
+        "ps_ts": {
+          "level": "none"
+        },
+        "3gp": {
+          "level": "none"
+        },
+        "3g2": {
+          "level": "none"
+        }
+      }
+    },
+    "MJ2": {
+      "type": "intra_frame",
+      "initial_release": "2003-12",
+      "license": "Patent encumbered",
+      "container_support": {
+        "mkv": {
+          "level": "none"
+        },
+        "mp4": {
+          "level": "full"
+        },
+        "qtff": {
+          "level": "none"
+        },
+        "asf": {
+          "level": "none"
+        },
+        "avi": {
+          "level": "nonstandard"
+        },
+        "mxf": {
+          "level": "full"
+        },
+        "ps_ts": {
+          "level": "none"
+        },
+        "3gp": {
+          "level": "none"
+        },
+        "3g2": {
+          "level": "none"
+        }
+      }
+    },
+    "Apple ProRes": {
+      "type": "intra_frame",
+      "initial_release": "2007-04",
+      "license": "Proprietary",
+      "container_support": {
+        "mkv": {
+          "level": "none"
+        },
+        "mp4": {
+          "level": "none"
+        },
+        "qtff": {
+          "level": "full"
+        },
+        "asf": {
+          "level": "none"
+        },
+        "avi": {
+          "level": "none"
+        },
+        "mxf": {
+          "level": "full"
+        },
+        "ps_ts": {
+          "level": "none"
+        },
+        "3gp": {
+          "level": "none"
+        },
+        "3g2": {
+          "level": "none"
+        }
+      }
+    },
+    "HuffYUV": {
+      "type": "lossless",
+      "initial_release": "2000",
+      "license": "Open source",
+      "container_support": {
+        "mkv": {
+          "level": "indirect",
+          "via": "vcm"
+        },
+        "mp4": {
+          "level": "none"
+        },
+        "qtff": {
+          "level": "none"
+        },
+        "asf": {
+          "level": "none"
+        },
+        "avi": {
+          "level": "requires_external",
+          "requires": "HuffYUV"
+        },
+        "mxf": {
+          "level": "none"
+        },
+        "ps_ts": {
+          "level": "none"
+        },
+        "3gp": {
+          "level": "none"
+        },
+        "3g2": {
+          "level": "none"
+        }
+      }
+    },
+    "YCbCr": {
+      "type": "not_compressed",
+      "initial_release": "1982",
+      "license": "Patent-free",
+      "container_support": {
+        "mkv": {
+          "level": "full"
+        },
+        "mp4": {
+          "level": "partial",
+          "note": "SheerVideo"
+        },
+        "qtff": {
+          "level": "full"
+        },
+        "asf": {
+          "level": "full"
+        },
+        "avi": {
+          "level": "full"
+        },
+        "mxf": {
+          "level": "full"
+        },
+        "ps_ts": {
+          "level": "none"
+        },
+        "3gp": {
+          "level": "none"
+        },
+        "3g2": {
+          "level": "none"
+        }
+      }
+    },
+    "Other": {
+      "type": "other",
+      "initial_release": "—",
+      "license": "Varies",
+      "container_support": {
+        "mkv": {
+          "level": "none"
+        },
+        "mp4": {
+          "level": "none"
+        },
+        "qtff": {
+          "level": "partial",
+          "note": "DVC Pro 50, Photo JPEG, Graphics, QuickTime Animation"
+        },
+        "asf": {
+          "level": "none"
+        },
+        "avi": {
+          "level": "partial",
+          "note": "Indeo"
+        },
+        "mxf": {
+          "level": "none"
+        },
+        "ps_ts": {
+          "level": "partial",
+          "note": "JPEG 2000, TICO"
+        },
+        "3gp": {
+          "level": "none"
+        },
+        "3g2": {
+          "level": "none"
+        }
+      }
+    }
+  },
+  "audio_codecs": {
+    "AAC": {
+      "type": "lossy",
+      "initial_release": "1997-12",
+      "license": "Royalties on codecs",
+      "container_support": {
+        "mkv": {
+          "level": "full"
+        },
+        "mp4": {
+          "level": "full"
+        },
+        "qtff": {
+          "level": "full"
+        },
+        "asf": {
+          "level": "partial",
+          "note": "AAC-LC, HE-AAC"
+        },
+        "avi": {
+          "level": "partial",
+          "note": "AAC-LC, HE-AAC"
+        },
+        "mxf": {
+          "level": "full"
+        },
+        "ps_ts": {
+          "level": "private"
+        },
+        "3gp": {
+          "level": "partial",
+          "note": "AAC-LC, HE-AAC"
+        },
+        "3g2": {
+          "level": "partial",
+          "note": "AAC-LC, HE-AAC v1"
+        }
+      }
+    },
+    "MP3": {
+      "type": "lossy",
+      "initial_release": "1991-12",
+      "license": "Expired patents",
+      "container_support": {
+        "mkv": {
+          "level": "full"
+        },
+        "mp4": {
+          "level": "full"
+        },
+        "qtff": {
+          "level": "partial",
+          "note": "MPEG-1 Audio"
+        },
+        "asf": {
+          "level": "full"
+        },
+        "avi": {
+          "level": "full"
+        },
+        "mxf": {
+          "level": "full"
+        },
+        "ps_ts": {
+          "level": "full"
+        },
+        "3gp": {
+          "level": "none"
+        },
+        "3g2": {
+          "level": "none"
+        }
+      }
+    },
+    "AC-3": {
+      "type": "lossy",
+      "initial_release": "1991-02",
+      "license": "Expired patents",
+      "container_support": {
+        "mkv": {
+          "level": "full"
+        },
+        "mp4": {
+          "level": "full"
+        },
+        "qtff": {
+          "level": "full"
+        },
+        "asf": {
+          "level": "full"
+        },
+        "avi": {
+          "level": "full"
+        },
+        "mxf": {
+          "level": "full"
+        },
+        "ps_ts": {
+          "level": "private"
+        },
+        "3gp": {
+          "level": "none"
+        },
+        "3g2": {
+          "level": "none"
+        }
+      }
+    },
+    "E-AC-3": {
+      "type": "lossy",
+      "initial_release": "2005-02",
+      "license": "Patent encumbered",
+      "container_support": {
+        "mkv": {
+          "level": "partial",
+          "note": "QuickTime"
+        },
+        "mp4": {
+          "level": "full"
+        },
+        "qtff": {
+          "level": "full"
+        },
+        "asf": {
+          "level": "full"
+        },
+        "avi": {
+          "level": "none"
+        },
+        "mxf": {
+          "level": "none"
+        },
+        "ps_ts": {
+          "level": "none"
+        },
+        "3gp": {
+          "level": "none"
+        },
+        "3g2": {
+          "level": "none"
+        }
+      }
+    },
+    "DTS": {
+      "type": "lossy",
+      "initial_release": "1993-06",
+      "license": "Proprietary",
+      "container_support": {
+        "mkv": {
+          "level": "full"
+        },
+        "mp4": {
+          "level": "full"
+        },
+        "qtff": {
+          "level": "none"
+        },
+        "asf": {
+          "level": "full"
+        },
+        "avi": {
+          "level": "full"
+        },
+        "mxf": {
+          "level": "none"
+        },
+        "ps_ts": {
+          "level": "private"
+        },
+        "3gp": {
+          "level": "none"
+        },
+        "3g2": {
+          "level": "none"
+        }
+      }
+    },
+    "WMA": {
+      "type": "lossy",
+      "initial_release": "1999-08",
+      "license": "Proprietary",
+      "container_support": {
+        "mkv": {
+          "level": "indirect",
+          "via": "acm"
+        },
+        "mp4": {
+          "level": "none"
+        },
+        "qtff": {
+          "level": "none"
+        },
+        "asf": {
+          "level": "full"
+        },
+        "avi": {
+          "level": "full"
+        },
+        "mxf": {
+          "level": "none"
+        },
+        "ps_ts": {
+          "level": "none"
+        },
+        "3gp": {
+          "level": "none"
+        },
+        "3g2": {
+          "level": "none"
+        }
+      }
+    },
+    "Opus": {
+      "type": "lossy",
+      "initial_release": "2012-09",
+      "license": "Royalty-free",
+      "container_support": {
+        "mkv": {
+          "level": "full"
+        },
+        "mp4": {
+          "level": "full"
+        },
+        "qtff": {
+          "level": "full"
+        },
+        "asf": {
+          "level": "full"
+        },
+        "avi": {
+          "level": "full"
+        },
+        "mxf": {
+          "level": "none"
+        },
+        "ps_ts": {
+          "level": "full"
+        },
+        "3gp": {
+          "level": "none"
+        },
+        "3g2": {
+          "level": "none"
+        }
+      }
+    },
+    "Vorbis": {
+      "type": "lossy",
+      "initial_release": "2000-05",
+      "license": "Open source",
+      "container_support": {
+        "mkv": {
+          "level": "full"
+        },
+        "mp4": {
+          "level": "private"
+        },
+        "qtff": {
+          "level": "none"
+        },
+        "asf": {
+          "level": "none"
+        },
+        "avi": {
+          "level": "problematic"
+        },
+        "mxf": {
+          "level": "none"
+        },
+        "ps_ts": {
+          "level": "none"
+        },
+        "3gp": {
+          "level": "none"
+        },
+        "3g2": {
+          "level": "none"
+        }
+      }
+    },
+    "MP2": {
+      "type": "lossy",
+      "initial_release": "1991-12",
+      "license": "Patent-free",
+      "container_support": {
+        "mkv": {
+          "level": "full"
+        },
+        "mp4": {
+          "level": "full"
+        },
+        "qtff": {
+          "level": "none"
+        },
+        "asf": {
+          "level": "full"
+        },
+        "avi": {
+          "level": "full"
+        },
+        "mxf": {
+          "level": "full"
+        },
+        "ps_ts": {
+          "level": "full"
+        },
+        "3gp": {
+          "level": "none"
+        },
+        "3g2": {
+          "level": "none"
+        }
+      }
+    },
+    "MP1": {
+      "type": "lossy",
+      "initial_release": "1991-12",
+      "license": "Expired patents",
+      "container_support": {
+        "mkv": {
+          "level": "full"
+        },
+        "mp4": {
+          "level": "full"
+        },
+        "qtff": {
+          "level": "none"
+        },
+        "asf": {
+          "level": "full"
+        },
+        "avi": {
+          "level": "full"
+        },
+        "mxf": {
+          "level": "full"
+        },
+        "ps_ts": {
+          "level": "full"
+        },
+        "3gp": {
+          "level": "none"
+        },
+        "3g2": {
+          "level": "none"
+        }
+      }
+    },
+    "QDesign Music 1 and 2": {
+      "type": "lossy",
+      "initial_release": "1998",
+      "license": "Proprietary",
+      "container_support": {
+        "mkv": {
+          "level": "partial",
+          "note": "QuickTime"
+        },
+        "mp4": {
+          "level": "none"
+        },
+        "qtff": {
+          "level": "full"
+        },
+        "asf": {
+          "level": "none"
+        },
+        "avi": {
+          "level": "none"
+        },
+        "mxf": {
+          "level": "none"
+        },
+        "ps_ts": {
+          "level": "none"
+        },
+        "3gp": {
+          "level": "none"
+        },
+        "3g2": {
+          "level": "none"
+        }
+      }
+    },
+    "ATRAC3": {
+      "type": "lossy",
+      "initial_release": "2000-09",
+      "license": "Proprietary",
+      "container_support": {
+        "mkv": {
+          "level": "full"
+        },
+        "mp4": {
+          "level": "none"
+        },
+        "qtff": {
+          "level": "none"
+        },
+        "asf": {
+          "level": "none"
+        },
+        "avi": {
+          "level": "none"
+        },
+        "mxf": {
+          "level": "none"
+        },
+        "ps_ts": {
+          "level": "none"
+        },
+        "3gp": {
+          "level": "none"
+        },
+        "3g2": {
+          "level": "none"
+        }
+      }
+    },
+    "FLAC": {
+      "type": "lossless",
+      "initial_release": "2001-07",
+      "license": "Open source",
+      "container_support": {
+        "mkv": {
+          "level": "full"
+        },
+        "mp4": {
+          "level": "full"
+        },
+        "qtff": {
+          "level": "none"
+        },
+        "asf": {
+          "level": "full"
+        },
+        "avi": {
+          "level": "full"
+        },
+        "mxf": {
+          "level": "none"
+        },
+        "ps_ts": {
+          "level": "none"
+        },
+        "3gp": {
+          "level": "none"
+        },
+        "3g2": {
+          "level": "none"
+        }
+      }
+    },
+    "ALAC": {
+      "type": "lossless",
+      "initial_release": "2004-04",
+      "license": "Open source",
+      "container_support": {
+        "mkv": {
+          "level": "full"
+        },
+        "mp4": {
+          "level": "full"
+        },
+        "qtff": {
+          "level": "full"
+        },
+        "asf": {
+          "level": "full"
+        },
+        "avi": {
+          "level": "full"
+        },
+        "mxf": {
+          "level": "none"
+        },
+        "ps_ts": {
+          "level": "none"
+        },
+        "3gp": {
+          "level": "none"
+        },
+        "3g2": {
+          "level": "none"
+        }
+      }
+    },
+    "WMA Lossless": {
+      "type": "lossless",
+      "initial_release": "2003-01",
+      "license": "Proprietary",
+      "container_support": {
+        "mkv": {
+          "level": "indirect",
+          "via": "acm"
+        },
+        "mp4": {
+          "level": "none"
+        },
+        "qtff": {
+          "level": "none"
+        },
+        "asf": {
+          "level": "full"
+        },
+        "avi": {
+          "level": "full"
+        },
+        "mxf": {
+          "level": "none"
+        },
+        "ps_ts": {
+          "level": "none"
+        },
+        "3gp": {
+          "level": "none"
+        },
+        "3g2": {
+          "level": "none"
+        }
+      }
+    },
+    "DTS-HD": {
+      "type": "lossless",
+      "initial_release": "2011-08",
+      "license": "Proprietary",
+      "container_support": {
+        "mkv": {
+          "level": "full"
+        },
+        "mp4": {
+          "level": "full"
+        },
+        "qtff": {
+          "level": "full"
+        },
+        "asf": {
+          "level": "none"
+        },
+        "avi": {
+          "level": "none"
+        },
+        "mxf": {
+          "level": "none"
+        },
+        "ps_ts": {
+          "level": "none"
+        },
+        "3gp": {
+          "level": "none"
+        },
+        "3g2": {
+          "level": "none"
+        }
+      }
+    },
+    "Dolby TrueHD": {
+      "type": "lossless",
+      "initial_release": "2006-04",
+      "license": "Proprietary",
+      "container_support": {
+        "mkv": {
+          "level": "full",
+          "note": "Soporte maduro"
+        },
+        "mp4": {
+          "level": "full"
+        },
+        "qtff": {
+          "level": "none"
+        },
+        "asf": {
+          "level": "none"
+        },
+        "avi": {
+          "level": "none"
+        },
+        "mxf": {
+          "level": "none"
+        },
+        "ps_ts": {
+          "level": "none"
+        },
+        "3gp": {
+          "level": "none"
+        },
+        "3g2": {
+          "level": "none"
+        }
+      }
+    },
+    "MLP": {
+      "type": "lossless",
+      "initial_release": "1999-03",
+      "license": "Proprietary",
+      "container_support": {
+        "mkv": {
+          "level": "none"
+        },
+        "mp4": {
+          "level": "full"
+        },
+        "qtff": {
+          "level": "none"
+        },
+        "asf": {
+          "level": "none"
+        },
+        "avi": {
+          "level": "none"
+        },
+        "mxf": {
+          "level": "none"
+        },
+        "ps_ts": {
+          "level": "private"
+        },
+        "3gp": {
+          "level": "none"
+        },
+        "3g2": {
+          "level": "none"
+        }
+      }
+    },
+    "ALS": {
+      "type": "lossless",
+      "initial_release": "2006-03",
+      "license": "Patent encumbered",
+      "container_support": {
+        "mkv": {
+          "level": "none"
+        },
+        "mp4": {
+          "level": "full"
+        },
+        "qtff": {
+          "level": "none"
+        },
+        "asf": {
+          "level": "none"
+        },
+        "avi": {
+          "level": "none"
+        },
+        "mxf": {
+          "level": "none"
+        },
+        "ps_ts": {
+          "level": "full"
+        },
+        "3gp": {
+          "level": "none"
+        },
+        "3g2": {
+          "level": "none"
+        }
+      }
+    },
+    "SLS": {
+      "type": "lossless",
+      "initial_release": "2006-06",
+      "license": "Patent encumbered",
+      "container_support": {
+        "mkv": {
+          "level": "none"
+        },
+        "mp4": {
+          "level": "full"
+        },
+        "qtff": {
+          "level": "none"
+        },
+        "asf": {
+          "level": "none"
+        },
+        "avi": {
+          "level": "none"
+        },
+        "mxf": {
+          "level": "none"
+        },
+        "ps_ts": {
+          "level": "full"
+        },
+        "3gp": {
+          "level": "none"
+        },
+        "3g2": {
+          "level": "none"
+        }
+      }
+    },
+    "LPCM": {
+      "type": "not_compressed",
+      "initial_release": "1979",
+      "license": "Patent-free",
+      "container_support": {
+        "mkv": {
+          "level": "full"
+        },
+        "mp4": {
+          "level": "full"
+        },
+        "qtff": {
+          "level": "full"
+        },
+        "asf": {
+          "level": "full"
+        },
+        "avi": {
+          "level": "full"
+        },
+        "mxf": {
+          "level": "full"
+        },
+        "ps_ts": {
+          "level": "private"
+        },
+        "3gp": {
+          "level": "none"
+        },
+        "3g2": {
+          "level": "none"
+        }
+      }
+    },
+    "A-law PCM": {
+      "type": "not_compressed",
+      "initial_release": "1972-12",
+      "license": "Expired patents",
+      "container_support": {
+        "mkv": {
+          "level": "indirect",
+          "via": "acm"
+        },
+        "mp4": {
+          "level": "none"
+        },
+        "qtff": {
+          "level": "full"
+        },
+        "asf": {
+          "level": "none"
+        },
+        "avi": {
+          "level": "full"
+        },
+        "mxf": {
+          "level": "full"
+        },
+        "ps_ts": {
+          "level": "none"
+        },
+        "3gp": {
+          "level": "none"
+        },
+        "3g2": {
+          "level": "none"
+        }
+      }
+    },
+    "μ-law PCM": {
+      "type": "not_compressed",
+      "initial_release": "1972-12",
+      "license": "Expired patents",
+      "container_support": {
+        "mkv": {
+          "level": "indirect",
+          "via": "acm"
+        },
+        "mp4": {
+          "level": "none"
+        },
+        "qtff": {
+          "level": "full"
+        },
+        "asf": {
+          "level": "full"
+        },
+        "avi": {
+          "level": "none"
+        },
+        "mxf": {
+          "level": "none"
+        },
+        "ps_ts": {
+          "level": "none"
+        },
+        "3gp": {
+          "level": "none"
+        },
+        "3g2": {
+          "level": "none"
+        }
+      }
+    },
+    "IEEE floating-point PCM": {
+      "type": "not_compressed",
+      "initial_release": ">=1985",
+      "license": "Patent-free",
+      "container_support": {
+        "mkv": {
+          "level": "full"
+        },
+        "mp4": {
+          "level": "none"
+        },
+        "qtff": {
+          "level": "full"
+        },
+        "asf": {
+          "level": "full"
+        },
+        "avi": {
+          "level": "full"
+        },
+        "mxf": {
+          "level": "none"
+        },
+        "ps_ts": {
+          "level": "none"
+        },
+        "3gp": {
+          "level": "none"
+        },
+        "3g2": {
+          "level": "none"
+        }
+      }
+    },
+    "Microsoft ADPCM": {
+      "type": "not_compressed",
+      "initial_release": "1992-05",
+      "license": "Proprietary",
+      "container_support": {
+        "mkv": {
+          "level": "indirect",
+          "via": "acm"
+        },
+        "mp4": {
+          "level": "none"
+        },
+        "qtff": {
+          "level": "full"
+        },
+        "asf": {
+          "level": "full"
+        },
+        "avi": {
+          "level": "full"
+        },
+        "mxf": {
+          "level": "none"
+        },
+        "ps_ts": {
+          "level": "none"
+        },
+        "3gp": {
+          "level": "none"
+        },
+        "3g2": {
+          "level": "none"
+        }
+      }
+    },
+    "DV Audio": {
+      "type": "not_compressed",
+      "initial_release": "1995",
+      "license": "Proprietary",
+      "container_support": {
+        "mkv": {
+          "level": "none"
+        },
+        "mp4": {
+          "level": "full"
+        },
+        "qtff": {
+          "level": "full"
+        },
+        "asf": {
+          "level": "none"
+        },
+        "avi": {
+          "level": "none"
+        },
+        "mxf": {
+          "level": "full"
+        },
+        "ps_ts": {
+          "level": "none"
+        },
+        "3gp": {
+          "level": "none"
+        },
+        "3g2": {
+          "level": "none"
+        }
+      }
+    },
+    "AMR": {
+      "type": "speech",
+      "initial_release": "1999-06",
+      "license": "Patent encumbered",
+      "container_support": {
+        "mkv": {
+          "level": "none"
+        },
+        "mp4": {
+          "level": "full"
+        },
+        "qtff": {
+          "level": "none"
+        },
+        "asf": {
+          "level": "full"
+        },
+        "avi": {
+          "level": "full"
+        },
+        "mxf": {
+          "level": "none"
+        },
+        "ps_ts": {
+          "level": "none"
+        },
+        "3gp": {
+          "level": "full"
+        },
+        "3g2": {
+          "level": "partial",
+          "note": "AMR-NB, AMR-WB"
+        }
+      }
+    },
+    "G.728": {
+      "type": "speech",
+      "initial_release": "1992-09",
+      "license": "Expired patents",
+      "container_support": {
+        "mkv": {
+          "level": "none"
+        },
+        "mp4": {
+          "level": "none"
+        },
+        "qtff": {
+          "level": "none"
+        },
+        "asf": {
+          "level": "none"
+        },
+        "avi": {
+          "level": "full"
+        },
+        "mxf": {
+          "level": "none"
+        },
+        "ps_ts": {
+          "level": "none"
+        },
+        "3gp": {
+          "level": "none"
+        },
+        "3g2": {
+          "level": "none"
+        }
+      }
+    },
+    "Speex": {
+      "type": "speech",
+      "initial_release": "2003-03",
+      "license": "Open source",
+      "container_support": {
+        "mkv": {
+          "level": "indirect",
+          "via": "acm"
+        },
+        "mp4": {
+          "level": "none"
+        },
+        "qtff": {
+          "level": "none"
+        },
+        "asf": {
+          "level": "none"
+        },
+        "avi": {
+          "level": "none"
+        },
+        "mxf": {
+          "level": "none"
+        },
+        "ps_ts": {
+          "level": "none"
+        },
+        "3gp": {
+          "level": "none"
+        },
+        "3g2": {
+          "level": "none"
+        }
+      }
+    },
+    "QCELP": {
+      "type": "speech",
+      "initial_release": "1994",
+      "license": "Proprietary",
+      "container_support": {
+        "mkv": {
+          "level": "none"
+        },
+        "mp4": {
+          "level": "none"
+        },
+        "qtff": {
+          "level": "full"
+        },
+        "asf": {
+          "level": "full"
+        },
+        "avi": {
+          "level": "none"
+        },
+        "mxf": {
+          "level": "none"
+        },
+        "ps_ts": {
+          "level": "none"
+        },
+        "3gp": {
+          "level": "none"
+        },
+        "3g2": {
+          "level": "partial",
+          "note": "13K"
+        }
+      }
+    },
+    "Other": {
+      "type": "other",
+      "initial_release": "—",
+      "license": "Varies",
+      "container_support": {
+        "mkv": {
+          "level": "partial",
+          "note": "Musepack, WavPack, TTA, any format supported by ACM"
+        },
+        "mp4": {
+          "level": "none"
+        },
+        "qtff": {
+          "level": "partial",
+          "note": "IMA 4:1, non-IEEE floating-point PCM, integer PCM"
+        },
+        "asf": {
+          "level": "partial",
+          "note": "Microsoft GSM 6.10"
+        },
+        "avi": {
+          "level": "partial",
+          "note": "G.721, G.722, G.723, G.726, G.729a, CVSD, ATRAC1, Dolby AC-2"
+        },
+        "mxf": {
+          "level": "none"
+        },
+        "ps_ts": {
+          "level": "none"
+        },
+        "3gp": {
+          "level": "partial",
+          "note": "EVS"
+        },
+        "3g2": {
+          "level": "partial",
+          "note": "EVRC, EVRC-B, EVRC-WB, SMV, VMR-WB"
+        }
+      }
+    },
+    "Obsolete": {
+      "type": "other",
+      "initial_release": "—",
+      "license": "Varies",
+      "container_support": {
+        "mkv": {
+          "level": "none"
+        },
+        "mp4": {
+          "level": "none"
+        },
+        "qtff": {
+          "level": "partial",
+          "note": "MACE 3:1, MACE 6:1"
+        },
+        "asf": {
+          "level": "none"
+        },
+        "avi": {
+          "level": "partial",
+          "note": "Truespeech, many others"
+        },
+        "mxf": {
+          "level": "none"
+        },
+        "ps_ts": {
+          "level": "none"
+        },
+        "3gp": {
+          "level": "none"
+        },
+        "3g2": {
+          "level": "none"
+        }
+      }
+    }
+  },
+  "restricted_containers": {
+    "DMF": {
+      "video_codecs": [
+        "MPEG-4 Visual ASP with DivX profiles"
+      ],
+      "audio_codecs": [
+        "MP3",
+        "AC-3",
+        "DTS",
+        "LPCM"
+      ]
+    },
+    "EVO": {
+      "video_codecs": [
+        "MPEG-4 AVC (H.264)",
+        "MPEG-1 Video",
+        "MPEG-2 Video",
+        "VC-1"
+      ],
+      "audio_codecs": [
+        "MP3",
+        "AC-3",
+        "E-AC-3",
+        "DTS",
+        "MP2",
+        "MP1",
+        "DTS-HD",
+        "Dolby TrueHD",
+        "MLP",
+        "LPCM"
+      ]
+    },
+    "F4V": {
+      "video_codecs": [
+        "MPEG-4 AVC (H.264)",
+        "MPEG-4 Visual",
+        "H.263"
+      ],
+      "audio_codecs": [
+        "AAC",
+        "MP3"
+      ]
+    },
+    "FLV": {
+      "video_codecs": [
+        "MPEG-4 Visual",
+        "VP6",
+        "Sorenson Spark",
+        "Screen Video"
+      ],
+      "audio_codecs": [
+        "AAC",
+        "MP3",
+        "LPCM",
+        "A-law PCM",
+        "μ-law PCM",
+        "Speex",
+        "Asao",
+        "SWF ADPCM"
+      ]
+    },
+    "M2TS": {
+      "video_codecs": [
+        "MPEG-4 AVC (H.264)",
+        "MPEG-1 Video",
+        "MPEG-2 Video",
+        "MPEG-4 Visual",
+        "VC-1"
+      ],
+      "audio_codecs": [
+        "AC-3",
+        "E-AC-3",
+        "DTS",
+        "DTS-HD",
+        "Dolby TrueHD",
+        "LPCM"
+      ]
+    },
+    "Ogg": {
+      "video_codecs": [
+        "Theora",
+        "MNG",
+        "JNG",
+        "PNG",
+        "Dirac"
+      ],
+      "audio_codecs": [
+        "Opus",
+        "Vorbis",
+        "FLAC",
+        "A-law PCM",
+        "μ-law PCM",
+        "IEEE floating-point PCM",
+        "Speex",
+        "CELT"
+      ]
+    },
+    "RMVB": {
+      "video_codecs": [
+        "RealVideo RV30",
+        "RealVideo RV40",
+        "RealVideo RV60"
+      ],
+      "audio_codecs": [
+        "AC-3",
+        "ATRAC3",
+        "G.728",
+        "AAC-LC",
+        "HE-AAC v1",
+        "IS-54",
+        "Cook Codec",
+        "Sipro Lab",
+        "ACELP-NET",
+        "RealAudio Lossless"
+      ]
+    },
+    "VOB": {
+      "video_codecs": [
+        "MPEG-1 Video",
+        "MPEG-2 Video"
+      ],
+      "audio_codecs": [
+        "MP2 (direct)",
+        "AC-3 (private stream)",
+        "DTS (private stream)",
+        "MLP (private stream)",
+        "LPCM (private stream)"
+      ]
+    },
+    "WebM": {
+      "video_codecs": [
+        "VP9",
+        "VP8",
+        "AV1"
+      ],
+      "audio_codecs": [
+        "Opus",
+        "Vorbis"
+      ]
+    }
+  },
+  "notes": {
+    "important_caveats": [
+      "The Wikipedia matrix is a compatibility/standardization table, not a guarantee that every player, editor, decoder or hardware device will play every combination.",
+      "Some entries represent indirect, private, partial, setup-dependent or non-standard support.",
+      "AVI VBR audio limitations can be caused by ACM rather than the AVI container itself.",
+      "WebM is a restricted subset of Matroska and intentionally supports a limited codec set.",
+      "The page notes that some common multimedia formats are combinations of containers and codec/profile restrictions, such as AVCHD and DivX formats.",
+      "The source page itself carries an April 2026 warning about possible original research/synthesis."
+    ]
+  },
+  "support_levels": [
+    "full",
+    "partial",
+    "indirect",
+    "requires_external",
+    "private",
+    "nonstandard",
+    "problematic",
+    "planned",
+    "beta",
+    "none"
+  ],
+  "_readme": "Datos estructurados puros: sin texto para mostrar en UI (eso vive en recode_guard.py._LEVEL_DESCRIPTIONS, traducible via .tr() en la capa GUI). 'note' solo se usa para hechos tecnicos que no requieren traduccion (nombres de perfil/formato, ej. 'AAC-LC, HE-AAC'). 'via' y 'requires' son codigos/nombres propios, no prosa."
+}

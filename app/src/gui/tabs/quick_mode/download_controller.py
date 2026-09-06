@@ -9,6 +9,7 @@ from core.logger.logger_manager import logger
 from core.utils.cleanup_manager import CleanupManager
 from core.utils.config_manager import get_config
 from core.utils.queue_manager import get_queue_manager
+from core.utils.output_artifacts import SIDECAR_EXTENSIONS
 from core.tabs.quick_mode.quick_mode_logic import build_quick_request_data, reveal_in_file_manager
 from gui.tabs.advanced_process.workers import AnalysisWorker, DownloadWorker
 from gui.dialogs.playlist_selection_dialog import PlaylistSelectionDialog
@@ -403,19 +404,33 @@ class QuickDownloadController(QObject):
         import re
         base_name = re.sub(r'\.f[a-zA-Z0-9-]+$', '', base_name)
                 
-        best_match = None
+        # Con "guardar miniatura" o subtítulos, el sidecar comparte EXACTAMENTE el
+        # nombre base del medio ('Título.jpg' junto a 'Título.mp4'), así que el primer
+        # coincidente que devolvía os.scandir decidía por orden alfabético y solía ser
+        # la miniatura: la fila quedaba apuntando al .jpg y una recodificación
+        # post-descarga intentaba recodificar la imagen en vez del video. A igualdad de
+        # nombre base, el medio gana; el sidecar solo se devuelve si no hay otra cosa
+        # (modo "solo miniatura", donde la imagen SÍ es el archivo descargado).
+        candidates = {}
         try:
             for entry in os.scandir(parent_dir):
-                if entry.is_file():
-                    entry_base = os.path.splitext(entry.name)[0]
-                    if entry_base == base_name:
-                        return entry.path
-                    if entry_base.startswith(base_name):
-                        best_match = entry.path
+                if not entry.is_file():
+                    continue
+                entry_base, entry_ext = os.path.splitext(entry.name)
+                if entry_base == base_name:
+                    rank = 0 if entry_ext.lower() not in SIDECAR_EXTENSIONS else 1
+                elif entry_base.startswith(base_name):
+                    rank = 2 if entry_ext.lower() not in SIDECAR_EXTENSIONS else 3
+                else:
+                    continue
+                candidates.setdefault(rank, entry.path)
         except Exception:
             pass
-            
-        return best_match
+
+        for rank in (0, 1, 2, 3):
+            if rank in candidates:
+                return candidates[rank]
+        return None
 
     def _on_task_progress(self, data, task_data):
         has_fragments = bool(task_data["request_data"].get("selected_fragments"))
@@ -485,6 +500,9 @@ class QuickDownloadController(QObject):
                 frag_idx = task_data.get("_frag_idx")
                 if frag_idx is not None and filepath:
                     task_data.setdefault("_fragment_files", {})[frag_idx] = filepath
+                if filepath:
+                    for row in task_data["item_rows"]:
+                        row.add_output_files([filepath])
                 info = data.get("info_dict")
                 if info:
                     for row in task_data["item_rows"]:
@@ -494,6 +512,11 @@ class QuickDownloadController(QObject):
                 row.update_progress(100, status=self.tr("Procesando") if hasattr(self, "tr") else "Procesando")
                 if filepath:
                     row.downloaded_filepath = filepath
+                    # Se registran TODOS los 'finished' de la fila, incluidos los
+                    # intermedios pre-fusión (pista de video sola, de audio sola): los
+                    # que yt-dlp borre al fusionar se caen solos al filtrar por
+                    # existencia en el momento del arrastre (ver output_artifacts.py).
+                    row.add_output_files([filepath])
                 info = data.get("info_dict")
                 if info:
                     row.update_metadata_from_dict(info)
@@ -555,6 +578,7 @@ class QuickDownloadController(QObject):
                         for k in sorted(fragment_files.keys())
                     ]
                     base_title = row.original_title or request_data.get("title") or ""
+                    row.add_output_files([p for p, _ in ordered])
                     if recode_requested and self._queue_fragment_recodes(row, ordered, request_data, base_title):
                         # El estado "Completado"/envío al editor lo resuelve
                         # _on_recode_job_status una vez terminen TODAS las
@@ -590,6 +614,8 @@ class QuickDownloadController(QObject):
                     row.update_progress(0, status=self.tr("Error") if hasattr(self, "tr") else "Error")
                     row.mark_error()
                     continue
+
+                row.add_output_files([actual_path])
 
                 if recode_requested and self._start_post_download_recode(
                     actual_path, request_data, row, row.original_title or request_data.get("title")
@@ -822,6 +848,11 @@ class QuickDownloadController(QObject):
             if status == "FAILED":
                 err = recode_job.error_message if recode_job else "desconocido"
                 logger.error(f"QuickModeTab: Falló la recodificación post-descarga de '{title}': {err}")
+
+        if final_path:
+            # is_stem_source=False: el nombre del recodificado lleva el prefijo/sufijo
+            # elegido por el usuario, no sirve como base para buscar sidecars.
+            row.add_output_files([final_path], is_stem_source=False)
 
         if final_path:
             from core.services.editor_integration_manager import EditorIntegrationManager

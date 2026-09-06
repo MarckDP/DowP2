@@ -262,6 +262,48 @@ class EditorIntegrationManager(QObject):
         """Empaqueta y envía un trabajo de cola completado al editor activo."""
         self.process_raw_download(job.final_filepath, job.request_data)
 
+    _IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp", ".gif")
+
+    @staticmethod
+    def _find_sidecar_image(output_dir, base_name):
+        """Miniatura de `base_name` en output_dir, en cualquier formato de imagen.
+        Devuelve la ruta con separadores "/" (como la espera el panel) o None."""
+        if not output_dir or not base_name:
+            return None
+        for ext in EditorIntegrationManager._IMAGE_EXTENSIONS:
+            candidate = os.path.join(output_dir, base_name + ext)
+            if os.path.exists(candidate):
+                return candidate.replace(chr(92), "/")
+        return None
+
+    def _thumbnail_already_sent(self, thumb_path):
+        """True si esta MISMA imagen ya viajó en un envío anterior de la misma tanda de
+        fragmentos. Con cortes + recodificación, cada fragmento se envía por separado al
+        terminar SU recodificación (ver los _send_to_editor_if_enabled de quick_mode y
+        advanced_process) y todos comparten la única miniatura del medio (ver
+        DownloaderMaster._consolidate_fragment_thumbnails), así que sin esto la misma
+        imagen se importaba una vez por fragmento.
+
+        La identidad incluye tamaño y fecha de modificación: si el usuario vuelve a
+        descargar el mismo video, la miniatura se reescribe y se envía de nuevo, como
+        corresponde. Solo se consulta en envíos con fragmentos, para no alterar el resto
+        de flujos (herramientas de imagen/video, subtítulos, descargas normales).
+        """
+        try:
+            stat = os.stat(thumb_path)
+            key = (os.path.normcase(os.path.abspath(thumb_path)), stat.st_size, int(stat.st_mtime))
+        except OSError:
+            return False
+
+        seen = getattr(self, "_sent_fragment_thumbnails", None)
+        if seen is None:
+            seen = self._sent_fragment_thumbnails = []
+        if key in seen:
+            return True
+        seen.append(key)
+        del seen[:-64]  # memoria acotada: solo importan los envíos recientes
+        return False
+
     def process_raw_download(self, final_filepath, request_data):
         """Empaqueta y envía un archivo descargado al editor activo."""
         if not final_filepath:
@@ -309,6 +351,24 @@ class EditorIntegrationManager(QObject):
         selected_fragments = request_data.get("selected_fragments", []) if request_data else []
         is_fragmented = bool(selected_fragments)
         
+        # Prefijo/sufijo que la tarjeta "Recodificar" le puso al archivo de salida (ver
+        # preset_manager.build_recode_output_path: "{prefijo}{base}{sufijo}"). Hay que
+        # quitarlos para volver al nombre base del medio, del que cuelgan la miniatura y
+        # los subtítulos.
+        recode_prefix = (request_data.get("recode_filename_prefix") or "") if request_data else ""
+        recode_suffix = (request_data.get("recode_filename_suffix") or "") if request_data else ""
+
+        def strip_recode_affixes(name):
+            # '_recoded' es el sufijo por defecto histórico: se sigue quitando aunque
+            # request_data no traiga los campos (ej. un envío disparado desde la cola).
+            for suf in (recode_suffix, '_recoded'):
+                if suf and name.endswith(suf):
+                    name = name[:-len(suf)]
+                    break
+            if recode_prefix and name.startswith(recode_prefix):
+                name = name[len(recode_prefix):]
+            return name
+
         # Determinar el nombre base limpio de forma 100% precisa
         if is_fragmented:
             last_frag = selected_fragments[-1]
@@ -319,18 +379,37 @@ class EditorIntegrationManager(QObject):
             else:
                 clean_base_name = raw_base_name
         else:
-            clean_base_name = raw_base_name
-            # Si fue descagado individualmente con suffixos de DowP Lite (_recoded)
-            if clean_base_name.endswith('_recoded'):
-                clean_base_name = clean_base_name.rsplit('_recoded', 1)[0]
-                
-        expected_thumb_path = os.path.join(output_dir, f"{clean_base_name}.jpg")
-        if not os.path.exists(expected_thumb_path):
-            expected_thumb_path = None
-        else:
-            expected_thumb_path = expected_thumb_path.replace('\\', '/')
+            clean_base_name = strip_recode_affixes(raw_base_name)
+
+        # Los sidecars conservan el nombre del medio ORIGINAL, sin los afijos del
+        # recodificado ('clip_fragment01.jpg' junto a 'clip_fragment01_recoded.mov').
+        sidecar_base_name = strip_recode_affixes(clean_base_name)
+
+        # Cualquier extension de imagen, no solo .jpg: la miniatura conserva el formato
+        # de origen cuando la baja la cola (ver QueueWorker._download_best_thumb) o
+        # cuando el postprocesador de conversion de yt-dlp no llega a correr, asi que
+        # buscar solo ".jpg" dejaba fuera .webp/.png y el paquete viajaba sin miniatura.
+        # Candidatos de nombre para la miniatura, del mas especifico al mas general. El
+        # segundo hace falta desde que una descarga con cortes deja UNA sola miniatura
+        # con el nombre base (ver DownloaderMaster._consolidate_fragment_thumbnails): un
+        # fragmento recodificado ('clip_fragment01_recoded.mov') ya no tiene la suya
+        # propia y debe caer a la del medio completo ('clip.jpg').
+        thumb_base_candidates = [sidecar_base_name]
+        for i, frag in enumerate(selected_fragments):
+            frag_suffix = frag[2] if len(frag) > 2 else f"fragment{i+1:02d}"
+            if sidecar_base_name.endswith(f"_{frag_suffix}"):
+                thumb_base_candidates.append(sidecar_base_name[: -len(frag_suffix) - 1])
+
+        expected_thumb_path = None
+        for candidate_base in thumb_base_candidates:
+            expected_thumb_path = self._find_sidecar_image(output_dir, candidate_base)
+            if expected_thumb_path:
+                break
             
         file_packages = []
+        # Salvo un caso (ver is_plain_fragment_file), si no se pudo armar el lote de
+        # fragmentos se empaqueta el archivo recibido tal cual.
+        allow_single_fallback = True
         
         # Si fue descarga de múltiples fragmentos, generamos sus nombres exactos.
         if is_fragmented:
@@ -356,11 +435,9 @@ class EditorIntegrationManager(QObject):
                                 break
                                 
                         # Buscar miniatura específica de este fragmento
-                        frag_thumb_path = os.path.join(output_dir, f"{frag_base}.jpg")
-                        if not os.path.exists(frag_thumb_path):
-                            frag_thumb_path = expected_thumb_path # Fallback a la miniatura base si existe
-                        else:
-                            frag_thumb_path = frag_thumb_path.replace('\\', '/')
+                        frag_thumb_path = self._find_sidecar_image(output_dir, frag_base)
+                        if not frag_thumb_path:
+                            frag_thumb_path = expected_thumb_path  # respaldo: la del nombre base
                                 
                         file_packages.append({
                             "video": vid_path,
@@ -369,13 +446,44 @@ class EditorIntegrationManager(QObject):
                         })
             except Exception as e:
                 logger.error(f"Error empaquetando fragmentos: {e}")
-        else:
-            # Archivo único normal
+
+            # Con cortes, esta función se llama UNA VEZ POR FRAGMENTO y solo la
+            # llamada del ÚLTIMO logra reconstruir el lote completo (clean_base_name
+            # solo sabe quitar el sufijo del último fragmento); las demás salen sin
+            # paquetes a propósito, para no mandar el lote una vez por fragmento. Por
+            # eso el fallback de abajo NO debe dispararse cuando el archivo recibido es
+            # un fragmento tal cual salió de la descarga: llegaría suelto y otra vez
+            # dentro del lote. Solo se usa cuando el nombre ya no es reconstruible
+            # (recodificado), que es justo el caso que no enviaba nada.
+            is_plain_fragment_file = any(
+                raw_base_name.endswith(f"_{frag[2] if len(frag) > 2 else f'fragment{i+1:02d}'}")
+                for i, frag in enumerate(selected_fragments)
+            )
+
+            allow_single_fallback = not is_plain_fragment_file
+            if not file_packages and allow_single_fallback:
+                # La reconstrucción "{base}_{sufijo}{ext}" no encontró ningún archivo.
+                # Pasa siempre que la descarga con cortes se recodificó: cada fragmento
+                # queda como "clip_fragment01_recoded.mov" y se envía por separado al
+                # terminar SU recodificación (ver los _send_to_editor_if_enabled de
+                # advanced_process y quick_mode), así que ni el nombre reconstruido
+                # existe ni tendría sentido rearmar el lote entero — los demás
+                # fragmentos todavía se están recodificando y llegarían duplicados.
+                # Sin esto, la función salía en silencio por "if not file_packages:
+                # return" y NADA llegaba al editor con cortes + recodificación, en
+                # Modo Rápido y en Proceso Avanzado, con cualquier editor.
+                logger.info(
+                    "[EditorManager] Corte sin nombres reconstruibles (recodificado): "
+                    f"se envía el archivo recibido tal cual ({os.path.basename(final_filepath)})."
+                )
+
+        if not file_packages and allow_single_fallback:
+            # Archivo único normal (o el fragmento suelto del fallback de arriba)
             vid_path = final_filepath.replace('\\', '/') if os.path.exists(final_filepath) else None
             sub_path = None
             try:
                 for s in os.listdir(output_dir):
-                    if s.startswith(clean_base_name) and s.lower().endswith('.srt'):
+                    if s.startswith(sidecar_base_name) and s.lower().endswith('.srt'):
                         sub_path = os.path.join(output_dir, s).replace('\\', '/')
                         break
             except Exception: pass
@@ -403,10 +511,24 @@ class EditorIntegrationManager(QObject):
                 
         if not file_packages:
             return
-            
+
+        if is_fragmented:
+            # Todos los fragmentos comparten una sola miniatura, así que solo el primer
+            # paquete la lleva. Dentro de un mismo lote el panel de Adobe ya deduplica
+            # (importBatchToProject arma un Set), pero DaVinci importa cada ruta que
+            # recibe, y entre envíos sucesivos (fragmentos recodificados, que salen de
+            # uno en uno) no deduplica nadie.
+            for pkg in file_packages:
+                thumb = pkg.get("thumbnail")
+                if thumb and self._thumbnail_already_sent(thumb):
+                    pkg["thumbnail"] = None
+
         if len(file_packages) == 1:
             logger.info(f"[EditorManager] Paquete listo para enviar: {file_packages[0]}")
             self.send_file(file_packages[0])
         else:
-            logger.info(f"[EditorManager] Lote de {len(file_packages)} archivos (fragmentos) listos para enviar.")
+            # Se listan los paquetes igual que en el envío individual: sin esto, un lote
+            # que sale de la app pero no aparece en el editor no dejaba forma de saber
+            # desde el log si el problema era lo que se mandó o lo que hizo el panel.
+            logger.info(f"[EditorManager] Lote de {len(file_packages)} archivos (fragmentos) listos para enviar: {file_packages}")
             self.send_batch(file_packages)

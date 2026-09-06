@@ -149,7 +149,9 @@ class DownloaderMaster:
                     elif request_data.get("standardize_srt"):
                         # Estandarizar aunque no haya recorte
                         self._handle_subtitle_standardization(ydl_opts.get('outtmpl'), request_data)
-                
+
+                self._consolidate_fragment_thumbnails(request_data, fragments)
+
                 return True, "Download finished successfully"
             
             else:
@@ -889,6 +891,70 @@ class DownloaderMaster:
         except ValueError:
             logger.warning(f"DownloaderMaster: No se pudo parsear el limite de velocidad '{limit_str}', se ignora.")
             return None
+
+    # Extensiones con las que puede quedar la miniatura escrita por yt-dlp: la
+    # conversión a jpg es un postprocesador que puede no correr (contenedor de origen ya
+    # jpg, conversión saltada, etc.).
+    _THUMBNAIL_EXTS = ('.jpg', '.jpeg', '.png', '.webp', '.gif')
+
+    def _consolidate_fragment_thumbnails(self, request_data, fragments):
+        """
+        Deja UNA sola miniatura, con el nombre base del medio, cuando la descarga se
+        partió en fragmentos.
+
+        En los modos de corte Normal y Preciso cada fragmento es una invocación
+        independiente de yt-dlp cuyo outtmpl ya lleva el sufijo, así que 'writethumbnail'
+        escribe una miniatura por pasada; y con "guardar miniatura" marcada,
+        already_have_thumbnail=True hace que EmbedThumbnail no las borre tras
+        incrustarlas (ver _prepare_opts). Resultado: N copias idénticas de la misma
+        imagen ('Título_fragment01.jpg', '_fragment02.jpg'...) y ninguna con el nombre
+        base, porque ninguna pasada usa ese nombre.
+
+        Se conserva la primera renombrándola a '{base}{ext}' y se borran las demás. Que
+        exista la del nombre base importa además para el envío a los editores: cuando un
+        fragmento no tiene miniatura propia, el empaquetado cae a la del nombre base (ver
+        editor_integration_manager.process_raw_download).
+        """
+        if not fragments or not request_data.get("download_thumbnail_file"):
+            return
+
+        output_path = request_data.get("output_path")
+        if not output_path or not os.path.isdir(output_path):
+            return
+
+        found = []  # (ruta, nombre_base_del_medio)
+        for i, frag in enumerate(fragments):
+            suffix = frag[2] if len(frag) > 2 else f"fragment{i+1:02d}"
+            for ext in self._THUMBNAIL_EXTS:
+                pattern = os.path.join(glob.escape(output_path), f"*_{suffix}{ext}")
+                for path in glob.glob(pattern):
+                    if os.path.isfile(path):
+                        stem = os.path.splitext(os.path.basename(path))[0]
+                        found.append((path, stem[: -len(f"_{suffix}")]))
+
+        if not found:
+            return
+
+        keeper, base_name = found[0]
+        target = os.path.join(output_path, f"{base_name}{os.path.splitext(keeper)[1]}")
+
+        try:
+            if os.path.normcase(keeper) != os.path.normcase(target):
+                if os.path.exists(target):
+                    os.remove(keeper)
+                else:
+                    os.replace(keeper, target)
+                    logger.info(f"DownloaderMaster: Miniatura de fragmentos unificada en {target}")
+        except OSError as e:
+            logger.warning(f"DownloaderMaster: No se pudo unificar la miniatura de los fragmentos: {e}")
+            return
+
+        for path, _ in found[1:]:
+            try:
+                if os.path.exists(path):
+                    os.remove(path)
+            except OSError as e:
+                logger.warning(f"DownloaderMaster: No se pudo borrar la miniatura duplicada '{path}': {e}")
 
     def _handle_local_cuts(self, input_file, fragments, keep_original, progress_callback=None):
         """Usa ffmpeg directamente para realizar cortes sobre el archivo ya descargado."""

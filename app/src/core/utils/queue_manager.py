@@ -165,9 +165,17 @@ class QueueWorker(QThread):
         if worker:
             worker.cancel()
 
-    def _download_best_thumb(self, entry, output_dir, title, force_png=False):
+    def _download_best_thumb(self, entry, output_dir, title, force_png=False, media_path=None):
         """
         Descarga la mejor miniatura disponible (Forzando MaxRes) y la guarda sin usar PIL.
+
+        media_path: ruta del medio ya descargado. Si se pasa, la miniatura toma su MISMO
+        nombre base. Sin esto se re-sanitizaba el título con _sanitize_filename, que
+        borra '#' (entre otros) mientras que yt-dlp SÍ lo conserva al nombrar el medio:
+        quedaban 'xane - housekeeping #deadlock.mp4' y 'xane - housekeeping deadlock.jpg',
+        con lo que el envío al editor -- que deduce la miniatura del nombre del medio --
+        nunca la encontraba y mandaba el paquete sin ella (ver
+        editor_integration_manager.process_raw_download).
         """
         try:
             # 1. Buscar la URL base
@@ -215,8 +223,11 @@ class QueueWorker(QThread):
             else:
                 smart_ext = ".jpg"
             
-            sanitized_title = self._sanitize_filename(title)
-            output_path = os.path.join(output_dir, f"{sanitized_title}{smart_ext}")
+            if media_path:
+                base_name = os.path.splitext(os.path.basename(media_path))[0]
+            else:
+                base_name = self._sanitize_filename(title)
+            output_path = os.path.join(output_dir, f"{base_name}{smart_ext}")
             
             with open(output_path, "wb") as f:
                 f.write(image_data)
@@ -380,7 +391,8 @@ class QueueWorker(QThread):
                     title = config_to_use.get("title") or job.title or "download"
                     data_source = job.video_data if job.video_data else job.analysis_data
                     if data_source:
-                        self._download_best_thumb(data_source, output_dir, title, force_png=True)
+                        self._download_best_thumb(data_source, output_dir, title,
+                                                  force_png=True, media_path=job.final_filepath)
                 except Exception as e:
                     logger.warning(f"QueueWorker: Falló la descarga de miniatura: {e}")
                     
@@ -543,7 +555,8 @@ class QueueWorker(QThread):
 
                 if should_download_thumb_file:
                     try:
-                        self._download_best_thumb(entry, playlist_output, f"{prefix}{item_title}", force_png=True)
+                        self._download_best_thumb(entry, playlist_output, f"{prefix}{item_title}",
+                                                  force_png=True, media_path=child_final_path[0])
                     except Exception as e:
                         logger.warning(f"QueueWorker: Falló miniatura de playlist {item_title}: {e}")
             elif message == "SKIPPED_CONFLICT":

@@ -9,11 +9,13 @@ from PySide6.QtWidgets import (
     QWidget,
     QPushButton,
 )
-from PySide6.QtCore import Qt, QSize, Signal
+from PySide6.QtCore import Qt, QSize, Signal, QEvent
 from PySide6.QtGui import QIcon
 
 from gui.styles import get_theme_token
 from gui.tabs.quick_mode.download_row import QuickDownloadRow
+from gui.widgets.native_file_drag import start_native_file_drag
+from core.logger.logger_manager import logger
 from core.utils.paths import get_src_dir
 
 
@@ -31,6 +33,9 @@ class ActivityPanel(QFrame):
         self.item_keys = []
         self.current_item_pos = 0
         self.completed_items = 0
+        # Ancla de la selección con Shift (última fila marcada sin Shift), igual que en
+        # una lista del explorador de archivos.
+        self._selection_anchor = None
         self.init_ui()
 
     def init_ui(self):
@@ -144,6 +149,11 @@ class ActivityPanel(QFrame):
         
         self.activity_layout.addStretch(1)
         self.activity_scroll.setWidget(self.activity_container)
+        # Un clic en el hueco entre tarjetas no llega a mousePressEvent de este panel:
+        # lo consume el viewport del QScrollArea. Con el filtro, deseleccionar hace clic
+        # en cualquier zona vacía de la lista, como en el explorador de archivos.
+        self.activity_container.installEventFilter(self)
+        self.activity_scroll.viewport().installEventFilter(self)
         layout.addWidget(self.activity_scroll, 1)
 
     def add_activity_rows(self, entries, selected_indices):
@@ -163,6 +173,8 @@ class ActivityPanel(QFrame):
             row.update_metadata_from_dict(entry)
             row.close_requested.connect(self.row_close_requested.emit)
             row.reveal_requested.connect(self.row_reveal_requested.emit)
+            row.selection_requested.connect(self._on_row_selection)
+            row.drag_requested.connect(self._on_row_drag)
             
             self.activity_layout.insertWidget(self.activity_layout.count() - 1, row)
             self.item_rows.append(row)
@@ -183,15 +195,102 @@ class ActivityPanel(QFrame):
         self.item_keys = []
         self.current_item_pos = 0
         self.completed_items = 0
+        self._selection_anchor = None
         self.empty_lbl.show()
         self.btn_cancel_all.hide()
         self.btn_clear_all.hide()
+
+    # ------------------------------------------------------------------
+    # Selección múltiple y arrastre de resultados hacia otras aplicaciones
+    # ------------------------------------------------------------------
+    def selected_rows(self):
+        return [r for r in self.item_rows if r.is_selected()]
+
+    def clear_selection(self):
+        for row in self.item_rows:
+            row.set_selected(False)
+        self._selection_anchor = None
+
+    def mousePressEvent(self, event):
+        """Un clic fuera de las tarjetas deselecciona todo. Los clics sobre una tarjeta
+        no llegan aquí: QuickDownloadRow.mousePressEvent los acepta."""
+        if event.button() == Qt.LeftButton:
+            self.clear_selection()
+        super().mousePressEvent(event)
+
+    def eventFilter(self, obj, event):
+        if (obj in (self.activity_container, self.activity_scroll.viewport())
+                and event.type() == QEvent.MouseButtonPress
+                and event.button() == Qt.LeftButton):
+            self.clear_selection()
+        return super().eventFilter(obj, event)
+
+    def _on_row_selection(self, row, modifiers):
+        ctrl = bool(modifiers & Qt.ControlModifier)
+        shift = bool(modifiers & Qt.ShiftModifier)
+
+        if shift and self._selection_anchor in self.item_rows:
+            start = self.item_rows.index(self._selection_anchor)
+            end = self.item_rows.index(row)
+            low, high = (start, end) if start <= end else (end, start)
+            span = self.item_rows[low:high + 1]
+            for candidate in self.item_rows:
+                if candidate in span:
+                    candidate.set_selected(True)
+                elif not ctrl:
+                    candidate.set_selected(False)
+            return
+
+        if ctrl:
+            row.set_selected(not row.is_selected())
+            self._selection_anchor = row
+            return
+
+        for candidate in self.item_rows:
+            candidate.set_selected(candidate is row)
+        self._selection_anchor = row
+
+    def _on_row_drag(self, row):
+        """Arrastra el resultado completo de las filas terminadas: la que originó el
+        gesto y, si formaba parte de una selección, todas las demás seleccionadas. Las
+        filas que aún no terminaron (o fallaron) se descartan en vez de cancelar el
+        arrastre entero."""
+        rows = [r for r in self.selected_rows() if r.is_draggable()]
+        if row not in rows:
+            # Se arrastró una fila que no estaba seleccionada: manda ella sola.
+            rows = [row] if row.is_draggable() else []
+        if not rows:
+            return
+
+        files, seen = [], set()
+        for candidate in rows:
+            # Las demás filas de la lista pueden haber bajado a la misma carpeta con
+            # nombres emparentados ('Cancion' y 'Cancion_2' en una playlist): sus rutas
+            # se pasan para que cada archivo quede con su dueño.
+            foreign = [p for other in self.item_rows if other is not candidate
+                       for p in other.output_stems()]
+            for path in candidate.collect_drag_files(foreign_stems=foreign):
+                key = os.path.normcase(path)
+                if key not in seen:
+                    seen.add(key)
+                    files.append(path)
+
+        if not files:
+            logger.warning("ActivityPanel: No queda ningún archivo en disco para arrastrar (¿se movieron o borraron?).")
+            return
+
+        badge = "" if len(files) == 1 else (
+            self.tr("{0} archivos").format(len(files)) if hasattr(self, "tr") else f"{len(files)} archivos"
+        )
+        start_native_file_drag(row, files, badge_text=badge)
 
     def remove_row(self, row):
         if row not in self.item_rows:
             return
         idx = self.item_rows.index(row)
         self.item_rows.pop(idx)
+        if self._selection_anchor is row:
+            self._selection_anchor = None
         row.destroy_row()
         self.activity_layout.removeWidget(row)
         row.deleteLater()

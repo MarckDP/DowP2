@@ -11,13 +11,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 from PySide6.QtCore import Qt, QSize, Signal
-from PySide6.QtGui import QImage, QPixmap, QIcon
+from PySide6.QtGui import QImage, QPixmap, QIcon, QColor
+from PySide6.QtWidgets import QApplication
 
 from core.logger.logger_manager import logger
 from core.utils.paths import get_src_dir
 from gui.styles import get_theme_token
 from gui.tabs.advanced_process.video_details_components import ThumbnailLoaderThread
 from core.tabs.quick_mode.quick_mode_logic import reveal_in_file_manager
+from core.utils.output_artifacts import collect_output_artifacts
 
 
 class QuickThumbnailWidget(QWidget):
@@ -106,6 +108,8 @@ class QuickDownloadRow(QFrame):
     """Tarjeta individual de descarga con miniatura, progreso y botones de acción."""
     close_requested = Signal(object)    # Emitido al pulsar X
     reveal_requested = Signal(object)   # Emitido al pulsar botón de carpeta
+    drag_requested = Signal(object)     # Emitido al arrastrar la tarjeta (lo resuelve ActivityPanel)
+    selection_requested = Signal(object, object)  # (fila, modificadores de teclado) al hacer clic
 
     def __init__(self, title, parent=None):
         super().__init__(parent)
@@ -118,6 +122,18 @@ class QuickDownloadRow(QFrame):
         self.downloaded_filepath = None
         self._is_completed = False
         self._is_error = False
+        # Rutas que esta fila produjo. _known_paths son las que la app conoce con
+        # certeza (medio bajado, cada fragmento, salida recodificada); _stem_paths es el
+        # subconjunto cuyo nombre base sirve para barrer sidecars (miniatura,
+        # subtítulos) al armar el arrastre -- ver core/utils/output_artifacts.py. Nunca
+        # se filtran aquí por existencia: eso se hace al arrastrar, porque entre medio
+        # el pipeline puede borrar el original (no marcar "mantener medios originales")
+        # o el usuario puede mover los archivos.
+        self._known_paths = []
+        self._stem_paths = []
+        self._is_selected = False
+        self._drag_press_pos = None
+        self._status_color = None
         self.init_ui(title)
 
     def init_ui(self, title):
@@ -224,27 +240,7 @@ class QuickDownloadRow(QFrame):
         actions_layout.addWidget(self.btn_close)
         main_layout.addLayout(actions_layout)
 
-        self.setStyleSheet(f"""
-            QFrame#queueItemCard {{
-                background-color: {get_theme_token('fondo_principal', '#121212')};
-                border: 1px solid {get_theme_token('borde', '#2d2d2d')};
-                border-radius: 6px;
-            }}
-            QLabel {{
-                color: {get_theme_token('texto_principal', '#dddddd')};
-            }}
-            QProgressBar {{
-                background-color: {get_theme_token('progreso_fondo', '#0f0f0f')};
-                border: none;
-                border-radius: 3px;
-            }}
-            QProgressBar::chunk {{
-                background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 {get_theme_token('progreso_inicio', '#35d6b8')},
-                    stop:1 {get_theme_token('progreso_fin', '#138f7d')});
-                border-radius: 3px;
-            }}
-        """)
+        self._refresh_card_style()
 
     def _is_alive(self) -> bool:
         """True si el widget de Qt subyacente todavía existe. Las señales que
@@ -262,13 +258,101 @@ class QuickDownloadRow(QFrame):
         except RuntimeError:
             return False
 
+    # ------------------------------------------------------------------
+    # Resultados en disco y arrastre nativo hacia otras aplicaciones
+    # ------------------------------------------------------------------
+    def add_output_files(self, paths, is_stem_source=True):
+        """Registra rutas producidas por esta fila. is_stem_source=False para la salida
+        recodificada: su nombre lleva el prefijo/sufijo elegido por el usuario, así que
+        usarlo para barrer hermanos podría arrastrar archivos de otra descarga."""
+        for path in paths or []:
+            if not path:
+                continue
+            if path not in self._known_paths:
+                self._known_paths.append(path)
+            if is_stem_source and path not in self._stem_paths:
+                self._stem_paths.append(path)
+
+    def output_stems(self):
+        """Rutas cuyo nombre base identifica a ESTA fila, para que otra fila de la lista
+        no reclame sus archivos (ver collect_output_artifacts)."""
+        return list(self._stem_paths)
+
+    def collect_drag_files(self, foreign_stems=None):
+        """Todo lo que HOY sigue existiendo en disco como resultado de esta fila: medio
+        (o fragmentos), completo conservado, miniatura, subtítulos y recodificado, según
+        lo que el usuario haya elegido conservar. Se resuelve en el momento del
+        arrastre, nunca antes. foreign_stems son las rutas de las demás filas de la
+        lista, para no llevarse lo que es de ellas."""
+        try:
+            return collect_output_artifacts(self._known_paths, stem_paths=self._stem_paths,
+                                            foreign_stems=foreign_stems)
+        except Exception as e:
+            logger.error(f"QuickDownloadRow: No se pudieron reunir los archivos para arrastrar: {e}")
+            return []
+
+    def is_draggable(self):
+        """Solo cuando el proceso COMPLETO terminó bien: con recodificación pedida,
+        _is_completed no se activa hasta que termina también el recode (lo resuelve
+        DownloadController._on_recode_job_status)."""
+        return bool(self._is_completed and not self._is_error)
+
+    def is_selected(self):
+        return self._is_selected
+
+    def set_selected(self, selected):
+        selected = bool(selected)
+        if selected == self._is_selected or not self._is_alive():
+            return
+        self._is_selected = selected
+        self._refresh_card_style()
+
+    def _update_drag_affordance(self):
+        if not self._is_alive():
+            return
+        self.setCursor(Qt.OpenHandCursor if self.is_draggable() else Qt.ArrowCursor)
+        # El tinte verde de "listo para arrastrar" depende de is_draggable(), que cambia
+        # aquí (mark_completed/mark_error) y no en _apply_status_color.
+        self._refresh_card_style()
+        if self.is_draggable():
+            self.setToolTip(self.tr("Arrastra este elemento a otra aplicación para importar todos sus archivos")
+                            if hasattr(self, "tr") else
+                            "Arrastra este elemento a otra aplicación para importar todos sus archivos")
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._drag_press_pos = event.position().toPoint()
+            self.selection_requested.emit(self, event.modifiers())
+            # Se acepta para que el clic no siga subiendo hasta ActivityPanel, que lo
+            # interpreta como "clic en zona vacía" y limpiaría la selección recién hecha.
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._drag_press_pos is None or not (event.buttons() & Qt.LeftButton):
+            return super().mouseMoveEvent(event)
+        if (event.position().toPoint() - self._drag_press_pos).manhattanLength() < QApplication.startDragDistance():
+            return super().mouseMoveEvent(event)
+        # Se limpia ANTES de emitir: el arrastre abre un bucle de eventos anidado y el
+        # gesto no debe poder relanzarse desde dentro de él.
+        self._drag_press_pos = None
+        if self.is_draggable():
+            self.drag_requested.emit(self)
+
+    def mouseReleaseEvent(self, event):
+        self._drag_press_pos = None
+        super().mouseReleaseEvent(event)
+
     def mark_completed(self, filepath=None):
         """Marca este item como completado y muestra el botón de carpeta."""
         self._is_completed = True
         if filepath:
             self.downloaded_filepath = filepath
+            self.add_output_files([filepath])
         if not self._is_alive():
             return
+        self._update_drag_affordance()
         if self.downloaded_filepath:
             if os.path.exists(self.downloaded_filepath):
                 self.btn_reveal.show()
@@ -281,6 +365,8 @@ class QuickDownloadRow(QFrame):
     def mark_error(self):
         """Marca este item como error."""
         self._is_error = True
+        self.set_selected(False)
+        self._update_drag_affordance()
 
     # Mismo mapeo estado -> token de tema que usa QueueItemCard en queue_panel.py,
     # para que Modo Rápido y LOTES se vean consistentes.
@@ -296,14 +382,44 @@ class QuickDownloadRow(QFrame):
         "En cola": ("estado_espera", "#aaaaaa"),
     }
 
-    def _apply_status_color(self, status):
-        token, default = self._STATUS_TOKENS.get(status, ("estado_espera", "#aaaaaa"))
-        color = get_theme_token(token, default)
-        self.status_lbl.setStyleSheet(f"color: {color}; font-size: 10px; font-weight: bold;")
+    @staticmethod
+    def _blend(base_hex, tint_hex, ratio):
+        """Mezcla `ratio` de tint sobre base y devuelve un '#rrggbb'. Los tokens de tema
+        son cadenas de color, así que la mezcla se hace aquí en vez de con rgba() en la
+        hoja de estilo (que se compondría contra el panel, no contra el fondo del tema)."""
+        try:
+            base, tint = QColor(base_hex), QColor(tint_hex)
+            if not base.isValid() or not tint.isValid():
+                return base_hex
+            mix = lambda b, t: int(round(b + (t - b) * ratio))
+            return QColor(mix(base.red(), tint.red()),
+                          mix(base.green(), tint.green()),
+                          mix(base.blue(), tint.blue())).name()
+        except Exception:
+            return base_hex
+
+    def _refresh_card_style(self):
+        """Único punto que pinta la tarjeta. El borde lo decide el estado
+        (_apply_status_color) y el fondo, si la fila está seleccionada para arrastrar
+        (set_selected) -- antes cada uno reescribía la hoja completa por su cuenta y el
+        último en escribir borraba lo del otro."""
+        border = self._status_color or get_theme_token('borde', '#2d2d2d')
+        base = get_theme_token('fondo_principal', '#121212')
+        if self._is_selected:
+            background = get_theme_token('fondo_hover', '#2a2a2a')
+            border_width = 2
+        elif self.is_draggable():
+            # Una fila terminada se tiñe del verde de éxito para que se lea de un
+            # vistazo cuál ya se puede arrastrar a otra aplicación.
+            background = self._blend(base, border, 0.14)
+            border_width = 1
+        else:
+            background = base
+            border_width = 1
         self.setStyleSheet(f"""
             QFrame#queueItemCard {{
-                background-color: {get_theme_token('fondo_principal', '#121212')};
-                border: 1px solid {color};
+                background-color: {background};
+                border: {border_width}px solid {border};
                 border-radius: 6px;
             }}
             QLabel {{
@@ -321,6 +437,13 @@ class QuickDownloadRow(QFrame):
                 border-radius: 3px;
             }}
         """)
+
+    def _apply_status_color(self, status):
+        token, default = self._STATUS_TOKENS.get(status, ("estado_espera", "#aaaaaa"))
+        color = get_theme_token(token, default)
+        self.status_lbl.setStyleSheet(f"color: {color}; font-size: 10px; font-weight: bold;")
+        self._status_color = color
+        self._refresh_card_style()
 
     def update_progress(self, percent, info="", status=None):
         if not self._is_alive():

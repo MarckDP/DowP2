@@ -979,41 +979,8 @@ class QueuePanel(QWidget):
             self._open_and_select(actual_path)
 
     def _find_actual_downloaded_file(self, filepath):
-        if not filepath:
-            return None
-        if os.path.exists(filepath):
-            return filepath
-            
-        if os.path.isdir(filepath):
-            return filepath
-            
-        parent_dir = os.path.dirname(filepath)
-        if not os.path.exists(parent_dir):
-            return None
-            
-        base_name = os.path.splitext(os.path.basename(filepath))[0]
-        
-        # Eliminar extensiones temporales si las hay
-        for temp_ext in ['.temp', '.ytdl', '.part']:
-            if base_name.endswith(temp_ext):
-                base_name = base_name[:-len(temp_ext)]
-                
-        best_match = None
-        try:
-            for entry in os.scandir(parent_dir):
-                if entry.is_file():
-                    entry_base = os.path.splitext(entry.name)[0]
-                    if entry_base == base_name:
-                        return entry.path
-                    if entry_base.startswith(base_name):
-                        best_match = entry.path
-        except Exception as e:
-            logger.error(f"Error escaneando directorio para encontrar archivo: {e}")
-            
-        if best_match:
-            return best_match
-            
-        return parent_dir
+        from core.utils.output_artifacts import find_actual_downloaded_file
+        return find_actual_downloaded_file(filepath, fallback_to_dir=True)
 
     def _open_and_select(self, path):
         import subprocess
@@ -1030,7 +997,9 @@ class QueuePanel(QWidget):
                     os.startfile(path)
                 else:
                     # En Windows, para señalar el archivo en Explorer:
-                    subprocess.run(['explorer', '/select,', path])
+                    # Se pasa como string formateado para evitar que subprocess añada comillas extra 
+                    # que separen la coma de la ruta, rompiendo el parseo de explorer.exe con '#'
+                    subprocess.run(f'explorer /select,"{path}"')
             elif platform.system() == 'Darwin':
                 # macOS
                 if os.path.isdir(path):

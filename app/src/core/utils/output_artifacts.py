@@ -248,7 +248,7 @@ def find_actual_downloaded_file(filepath, fallback_to_dir=False):
         if base_name.endswith(temp_ext):
             base_name = base_name[: -len(temp_ext)]
     import re
-    base_name = re.sub(r'\.f[a-zA-Z0-9-]+$', '', base_name)
+    base_name = re.sub(r'\.f[a-zA-Z0-9-_]+$', '', base_name)
 
     # rango 0: mismo nombre y no es sidecar | 1: mismo nombre, sidecar
     #        2: cuelga del nombre, no sidecar | 3: cuelga del nombre, sidecar

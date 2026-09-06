@@ -347,6 +347,7 @@ class EditorStatusCornerWidget(QWidget):
         apps = [
             ("premiere", "premiere pro.svg", "Adobe Premiere Pro"),
             ("aftereffects", "after effects.svg", "Adobe After Effects"),
+            ("photoshop", "photoshop.svg", "Adobe Photoshop"),
             ("davinci", "davinci resolve.svg", "DaVinci Resolve")
         ]
 
@@ -720,6 +721,53 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'editor_status_widget') and not getattr(self, '_editor_status_initialized', False):
             self.editor_status_widget.late_init()
             self._editor_status_initialized = True
+        # Recepcion de medios desde el editor (boton "Enviar a DowP" del panel). Se
+        # conecta aca por lo mismo que el corner widget: EditorIntegrationManager se
+        # crea en main.py despues de construir la ventana.
+        if not getattr(self, '_editor_push_connected', False):
+            from core.services.editor_integration_manager import EditorIntegrationManager
+            editor_mgr = EditorIntegrationManager.get_instance()
+            if editor_mgr:
+                editor_mgr.media_pushed_from_editor.connect(self._on_media_pushed_from_editor)
+                self._editor_push_connected = True
+
+    def _on_media_pushed_from_editor(self, items: list, app_id: str):
+        """Reparte lo que el usuario mando desde Premiere/After Effects: audio y video a
+        Herramientas Multimedia (con su recorte, si el clip venia cortado en la linea de
+        tiempo) e imagenes al Editor de Imagen. Se salta a la pestana que mas elementos
+        recibio y se trae la ventana al frente, porque el gesto arranco en OTRA app."""
+        from gui.tabs.video_tools.media_queue_widget import SUPPORTED_EXTENSIONS as MEDIA_EXTS
+        from gui.tabs.image_tools.image_queue_widget import SUPPORTED_EXTENSIONS as IMAGE_EXTS
+
+        media_items, image_items, unsupported = [], [], []
+        for item in items or []:
+            ext = os.path.splitext(item.get("path", ""))[1].lower()
+            if ext in MEDIA_EXTS:
+                media_items.append(item)
+            elif ext in IMAGE_EXTS:
+                image_items.append(item)
+            else:
+                unsupported.append(item.get("path", ""))
+
+        added_media = self.tab_video.receive_media_from_editor(media_items) if media_items else 0
+        added_images = self.tab_image.receive_media_from_editor(image_items) if image_items else 0
+
+        if unsupported:
+            logger.warning(
+                f"MainWindow: {len(unsupported)} elemento(s) de {app_id} no son medios "
+                f"compatibles y se ignoraron: {unsupported}"
+            )
+        logger.info(
+            f"MainWindow: Recibidos de {app_id} -> {added_media} a Herramientas Multimedia, "
+            f"{added_images} al Editor de Imagen."
+        )
+
+        if added_media or added_images:
+            target = self.tab_video if added_media >= added_images else self.tab_image
+            self.tabs.setCurrentWidget(target)
+            self.show()
+            self.raise_()
+            self.activateWindow()
 
     def update_theme(self, theme_name):
         logger.info(f"MainWindow: Cambiando tema a {theme_name}")

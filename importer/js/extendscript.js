@@ -70,16 +70,64 @@
 })();
 
 function getHostAppName() {
+    // BridgeTalk.appName es el unico identificador que los tres hosts publican igual
+    // ('photoshop', 'aftereffects', 'premierepro'), asi que va primero. Antes, Premiere
+    // se deducia de que app.isDocumentOpen() devolviera true, lo que fallaba con el
+    // proyecto recien abierto y no distinguia Photoshop de nada.
+    try {
+        if (typeof BridgeTalk !== 'undefined' && BridgeTalk.appName) {
+            var bt = String(BridgeTalk.appName).toLowerCase();
+            if (bt.indexOf("photoshop") === 0) return "Adobe Photoshop";
+            if (bt.indexOf("aftereffects") === 0) return "Adobe After Effects";
+            if (bt.indexOf("premiere") === 0) return "Adobe Premiere Pro";
+        }
+    } catch (eBT) {}
+
     try {
         if (typeof app !== 'undefined' && app.appName && app.appName.indexOf("After Effects") > -1) {
             return "Adobe After Effects";
-        } else if (typeof $ !== 'undefined' && $.global && $.global.app && $.global.app.isDocumentOpen && $.global.app.isDocumentOpen()) {
-            return "Adobe Premiere Pro";
-        } else {
-            return "unknown";
         }
+        if (typeof app !== 'undefined' && app.name && String(app.name).indexOf("Photoshop") > -1) {
+            return "Adobe Photoshop";
+        }
+        if (typeof $ !== 'undefined' && $.global && $.global.app && $.global.app.isDocumentOpen && $.global.app.isDocumentOpen()) {
+            return "Adobe Premiere Pro";
+        }
+        return "unknown";
     } catch (e) {
         return "unknown";
+    }
+}
+
+// Extensiones que Photoshop puede abrir o colocar como capa. Todo lo demas que llegue
+// (video, audio, subtitulos) se ignora ahi, porque DowP manda a Photoshop solo imagenes.
+var PHOTOSHOP_IMAGE_EXTS = [
+    ".jpg", ".jpeg", ".png", ".gif", ".tif", ".tiff", ".psd", ".psb",
+    ".bmp", ".webp", ".heic", ".heif", ".raw", ".dng", ".cr2", ".nef",
+    ".arw", ".exr", ".tga", ".ico", ".svg", ".pdf", ".eps"
+];
+
+function isPhotoshopImage(path) {
+    try {
+        var lower = String(path).toLowerCase();
+        for (var i = 0; i < PHOTOSHOP_IMAGE_EXTS.length; i++) {
+            var ext = PHOTOSHOP_IMAGE_EXTS[i];
+            if (lower.length >= ext.length && lower.substring(lower.length - ext.length) === ext) {
+                return true;
+            }
+        }
+    } catch (e) {}
+    return false;
+}
+
+function getPhotoshopActiveDocument() {
+    // app.activeDocument LANZA excepcion cuando no hay ningun documento abierto, en vez
+    // de devolver null: hay que mirar primero app.documents.length.
+    try {
+        if (!app.documents || app.documents.length === 0) return null;
+        return app.activeDocument;
+    } catch (e) {
+        return null;
     }
 }
 
@@ -198,11 +246,97 @@ function executeDowP(path, appIdentifier) {
     }
 }
 
+function bindSequenceEvents() {
+    // Premiere puede avisar por evento cuando cambia la secuencia activa. Con esto el
+    // panel se entera al instante y no depende solo del sondeo cada 1-2 s (que ademas no
+    // puede correr mientras se importa). Es aditivo: si esta version del host no soporta
+    // app.bind o el evento, se devuelve el error y el panel sigue sondeando igual.
+    try {
+        if (getHostAppName() !== "Adobe Premiere Pro") return "skipped";
+        if ($.global.__dowpSequenceBound) return "already";
+
+        app.bind("onActiveSequenceChanged", function () {
+            try {
+                new ExternalObject("lib:PlugPlugExternalObject");
+                var ev = new CSXSEvent();
+                ev.type = "com.dowp.sequenceChanged";
+                ev.data = "";
+                ev.dispatch();
+            } catch (eDispatch) {}
+        });
+
+        $.global.__dowpSequenceBound = true;
+        return "bound";
+    } catch (e) {
+        return "error: " + e.toString();
+    }
+}
+
+function rememberActiveComp(comp) {
+    try {
+        if (comp && comp instanceof CompItem) {
+            $.global.__dowpLastCompId = comp.id;
+        }
+    } catch (e) {}
+}
+
+function getActiveCompSticky() {
+    // app.project.activeItem solo devuelve la composicion cuando su visor es el frontal:
+    // si el usuario toca el panel de proyecto, otro visor, o el propio panel de DowP,
+    // pasa a null o a un item que no es una CompItem, y el panel creia que ya no habia
+    // linea de tiempo (casilla apagada a mitad de una importacion). Se recuerda la
+    // ultima composicion valida y se usa como respaldo mientras siga existiendo en el
+    // proyecto.
+    var item = null;
+    try {
+        item = (app.project) ? app.project.activeItem : null;
+    } catch (e) {
+        item = null;
+    }
+
+    if (item && item instanceof CompItem) {
+        rememberActiveComp(item);
+        return item;
+    }
+
+    var lastId = null;
+    try {
+        lastId = $.global.__dowpLastCompId;
+    } catch (e) {
+        lastId = null;
+    }
+    if (!lastId) return null;
+
+    var remembered = null;
+    try {
+        remembered = app.project.itemByID(lastId);
+    } catch (e) {
+        remembered = null;
+    }
+    if (!remembered) {
+        // itemByID no esta disponible en todas las versiones: barrido manual.
+        try {
+            for (var i = 1; i <= app.project.numItems; i++) {
+                var candidate = app.project.item(i);
+                if (candidate && candidate.id === lastId) {
+                    remembered = candidate;
+                    break;
+                }
+            }
+        } catch (e2) {
+            remembered = null;
+        }
+    }
+
+    return (remembered && remembered instanceof CompItem) ? remembered : null;
+}
+
 function getActiveTimelineInfo() {
     var info = {
         hasActiveTimeline: false,
         playheadTime: 0,
-        playheadTicks: "0"
+        playheadTicks: "0",
+        timelineName: ""
     };
 
     try {
@@ -213,15 +347,28 @@ function getActiveTimelineInfo() {
                 info.hasActiveTimeline = true;
                 info.playheadTime = sequence.getPlayerPosition().seconds;
                 info.playheadTicks = sequence.getPlayerPosition().ticks;
+                try { info.timelineName = sequence.name; } catch (eName) {}
+            }
+        } else if (host === "Adobe Photoshop") {
+            // En Photoshop no hay linea de tiempo: el equivalente util es "hay un
+            // documento abierto donde colocar la imagen". Asi, la misma casilla del panel
+            // pasa a significar "colocar en el documento activo" sin tocar su maquinaria
+            // (ver updateTimelineState en main.js).
+            var psDoc = getPhotoshopActiveDocument();
+            if (psDoc) {
+                info.hasActiveTimeline = true;
+                info.playheadTime = 0;
+                try { info.timelineName = psDoc.name; } catch (ePS) {}
             }
         } else if (host === "Adobe After Effects") {
-            if (app.project && app.project.activeItem && app.project.activeItem instanceof CompItem) {
-                var comp = app.project.activeItem;
+            var comp = getActiveCompSticky();
+            if (comp) {
                 try {
                     var currentTime = comp.time;
                     if (comp.width > 0 && comp.height > 0) {
                         info.hasActiveTimeline = true;
                         info.playheadTime = currentTime;
+                        try { info.timelineName = comp.name; } catch (eName2) {}
                     }
                 } catch (e) {
                     info.hasActiveTimeline = false;
@@ -290,12 +437,72 @@ function importFiles(fileListJSON, addToTimeline, playheadTime, importImagesToTi
             return importForAfterEffects(filePaths, addToTimeline, playheadTime, importImagesToTimeline, targetBinName);
         } else if (host === "Adobe Premiere Pro") {
             return importForPremiere(filePaths, addToTimeline, playheadTime, importImagesToTimeline, targetBinName);
+        } else if (host === "Adobe Photoshop") {
+            return importForPhotoshop(filePaths, addToTimeline);
         } else {
             return "Error: Aplicación no soportada.";
         }
     } catch (error) {
         return "Error crítico en ExtendScript: " + error.toString();
     }
+}
+
+function placeInPhotoshopDocument(file) {
+    // "Colocar incrustado": entra como objeto inteligente en el documento activo, que es
+    // el equivalente a "anadir a la linea de tiempo" del resto de hosts. Se usa la accion
+    // en vez de app.open para no abrir un documento nuevo por cada imagen.
+    var desc = new ActionDescriptor();
+    desc.putPath(charIDToTypeID("null"), file);
+    desc.putEnumerated(charIDToTypeID("FTcs"), charIDToTypeID("QCSt"), charIDToTypeID("Qcsa"));
+    desc.putBoolean(stringIDToTypeID("linked"), false);
+    executeAction(charIDToTypeID("Plc "), desc, DialogModes.NO);
+}
+
+function importForPhotoshop(filePaths, placeInActiveDocument) {
+    var imported = 0;
+    var ignored = [];
+    var errors = [];
+
+    var doc = getPhotoshopActiveDocument();
+    // Sin documento abierto no hay donde colocar nada: se abre cada imagen como
+    // documento propio, que es el unico destino posible.
+    var shouldPlace = placeInActiveDocument && doc !== null;
+
+    for (var i = 0; i < filePaths.length; i++) {
+        var path = filePaths[i];
+        if (!isPhotoshopImage(path)) {
+            ignored.push(path);
+            continue;
+        }
+
+        var file = new File(path);
+        if (!file.exists) {
+            errors.push("no existe: " + path);
+            continue;
+        }
+
+        try {
+            if (shouldPlace) {
+                placeInPhotoshopDocument(file);
+            } else {
+                app.open(file);
+            }
+            imported++;
+        } catch (e) {
+            errors.push(path + " (" + e.toString() + ")");
+        }
+    }
+
+    if (imported === 0) {
+        if (errors.length > 0) return "Error: " + errors.join(" | ");
+        if (ignored.length > 0) return "Error: Photoshop solo acepta imágenes.";
+        return "Error: No se importó ningún archivo.";
+    }
+
+    logToDowP("Photoshop: " + imported + " imagen(es) " +
+              (shouldPlace ? "colocadas en el documento activo" : "abiertas como documento nuevo") +
+              (ignored.length ? " | ignoradas (no son imágenes): " + ignored.length : ""), "info");
+    return "success";
 }
 
 function logToDowP(msg, level) {
@@ -336,8 +543,8 @@ function importSubclipsForAfterEffects(filePath, subclipsJSON, addToTimeline, pl
         // composición. Si no se pide timeline (o no hay comp activa), no se
         // descarta el medio: se importa completo al bin DowP Imports, igual
         // que un archivo normal, y ahí se queda para uso manual.
-        var comp = app.project.activeItem;
-        var canTrimOnTimeline = addToTimeline && comp && (comp instanceof CompItem);
+        var comp = getActiveCompSticky();
+        var canTrimOnTimeline = addToTimeline && comp;
 
         app.beginUndoGroup("Importar subclips desde DowP");
 
@@ -1271,8 +1478,8 @@ function importForAfterEffects(filePaths, addToTimeline, playheadTime, importIma
         }
 
         if (addToTimeline && mediaItems.length > 0) {
-            var comp = app.project.activeItem;
-            if (comp && comp instanceof CompItem) {
+            var comp = getActiveCompSticky();
+            if (comp) {
                 for (var m = 0; m < mediaItems.length; m++) {
                     try {
                         var newLayer = comp.layers.add(mediaItems[m]);
@@ -1493,255 +1700,210 @@ function findDowPExecutable() {
     }
 }
 
-function getSelectedFilePathsFromAdobe() {
-    var filePaths = [];
-    var foundPathsObj = {};
-    var debugMessages = [];
+function getSelectionForDowP() {
+    // Devuelve la seleccion del usuario con el RECORTE de origen de cada clip, para que
+    // DowP reciba el medio completo pero con el corte ya marcado en la waveform. Formato:
+    //   { items: [{path, name, hasTrim, in, out}], skipped: ["nombre (motivo)"] }
+    // Lo que no se pueda mandar se informa en 'skipped' en vez de desaparecer en silencio.
+    var out = { items: [], skipped: [] };
+    var seen = {};
 
-    // ✅ NUEVO: Crear archivo de log
-    var logFile = new File(Folder.temp.fsName + "/dowp_debug.txt");
-
-    function logDebug(msg) {
-        debugMessages.push(msg);
-        $.writeln(msg);
-        // Escribir también a archivo
-        try {
-            logFile.open("a");
-            logFile.writeln(msg);
-            logFile.close();
-        } catch (e) { }
+    function skip(name, reason) {
+        out.skipped.push((name || "(sin nombre)") + " - " + reason);
     }
 
-    // Limpiar log anterior
-    try {
-        logFile.open("w");
-        logFile.writeln("=== NUEVO DEBUG SESSION ===");
-        logFile.writeln("Timestamp: " + new Date().toString());
-        logFile.close();
-    } catch (e) { }
+    function addItem(path, inSec, outSec, name) {
+        if (!path) { skip(name, "sin archivo en disco"); return; }
+        var f = new File(path);
+        if (!f.exists) { skip(name, "el archivo ya no existe"); return; }
 
-    function addPath(path) {
-        if (path && path.length > 0) {
-            var f = new File(path);
-            if (f.exists) {
-                if (!foundPathsObj[f.fsName]) {
-                    filePaths.push(f.fsName);
-                    foundPathsObj[f.fsName] = true;
-                    logDebug("✓ Agregado: " + f.fsName);
-                }
-            } else {
-                logDebug("✗ No existe: " + path);
-            }
-        }
+        var hasTrim = (inSec !== null && outSec !== null &&
+                       !isNaN(inSec) && !isNaN(outSec) && outSec > inSec);
+        // Dos clips iguales con el MISMO corte son el mismo trabajo; con cortes distintos
+        // son dos, y por eso la clave incluye el rango.
+        var key = f.fsName + "|" + (hasTrim ? (inSec.toFixed(3) + "-" + outSec.toFixed(3)) : "full");
+        if (seen[key]) return;
+        seen[key] = true;
+
+        out.items.push({
+            path: f.fsName,
+            name: name || f.name,
+            hasTrim: hasTrim,
+            "in": hasTrim ? inSec : null,
+            "out": hasTrim ? outSec : null
+        });
     }
 
     try {
         var host = getHostAppName();
-        logDebug("Host detectado: " + host);
 
         if (host === "Adobe Premiere Pro") {
-            logDebug("=== PREMIERE PRO ===");
+            // 1) Clips seleccionados en la linea de tiempo: llevan recorte propio.
+            try {
+                if (app.project && app.project.activeSequence) {
+                    var clips = app.project.activeSequence.getSelection();
+                    for (var k = 0; k < clips.length; k++) {
+                        var clip = clips[k];
+                        var clipName = "clip";
+                        try { clipName = clip.name || "clip"; } catch (eN) {}
 
-            // 1. Buscar en la Línea de Tiempo Activa
-            if (app.project && app.project.activeSequence) {
-                try {
-                    var trackItems = app.project.activeSequence.getSelection();
-                    logDebug("Clips en timeline: " + trackItems.length);
-
-                    for (var k = 0; k < trackItems.length; k++) {
+                        var mediaPath = null;
                         try {
-                            var clip = trackItems[k];
                             if (clip.projectItem && clip.projectItem.getMediaPath) {
-                                var path = clip.projectItem.getMediaPath();
-                                logDebug("Timeline clip path: " + path);
-                                addPath(path);
+                                mediaPath = clip.projectItem.getMediaPath();
                             }
-                        } catch (clipError) {
-                            logDebug("Error en clip " + k + ": " + clipError.toString());
+                        } catch (eP) { mediaPath = null; }
+
+                        if (!mediaPath) {
+                            skip(clipName, "no es un medio de archivo (titulo, color, ajuste...)");
+                            continue;
                         }
+
+                        // Velocidad alterada o invertida: el rango de origen ya no
+                        // corresponde 1:1 con lo que se ve en la linea de tiempo, asi que
+                        // se manda el medio completo y se avisa, en vez de inventar un corte.
+                        var speed = 1;
+                        try { speed = clip.getSpeed(); } catch (eS) { speed = 1; }
+                        if (speed !== 1) {
+                            addItem(mediaPath, null, null, clipName);
+                            skip(clipName, "velocidad alterada: va el medio completo, sin corte");
+                            continue;
+                        }
+
+                        var inSec = null, outSec = null;
+                        try {
+                            inSec = clip.inPoint.seconds;
+                            outSec = clip.outPoint.seconds;
+                        } catch (eIO) { inSec = outSec = null; }
+
+                        addItem(mediaPath, inSec, outSec, clipName);
                     }
-                } catch (timelineError) {
-                    logDebug("Error timeline: " + timelineError.toString());
                 }
-            } else {
-                logDebug("No hay secuencia activa");
+            } catch (eTl) {
+                skip("linea de tiempo", "error leyendo la seleccion: " + eTl.toString());
             }
 
-            // 2. Buscar en el Panel de Proyecto (Bin)
-            logDebug("--- Buscando en Panel de Proyecto ---");
-            if (app.project) {
-                try {
-                    var selection = app.project.getSelection();
-                    logDebug("Items en proyecto: " + selection.length);
-
-                    if (selection.length === 0) {
-                        logDebug("⚠️ La selección está vacía - asegúrate de seleccionar clips en el proyecto");
-                    }
-
-                    for (var i = 0; i < selection.length; i++) {
+            // 2) Seleccion del panel de proyecto: medios completos, sin recorte.
+            try {
+                if (app.project && app.project.getSelection) {
+                    var items = app.project.getSelection();
+                    for (var i = 0; i < items.length; i++) {
+                        var item = items[i];
+                        if (!item) continue;
+                        var itemName = "item";
+                        try { itemName = item.name || "item"; } catch (eIN) {}
                         try {
-                            var item = selection[i];
-                            if (!item) {
-                                logDebug("  Item " + i + " es null/undefined");
+                            if (item.type === ProjectItemType.BIN) {
+                                skip(itemName, "es una carpeta");
                                 continue;
                             }
-
-                            // Debug: nombre del item
-                            logDebug("  Item " + i + ": " + (item.name || "sin nombre"));
-
-                            // Debug: tipo de item
-                            var itemType = "unknown";
-                            try {
-                                if (item.type === ProjectItemType.BIN) {
-                                    itemType = "BIN";
-                                    logDebug("    Tipo: BIN (carpeta) - SALTADO");
-                                    continue;
-                                } else if (item.type === ProjectItemType.CLIP) {
-                                    itemType = "CLIP";
-                                } else if (item.type === ProjectItemType.FILE) {
-                                    itemType = "FILE";
-                                } else {
-                                    itemType = "type=" + item.type;
-                                }
-                                logDebug("    Tipo: " + itemType);
-                            } catch (e) {
-                                logDebug("    Tipo: ERROR - " + e.toString());
-                            }
-
-                            // Intentar obtener la ruta
-                            var path = "";
-
-                            // Método 1: getMediaPath()
-                            try {
-                                if (typeof item.getMediaPath === "function") {
-                                    path = item.getMediaPath();
-                                    logDebug("    getMediaPath() = '" + path + "'");
-                                } else {
-                                    logDebug("    getMediaPath NO es función");
-                                }
-                            } catch (e) {
-                                logDebug("    getMediaPath() ERROR: " + e.toString());
-                            }
-
-                            // Método 2: mediaPath propiedad
-                            if (!path || path === "") {
-                                try {
-                                    if (item.mediaPath) {
-                                        path = item.mediaPath;
-                                        logDebug("    mediaPath = '" + path + "'");
-                                    } else {
-                                        logDebug("    mediaPath está vacío o undefined");
-                                    }
-                                } catch (e) {
-                                    logDebug("    mediaPath ERROR: " + e.toString());
-                                }
-                            }
-
-                            // Método 3: filePath
-                            if (!path || path === "") {
-                                try {
-                                    if (item.filePath) {
-                                        path = item.filePath;
-                                        logDebug("    filePath = '" + path + "'");
-                                    } else {
-                                        logDebug("    filePath está vacío o undefined");
-                                    }
-                                } catch (e) {
-                                    logDebug("    filePath ERROR: " + e.toString());
-                                }
-                            }
-
-                            // Intentar agregar
-                            if (path && path !== "" && path !== "undefined") {
-                                logDebug("    ➜ Intentando agregar: " + path);
-                                addPath(path);
-                            } else {
-                                logDebug("    ✗ No se pudo obtener ruta válida");
-                            }
-
-                        } catch (itemError) {
-                            logDebug("  ERROR procesando item " + i + ": " + itemError.toString());
-                        }
+                        } catch (eT) {}
+                        var itemPath = null;
+                        try {
+                            if (item.getMediaPath) itemPath = item.getMediaPath();
+                        } catch (eMP) { itemPath = null; }
+                        if (!itemPath) { skip(itemName, "no tiene archivo en disco"); continue; }
+                        addItem(itemPath, null, null, itemName);
                     }
-                } catch (projectError) {
-                    logDebug("ERROR obteniendo selección: " + projectError.toString());
                 }
-            } else {
-                logDebug("✗ app.project no existe");
+            } catch (ePr) {
+                skip("panel de proyecto", "error leyendo la seleccion: " + ePr.toString());
             }
 
         } else if (host === "Adobe After Effects") {
-            debugMessages.push("=== AFTER EFFECTS ===");
+            // 1) Capas seleccionadas de la composicion (la sticky, para que no dependa de
+            //    que el visor de comp sea el frontal -- ver getActiveCompSticky).
+            var comp = getActiveCompSticky();
+            if (comp) {
+                var layers = [];
+                try { layers = comp.selectedLayers; } catch (eSL) { layers = []; }
+                for (var m = 0; m < layers.length; m++) {
+                    var layer = layers[m];
+                    var layerName = "capa";
+                    try { layerName = layer.name || "capa"; } catch (eLN) {}
 
-            // 1. Buscar en la Composición Activa (Capas seleccionadas)
-            if (app.project && app.project.activeItem && app.project.activeItem instanceof CompItem) {
-                try {
-                    var selectedLayers = app.project.activeItem.selectedLayers;
-                    debugMessages.push("Capas seleccionadas: " + selectedLayers.length);
+                    var srcFile = null;
+                    try {
+                        if (layer.source && layer.source.file) srcFile = layer.source.file.fsName;
+                    } catch (eSF) { srcFile = null; }
+                    if (!srcFile) {
+                        skip(layerName, "no es un medio de archivo (solido, texto, forma...)");
+                        continue;
+                    }
 
-                    for (var m = 0; m < selectedLayers.length; m++) {
-                        try {
-                            var layer = selectedLayers[m];
-                            if (layer.source && layer.source.file) {
-                                debugMessages.push("Layer path: " + layer.source.file.fsName);
-                                addPath(layer.source.file.fsName);
-                            }
-                        } catch (layerError) {
-                            debugMessages.push("Error en layer " + m + ": " + layerError.toString());
+                    // inPoint/outPoint estan en tiempo de COMPOSICION. La conversion a
+                    // tiempo de origen solo es valida sin remapeo y a velocidad normal;
+                    // en cualquier otro caso se manda el medio completo y se avisa.
+                    var remapped = false, stretch = 100;
+                    try { remapped = layer.timeRemapEnabled; } catch (eR) {}
+                    try { stretch = layer.stretch; } catch (eSt) {}
+
+                    if (remapped || Math.abs(stretch - 100) > 0.001) {
+                        addItem(srcFile, null, null, layerName);
+                        skip(layerName, "tiene remapeo/estiramiento de tiempo: va el medio completo, sin corte");
+                        continue;
+                    }
+
+                    var lIn = null, lOut = null;
+                    try {
+                        lIn = layer.inPoint - layer.startTime;
+                        lOut = layer.outPoint - layer.startTime;
+                        if (lIn < 0) lIn = 0;
+                    } catch (eLIO) { lIn = lOut = null; }
+
+                    addItem(srcFile, lIn, lOut, layerName);
+                }
+            }
+
+            // 2) Seleccion del panel de proyecto: medios completos.
+            try {
+                var projSel = app.project ? app.project.selection : null;
+                if (projSel) {
+                    for (var n = 0; n < projSel.length; n++) {
+                        var pItem = projSel[n];
+                        var pName = "item";
+                        try { pName = pItem.name || "item"; } catch (ePN) {}
+                        if (pItem instanceof FolderItem) { skip(pName, "es una carpeta"); continue; }
+                        if (pItem instanceof CompItem) { skip(pName, "es una composicion, no un archivo"); continue; }
+                        if (pItem instanceof FootageItem && pItem.file) {
+                            addItem(pItem.file.fsName, null, null, pName);
+                        } else {
+                            skip(pName, "no tiene archivo en disco");
                         }
                     }
-                } catch (compError) {
-                    debugMessages.push("Error comp: " + compError.toString());
                 }
+            } catch (ePj) {
+                skip("panel de proyecto", "error leyendo la seleccion: " + ePj.toString());
+            }
+        } else if (host === "Adobe Photoshop") {
+            // En Photoshop lo que se manda es el documento activo. Solo tiene sentido si
+            // ya existe como archivo en disco: DowP trabaja sobre archivos, no sobre el
+            // estado en memoria del editor.
+            var psDoc = getPhotoshopActiveDocument();
+            if (!psDoc) {
+                skip("documento", "no hay ningun documento abierto");
             } else {
-                debugMessages.push("No hay comp activa");
-            }
-
-            // 2. Buscar en el Panel de Proyecto
-            if (app.project && app.project.selection) {
-                try {
-                    var selection = app.project.selection;
-                    debugMessages.push("Items seleccionados en proyecto: " + selection.length);
-
-                    for (var i = 0; i < selection.length; i++) {
-                        try {
-                            var item = selection[i];
-                            if (item instanceof FootageItem && item.file) {
-                                debugMessages.push("Proyecto item path: " + item.file.fsName);
-                                addPath(item.file.fsName);
-                            } else if (item instanceof FolderItem) {
-                                debugMessages.push("  (saltado: es un folder)");
-                            }
-                        } catch (itemError) {
-                            debugMessages.push("Error en item " + i + ": " + itemError.toString());
-                        }
-                    }
-                } catch (projectError) {
-                    debugMessages.push("Error proyecto: " + projectError.toString());
+                var docName = "documento";
+                try { docName = psDoc.name || "documento"; } catch (eDN) {}
+                var docPath = null;
+                try { docPath = psDoc.fullName ? psDoc.fullName.fsName : null; } catch (eFN) { docPath = null; }
+                if (!docPath) {
+                    skip(docName, "el documento no se ha guardado todavia");
+                } else {
+                    addItem(docPath, null, null, docName);
                 }
             }
+        } else {
+            skip("aplicacion", "host no soportado: " + host);
         }
-
-        logDebug("=== RESULTADO FINAL ===");
-        logDebug("Total archivos encontrados: " + filePaths.length);
-
-        // Escribir resumen final
-        try {
-            logFile.open("a");
-            logFile.writeln("\n=== ARCHIVOS FINALES ===");
-            for (var f = 0; f < filePaths.length; f++) {
-                logFile.writeln(filePaths[f]);
-            }
-            logFile.writeln("Total: " + filePaths.length);
-            logFile.writeln("=== FIN ===\n");
-            logFile.close();
-        } catch (e) { }
-
-        return JSON.stringify(filePaths);
-
     } catch (e) {
-        logDebug("ERROR CRÍTICO: " + e.toString());
-        return JSON.stringify([]);
+        skip("seleccion", "error inesperado: " + e.toString());
+    }
+
+    try {
+        return JSON.stringify(out);
+    } catch (eJ) {
+        return '{"items":[],"skipped":["error serializando la seleccion"]}';
     }
 }
 

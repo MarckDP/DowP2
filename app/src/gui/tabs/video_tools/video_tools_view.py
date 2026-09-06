@@ -22,7 +22,7 @@ from gui.widgets.combo_box import AutoPopupComboBox
 from gui.widgets.collapsible_panel import CollapsiblePanel
 from gui.styles import apply_folder_browse_button_style, apply_folder_open_button_style, create_colored_circle_icon, update_label_combobox_style
 from gui.widgets.media_trim_player_widget import MediaTrimPlayerWidget
-from gui.tabs.video_tools.media_queue_widget import MediaQueueWidget
+from gui.tabs.video_tools.media_queue_widget import MediaQueueWidget, entry_path
 from gui.tabs.video_tools.encoding_options_widget import EncodingOptionsWidget
 from core.logger.logger_manager import logger
 from core.utils.config_manager import get_config, save_config
@@ -531,7 +531,11 @@ class VideoToolsTab(QWidget):
         self.output_card.setMaximumWidth(self._output_card_max_width())
 
     def _on_file_selected(self, filepath: str):
+        # filepath es la CLAVE de la entrada de la cola: para tocar disco hay que
+        # resolverla a la ruta real, porque un mismo archivo puede estar repetido con
+        # recortes distintos (ver media_queue_widget.entry_path).
         self.current_preview_file = filepath
+        filepath = entry_path(filepath)
         if not filepath or not os.path.exists(filepath):
             self.preview_widget.clear()
             return
@@ -545,12 +549,12 @@ class VideoToolsTab(QWidget):
         if duration_sec <= 0:
             duration_sec = 1.0
 
-        cached_trim = self._trim_cache.get(filepath)
+        cached_trim = self._trim_cache.get(self.current_preview_file)
         cached_in, cached_out = cached_trim if cached_trim else (None, None)
         self.preview_widget.load_media(
             filepath, media_type, duration_sec, fps_val,
             initial_in_sec=cached_in, initial_out_sec=cached_out,
-            initial_audio_track_selection=self._audio_track_cache.get(filepath),
+            initial_audio_track_selection=self._audio_track_cache.get(self.current_preview_file),
         )
         self.options_widget.tab_advanced.set_source_media(meta, filepath)
         self.options_widget.tab_compress.set_source_media(meta, filepath)
@@ -563,6 +567,43 @@ class VideoToolsTab(QWidget):
         # panel, no del archivo, así que no se "apaga" solo al cambiar de ítem).
         self.options_widget.tab_advanced.hide_apply_to_all_checkbox()
         self._on_crop_edit_toggled(self.options_widget.tab_advanced.is_crop_active())
+
+    def receive_media_from_editor(self, items: list) -> int:
+        """Agrega a la cola medios enviados desde el editor con "Enviar a DowP".
+
+        Cada item es {path, in, out, has_trim, name}. Un clip recortado en la linea de
+        tiempo entra como entrada PROPIA aunque su archivo ya este en la cola (dos cortes
+        del mismo medio son dos trabajos distintos, ver
+        media_queue_widget.add_files(allow_duplicates)); un medio sin recorte se deduplica
+        como cualquier otro archivo agregado a mano.
+
+        Devuelve cuantos entraron.
+        """
+        trimmed, plain = [], []
+        for item in items or []:
+            path = item.get("path")
+            if not path or not os.path.exists(path):
+                logger.warning(f"VideoToolsTab: El editor mando un archivo que no existe: {path}")
+                continue
+            (trimmed if item.get("has_trim") else plain).append(item)
+
+        added_keys = []
+        if plain:
+            added_keys += self.queue_widget.add_files([i["path"] for i in plain]) or []
+        if trimmed:
+            keys = self.queue_widget.add_files(
+                [i["path"] for i in trimmed], allow_duplicates=True) or []
+            for key, item in zip(keys, trimmed):
+                # El recorte viaja por el mismo cache por-archivo que usa el recorte hecho
+                # a mano en la vista previa, asi que la waveform lo muestra marcado y la
+                # recodificacion lo respeta sin ningun camino especial (ver _trim_cache).
+                self._trim_cache[key] = (float(item["in"]), float(item["out"]))
+            added_keys += keys
+
+        if added_keys:
+            # Deja seleccionado lo ultimo que llego para que se vea el corte de una.
+            self.queue_widget.select_entry(added_keys[-1])
+        return len(added_keys)
 
     def _on_queue_changed(self, _count: int = 0):
         """Reacciona a altas/bajas en la cola: empuja la metadata de TODA la cola a
@@ -584,7 +625,8 @@ class VideoToolsTab(QWidget):
 
         self._queue_meta_request_id += 1
         request_id = self._queue_meta_request_id
-        self._queue_meta_thread = _QueueMetadataThread(list(current_files), self)
+        self._queue_meta_thread = _QueueMetadataThread(
+            [entry_path(key) for key in current_files], self)
         self._queue_meta_thread.finished_computing.connect(
             lambda entries, entries_with_paths, rid=request_id:
                 self._on_queue_metadata_computed(rid, entries, entries_with_paths)
@@ -598,7 +640,7 @@ class VideoToolsTab(QWidget):
         self.options_widget.tab_convert.set_queue_entries(entries_with_paths)
 
     def _on_metadata_ready(self, path: str, meta: dict):
-        if path == self.current_preview_file:
+        if path == entry_path(self.current_preview_file):
             self.preview_widget.set_fps(self._parse_fps(meta.get("fps", "30")))
             self.options_widget.tab_advanced.set_source_media(meta, path)
             self.options_widget.tab_compress.set_source_media(meta, path)
@@ -901,7 +943,10 @@ class VideoToolsTab(QWidget):
         # sin este chequeo aparte, dos jobs del mismo lote se pisarían entre sí.
         claimed_out_paths = set()
 
-        for filepath in files:
+        for entry_key in files:
+            # entry_key identifica la FILA de la cola (con su recorte y su estado);
+            # filepath es el archivo real, que puede repetirse entre filas.
+            filepath = entry_path(entry_key)
             ext = os.path.splitext(filepath)[1].lower()
             media_type = "audio" if ext in AUDIO_ONLY_EXTENSIONS else "video"
             meta = FFprobeMetadataManager.get_instance().get_metadata_instant(filepath, media_type)
@@ -954,14 +999,14 @@ class VideoToolsTab(QWidget):
 
             if out_file is None:
                 logger.info(f"VideoToolsTab: Omitido por conflicto de nombre: {filepath}")
-                self.queue_widget.update_file_status(filepath, self.tr("Omitido"))
+                self.queue_widget.update_file_status(entry_key, self.tr("Omitido"))
                 continue
             claimed_out_paths.add(out_file)
 
             # Recorte temporal (trim): por archivo, desde el caché (ver _trim_cache) - no
             # depende de cuál esté en el preview justo ahora, cada archivo del lote lleva
             # el suyo (o ninguno, si nunca se tocó).
-            cached_trim = self._trim_cache.get(filepath)
+            cached_trim = self._trim_cache.get(entry_key)
             if cached_trim:
                 trim_in_sec, trim_out_sec = cached_trim
                 if trim_in_sec > 0.05 or (duration_sec > 0 and trim_out_sec < (duration_sec - 0.05)):
@@ -975,7 +1020,7 @@ class VideoToolsTab(QWidget):
             streams = meta.get("audio_streams", [])
             job_note = None
             if len(streams) > 1:
-                cached_track_sel = self._audio_track_cache.get(filepath)
+                cached_track_sel = self._audio_track_cache.get(entry_key)
                 selection = cached_track_sel if cached_track_sel is not None else "all"
                 # "all" sin que el usuario haya elegido una pista puntual (cached_track_sel
                 # es un int) puede pedirle a ffmpeg algo que el contenedor/códec de salida
@@ -1000,7 +1045,7 @@ class VideoToolsTab(QWidget):
             # desde una visita anterior a Avanzado pero el lote actual lo está armando
             # Comprimir, no corresponde reinyectar los video_args de Avanzado aquí (son
             # de otro códec/perfil, no los que Comprimir acaba de calcular).
-            if filepath == self.current_preview_file:
+            if entry_key == self.current_preview_file:
                 if crop_frac is not None and not apply_crop_to_all and not needs_per_file_recompute:
                     crop_settings = self.options_widget.tab_advanced.get_settings(crop_fraction_override=crop_frac)
                     file_settings["video_args"] = crop_settings["video_args"]
@@ -1010,7 +1055,11 @@ class VideoToolsTab(QWidget):
                 "output_path": out_file,
                 "settings": file_settings,
                 "duration_sec": duration_sec,
-                "title": f"Recode: {base_name}"
+                "title": f"Recode: {base_name}",
+                # Fila de la cola a la que pertenece este trabajo. Hace falta guardarla
+                # porque input_path ya no la identifica: dos filas pueden compartir
+                # archivo con recortes distintos, y el estado debe ir a la fila correcta.
+                "queue_entry_key": entry_key,
             }
             job_id = qm.add_job(config, "RECODE")
             self._recode_jobs.add(job_id)
@@ -1019,7 +1068,7 @@ class VideoToolsTab(QWidget):
                 self._recode_job_notes[job_id] = job_note
 
             # Actualizamos visualmente la cola
-            self.queue_widget.update_file_status(filepath, self.tr("En cola"))
+            self.queue_widget.update_file_status(entry_key, self.tr("En cola"))
             
         self._set_start_button_running(True)
         self.progress_bar.setProperty("status", "downloading")
@@ -1050,8 +1099,9 @@ class VideoToolsTab(QWidget):
         if not job:
             return
             
-        file_path = job.config.get("input_path")
-        
+        # La fila de la cola, no la ruta: ver "queue_entry_key" al crear el trabajo.
+        file_path = job.config.get("queue_entry_key") or job.config.get("input_path")
+
         if status == JobStatus.RUNNING:
             self.queue_widget.update_file_status(file_path, self.tr("Procesando..."))
         elif status == JobStatus.COMPLETED:

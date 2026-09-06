@@ -9,6 +9,7 @@ from core.logger.logger_manager import logger
 from core.utils.cleanup_manager import CleanupManager
 from core.utils.config_manager import get_config
 from core.utils.preset_manager import build_recode_output_path
+from core.utils.output_artifacts import OutputArtifactTracker, find_actual_downloaded_file
 from core.utils.file_conflict_manager import quarantine_for_recode, commit_backup, rollback_backup, predict_final_extension
 from gui.tabs.advanced_process.workers import DownloadWorker
 
@@ -53,6 +54,37 @@ class DownloadController(QObject):
         self.queue_mgr.job_removed.connect(self._on_download_job_removed)
         self.queue_mgr._worker.finished_all.connect(self._on_queue_finished_all)
 
+    def _init_solo_artifacts(self):
+        """Rastro de todo lo que produjo la descarga directa (modo SOLO) para poder
+        arrastrarlo desde el botón de las opciones de salida -- el equivalente a la
+        tarjeta de la cola en modo LOTES y a la fila en Modo Rápido."""
+        if not hasattr(self, "solo_artifacts"):
+            self.solo_artifacts = OutputArtifactTracker()
+        return self.solo_artifacts
+
+    def collect_solo_drag_files(self):
+        """Lo que HOY sigue existiendo en disco de la última descarga SOLO: medio (o
+        fragmentos), completo conservado, miniatura, subtítulos y recodificado, según lo
+        que el usuario haya elegido conservar. Se resuelve en el momento del arrastre,
+        nunca antes."""
+        try:
+            return self._init_solo_artifacts().collect()
+        except Exception as e:
+            logger.error(f"AdvancedProcessTab: No se pudieron reunir los archivos para arrastrar: {e}")
+            return []
+
+    def reveal_solo_outputs(self):
+        """Clic simple en el botón de arrastre: abre el explorador con el resultado
+        seleccionado (no solo la carpeta, como hace el botón de al lado)."""
+        files = self.collect_solo_drag_files()
+        if files:
+            self._open_and_select(files[0])
+        else:
+            self.on_open_output_path_clicked()
+
+    def _set_solo_drag_ready(self, ready):
+        self.tab.output_options.set_output_drag_enabled(bool(ready) and bool(self.collect_solo_drag_files()))
+
     def on_download_button_clicked(self):
         """Maneja el clic en el botón de descarga, alternando entre iniciar/reanudar y pausar."""
         if self.tab.url_bar.solo_btn.isChecked():
@@ -94,6 +126,11 @@ class DownloadController(QObject):
         self.cancellation_event.clear()
         self.solo_worker = DownloadWorker(req_data, self.cancellation_event)
         self.solo_request_data = req_data.copy()
+
+        # Empieza un proceso nuevo: lo que se pudiera arrastrar de la descarga anterior
+        # ya no corresponde a lo que muestra la barra.
+        self._init_solo_artifacts().clear()
+        self.tab.output_options.set_output_drag_enabled(False)
 
         has_fragments = bool(req_data.get("selected_fragments"))
 
@@ -140,6 +177,10 @@ class DownloadController(QObject):
             elif d.get("status") == "finished":
                 if d.get("filename"):
                     self.last_downloaded_filepath = d.get("filename")
+                    # Nombre DERIVADO (stream sin fusionar, o un fragmento ya cortado):
+                    # se registra igual porque de él cuelga el nombre base del que se
+                    # barren los hermanos al arrastrar (ver output_artifacts).
+                    self._init_solo_artifacts().add([d.get("filename")])
                 self.tab.output_options.set_progress(100, self.tab.tr("Procesando descarga..."), "downloading")
 
         def on_solo_finished(success, message):
@@ -172,6 +213,7 @@ class DownloadController(QObject):
                     # con "Recodificando..." (ver _on_recode_job_progress/_status) hasta
                     # que el/los job(s) RECODE encolados resuelvan.
                     fragment_paths = self._resolve_fragment_download_paths(resolved_request_data)
+                    self._init_solo_artifacts().add([p for p, _suffix in fragment_paths])
                     if fragment_paths:
                         # Un job RECODE por fragmento - cada uno se pone en cuarentena y
                         # se recodifica por separado (ver _resolve_fragment_download_paths),
@@ -189,6 +231,7 @@ class DownloadController(QObject):
                             )
                     else:
                         actual_path = self._resolve_final_download_path(resolved_request_data, self.last_downloaded_filepath)
+                        self._init_solo_artifacts().add([actual_path])
                         self._start_post_download_recode(
                             actual_path=actual_path,
                             request_data=self.solo_request_data,
@@ -199,6 +242,14 @@ class DownloadController(QObject):
                 else:
                     self.tab.output_options.set_progress(100, self.tab.tr("Descarga completada con éxito"), "done")
                     actual_path = self._resolve_final_download_path(resolved_request_data, self.last_downloaded_filepath)
+                    # Sin recodificación pedida, el proceso terminó aquí: ya se puede
+                    # arrastrar el resultado. Con recodificación, el botón se habilita
+                    # recién cuando el/los job(s) RECODE resuelven (ver
+                    # _on_recode_job_status y _finalize_group).
+                    tracker = self._init_solo_artifacts()
+                    tracker.add([p for p, _suffix in self._resolve_fragment_download_paths(resolved_request_data)])
+                    tracker.add([actual_path])
+                    self._set_solo_drag_ready(True)
                     self._send_to_editor_if_enabled(actual_path or self.last_downloaded_filepath, self.solo_request_data)
             else:
                 self.tab.output_options.set_progress(0, self.tab.tr(f"Error: {message}"), "wait")
@@ -413,6 +464,15 @@ class DownloadController(QObject):
                     CleanupManager.cleanup_ytdlp_temp_files(output_dir, title, keep_thumbnail=keep_thumb)
                     CleanupManager.deferred_cleanup(output_dir, title, keep_thumbnail=keep_thumb)
 
+                # Rutas reales del resultado, para poder arrastrar la tarjeta terminada
+                # a otra aplicación (ver queue_panel.py::_on_card_file_drag). Los
+                # sidecars (miniatura, subtítulos) no hace falta registrarlos: se barren
+                # por nombre base al arrastrar.
+                job.add_output_files(
+                    [path for path, _suffix in self._resolve_fragment_download_paths(job.request_data)]
+                )
+                job.add_output_files([self._find_actual_downloaded_file(job.final_filepath)])
+
                 if job.job_type == "DOWNLOAD" and job.request_data.get("recode_enabled"):
                     # job.final_filepath ya viene resuelto correctamente aquí (ver
                     # QueueWorker._execute_download en queue_manager.py, que lo reconstruye
@@ -513,6 +573,7 @@ class DownloadController(QObject):
         ni siquiera llegó a encolarse, ej. archivo faltante o preset inválido)."""
         results = self._group_results.pop(download_key, {"all_ok": True, "final_paths": []})
         self._group_pending.pop(download_key, None)
+        self._mark_recode_pending(download_key, False)
         if download_key == _SOLO_RECODE_KEY:
             final_path = results["final_paths"][-1] if results["final_paths"] else None
             if final_path:
@@ -527,6 +588,21 @@ class DownloadController(QObject):
                 text = self.tab.tr("Completado") if results["all_ok"] else self.tab.tr("Error al recodificar")
                 card.update_progress(100, speed_text="", status_text=text)
 
+    def _register_recode_outputs(self, download_key, paths, succeeded=True):
+        """Suma al arrastre lo que dejó la recodificación. La salida recodificada NO
+        sirve como nombre base para barrer hermanos (lleva el prefijo/sufijo elegido por
+        el usuario y podría reclamar archivos de otra descarga); el archivo restaurado
+        tras un fallo, en cambio, ES el medio original y sí sirve."""
+        paths = [p for p in (paths or []) if p]
+        if not paths:
+            return
+        if download_key == _SOLO_RECODE_KEY:
+            self._init_solo_artifacts().add(paths, is_stem_source=not succeeded)
+            return
+        job = self.queue_mgr.get_job(download_key)
+        if job:
+            job.add_output_files(paths, is_stem_source=not succeeded)
+
     def _note_group_skip(self, download_key, fragment_total):
         """Descuenta del grupo un fragmento cuya recodificación ni llegó a encolarse
         (ver _start_post_download_recode) - sin esto, el grupo se quedaría esperando
@@ -539,6 +615,20 @@ class DownloadController(QObject):
         self._group_pending[download_key] = remaining
         if remaining <= 0:
             self._finalize_group(download_key)
+
+    def _mark_recode_pending(self, download_key, pending):
+        """Bloquea/libera el arrastre del resultado mientras haya una recodificación en
+        curso: la descarga ya terminó (la tarjeta dice "Completado" y en SOLO la barra
+        llegó al 100%), pero arrastrar ahora entregaría el archivo a medio hacer."""
+        if download_key == _SOLO_RECODE_KEY:
+            if pending:
+                self.tab.output_options.set_output_drag_enabled(False)
+            else:
+                self._set_solo_drag_ready(True)
+            return
+        card = self.tab.queue_panel.cards.get(download_key)
+        if card:
+            card.set_recode_pending(pending)
 
     def _start_post_download_recode(self, actual_path, request_data, video_data, title, download_key,
                                      fragment_position=None, fragment_total=None):
@@ -565,6 +655,10 @@ class DownloadController(QObject):
             logger.warning(f"AdvancedProcessTab: No se encontró el archivo descargado para recodificar ({title}).")
             if is_group:
                 self._note_group_skip(download_key, fragment_total)
+            else:
+                # No hay recodificación que esperar: lo que quedó en disco ya se puede
+                # arrastrar (si no, el botón/tarjeta quedaría bloqueado para siempre).
+                self._mark_recode_pending(download_key, False)
             return
 
         preset_name = request_data.get("recode_preset_name")
@@ -577,6 +671,10 @@ class DownloadController(QObject):
             logger.warning(f"AdvancedProcessTab: Preset de recodificación '{preset_name}' no encontrado, se omite ({title}).")
             if is_group:
                 self._note_group_skip(download_key, fragment_total)
+            else:
+                # No hay recodificación que esperar: lo que quedó en disco ya se puede
+                # arrastrar (si no, el botón/tarjeta quedaría bloqueado para siempre).
+                self._mark_recode_pending(download_key, False)
             return
 
         try:
@@ -585,6 +683,10 @@ class DownloadController(QObject):
             logger.error(f"AdvancedProcessTab: No se pudo poner en cuarentena '{actual_path}': {e}")
             if is_group:
                 self._note_group_skip(download_key, fragment_total)
+            else:
+                # No hay recodificación que esperar: lo que quedó en disco ya se puede
+                # arrastrar (si no, el botón/tarjeta quedaría bloqueado para siempre).
+                self._mark_recode_pending(download_key, False)
             return
 
         duration_sec = (video_data or {}).get("duration") or 0.0
@@ -593,6 +695,7 @@ class DownloadController(QObject):
             self._group_pending[download_key] = fragment_total
             self._group_results[download_key] = {"all_ok": True, "final_paths": []}
 
+        self._mark_recode_pending(download_key, True)
         recode_job_id = self.queue_mgr.add_job({
             "input_path": backup_path,
             "output_path": out_file,
@@ -702,6 +805,7 @@ class DownloadController(QObject):
             results["all_ok"] = results["all_ok"] and ok
             if final_path:
                 results["final_paths"].append(final_path)
+                self._register_recode_outputs(target, [final_path], succeeded=ok)
                 self._send_to_editor_if_enabled(final_path, request_data)
             remaining = self._group_pending.get(target, 1) - 1
             self._group_pending[target] = remaining
@@ -711,6 +815,8 @@ class DownloadController(QObject):
             return
 
         # Camino normal: una sola recodificación (sin fragmentos, o un fragmento único).
+        self._register_recode_outputs(target, [final_path], succeeded=(status == "COMPLETED"))
+        self._mark_recode_pending(target, False)
         if target == _SOLO_RECODE_KEY:
             if final_path:
                 self.last_downloaded_filepath = final_path
@@ -845,40 +951,12 @@ class DownloadController(QObject):
         return results
 
     def _find_actual_downloaded_file(self, filepath):
-        if not filepath:
-            return None
-        if os.path.exists(filepath):
+        """Se cae a la carpeta contenedora cuando no encuentra nada, porque además de
+        resolver la ruta para recodificar/enviar se usa para abrir el explorador (ver
+        on_open_output_path_clicked)."""
+        if filepath and os.path.isdir(filepath):
             return filepath
-            
-        if os.path.isdir(filepath):
-            return filepath
-            
-        parent_dir = os.path.dirname(filepath)
-        if not os.path.exists(parent_dir):
-            return None
-            
-        base_name = os.path.splitext(os.path.basename(filepath))[0]
-        
-        for temp_ext in ['.temp', '.ytdl', '.part']:
-            if base_name.endswith(temp_ext):
-                base_name = base_name[:-len(temp_ext)]
-                
-        best_match = None
-        try:
-            for entry in os.scandir(parent_dir):
-                if entry.is_file():
-                    entry_base = os.path.splitext(entry.name)[0]
-                    if entry_base == base_name:
-                        return entry.path
-                    if entry_base.startswith(base_name):
-                        best_match = entry.path
-        except Exception as e:
-            logger.error(f"Error escaneando directorio para encontrar archivo: {e}")
-            
-        if best_match:
-            return best_match
-            
-        return parent_dir
+        return find_actual_downloaded_file(filepath, fallback_to_dir=True)
 
     def _open_and_select(self, path):
         path = os.path.abspath(path)

@@ -14,11 +14,65 @@ import platform
 import PyInstaller.__main__
 
 APP_NAME = "DowP"
-APP_VERSION = "2.0.0"
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 MAIN_SCRIPT = os.path.join(SCRIPT_DIR, "main.py")
 SRC_DIR = os.path.join(SCRIPT_DIR, "src")
+# El importer es hermano de app/, no hijo: <repo>/importer
+IMPORTER_DIR = os.path.join(os.path.dirname(SCRIPT_DIR), "importer")
+
+
+def read_app_version():
+    """Lee APP_VERSION de src/core/version.py sin importar el paquete entero (esto
+    corre antes de que exista nada del entorno de la app). version.py no tiene imports
+    a proposito, justamente para poder ejecutarlo aislado desde aqui."""
+    version_file = os.path.join(SRC_DIR, "core", "version.py")
+    namespace = {}
+    with open(version_file, encoding="utf-8") as f:
+        exec(compile(f.read(), version_file, "exec"), namespace)
+    return namespace["APP_VERSION"]
+
+
+def stamp_importer_version(version):
+    """Reescribe el numero de version dentro del DowP Importer para que coincida con el
+    de la app.
+
+    La app y el panel comparten version porque el panel se instala DESDE la app y viaja
+    dentro de su bundle: no tiene ciclo de publicacion propio. Estampar aqui en vez de
+    editar a mano es lo que garantiza que no vuelvan a divergir, que es como acabaron
+    en 2.0.0 y 1.3.0 respectivamente.
+
+    Si algo no se puede estampar aborta el build: preferible eso a publicar un panel
+    que reporta una version que no es la suya, porque la deteccion de "panel viejo"
+    de importer_setup.py se basa en comparar exactamente esa cadena.
+    """
+    import re
+
+    targets = [
+        (os.path.join(IMPORTER_DIR, "CSXS", "manifest.xml"),
+         [(r'(ExtensionBundleVersion=")[^"]*(")', 1),
+          (r'(<Extension Id="com\.dowp\.importer" Version=")[^"]*(")', 1)]),
+        (os.path.join(IMPORTER_DIR, "js", "main.js"),
+         [(r'(const CURRENT_EXTENSION_VERSION\s*=\s*")[^"]*(")', 1)]),
+    ]
+
+    for path, patterns in targets:
+        if not os.path.exists(path):
+            print(f"ERROR: no se encontro {path} para estampar la version")
+            sys.exit(1)
+        with open(path, encoding="utf-8") as f:
+            content = f.read()
+        for pattern, expected in patterns:
+            content, count = re.subn(pattern, r"\g<1>" + version + r"\g<2>", content)
+            if count != expected:
+                print(f"ERROR: {path}: el patron {pattern!r} coincidio {count} veces, se esperaban {expected}")
+                sys.exit(1)
+        with open(path, "w", encoding="utf-8", newline="\n") as f:
+            f.write(content)
+    print(f"DowP Importer estampado a v{version}")
+
+
+APP_VERSION = read_app_version()
 
 CURRENT_SYSTEM = platform.system()
 CURRENT_ARCH = platform.machine()
@@ -88,6 +142,14 @@ args = [
     # debe llamarse "src" para que esas rutas seguan resolviendo sin tocar
     # el código de la app.
     f"--add-data={SRC_DIR}{path_sep}src",
+
+    # ── El DowP Importer viaja dentro de la app (~500 KB) ──
+    # core/setup/importer_setup.py lo copia desde aqui a la carpeta de extensiones de
+    # CEP cuando el usuario pulsa "Instalar" en Integraciones. Ir dentro del bundle es
+    # lo que hace que el panel no necesite descarga, ni release propio, ni version
+    # propia: se actualiza junto con la app. Destino "importer" a secas, que es donde
+    # lo busca get_bundled_importer_dir() bajo sys._MEIPASS.
+    f"--add-data={IMPORTER_DIR}{path_sep}importer",
 
     # python-engineio resuelve su driver async con importlib.import_module()
     # a partir de un string armado en runtime ('engineio.async_drivers.' +
@@ -169,6 +231,8 @@ if ICON_FILE and os.path.exists(ICON_FILE):
     args.extend(["--icon", ICON_FILE])
 else:
     print(f"Icono no encontrado para {CURRENT_SYSTEM} ({ICON_FILE}), se compila sin --icon.")
+
+stamp_importer_version(APP_VERSION)
 
 print(f"Compilando {APP_NAME} v{APP_VERSION} para {CURRENT_SYSTEM} ({CURRENT_ARCH})...")
 PyInstaller.__main__.run(args)

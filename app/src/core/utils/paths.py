@@ -26,21 +26,60 @@ def get_src_dir() -> str:
 
 def get_bin_root_dir() -> str:
     """Carpeta que contiene bin/ (dependencias gestionadas -- ffmpeg/ghostscript/
-    deno/yt-dlp/WPC -- y modelos de IA descargados): junto al .exe/.app en modo
-    congelado, NO adentro de _internal/, o la raíz del repo en modo fuente.
+    deno/yt-dlp/PO provider -- y modelos de IA descargados, que juntos pueden pasar
+    los 2 GB).
 
-    A propósito NO reutiliza sys._MEIPASS (eso es lo que usa get_src_dir(), y
-    está bien ahí): en un --onedir moderno de PyInstaller (desde que separó
-    --contents-directory en la 6.0), _MEIPASS apunta a _internal/ -- el árbol
-    interno reemplazable del bundle, correcto para assets read-only (iconos,
-    temas, .qm) pero NO para datos que el usuario descarga (pueden pesar varios
-    GB) y espera encontrar junto al ejecutable, sobreviviendo a una reinstalación
-    que pise _internal/ entero. sys.executable sigue apuntando al .exe/.app, un
-    nivel arriba de _internal/ -- confirmado simulando el modo congelado contra
-    un build real de este repo (dist/DowP)."""
+    Congelado: el perfil de datos LOCAL del usuario (%LOCALAPPDATA%/DowP2 en Windows,
+    ~/Library/Application Support/DowP2 en macOS, ~/.local/share/DowP2 en Linux).
+    Modo fuente: la raíz del repo, o sea <repo>/bin, para que desarrollar no obligue
+    a sacar los binarios del árbol de trabajo.
+
+    Por qué NO sys._MEIPASS (eso es lo de get_src_dir(), y ahí está bien): en un
+    --onedir moderno de PyInstaller (desde que separó --contents-directory en la 6.0)
+    _MEIPASS apunta a _internal/, el árbol interno reemplazable del bundle. Sirve para
+    assets de solo lectura (iconos, temas, .qm) pero no para datos que el usuario
+    descarga y espera conservar entre actualizaciones.
+
+    Por qué tampoco junto al ejecutable, que es donde vivía antes -- tres motivos que
+    aparecen los tres a la vez al montar el sistema de actualizaciones:
+
+      1. macOS: escribir gigabytes dentro de DowP.app viola la inmutabilidad del
+         bundle, y rompe la firma ad-hoc (codesign -s -) que en Apple Silicon es
+         obligatoria para que el binario siquiera arranque.
+      2. Linux: si el empaquetado pasa a AppImage, dirname(sys.executable) cae en un
+         squashfs de solo lectura y toda descarga falla.
+      3. Actualizaciones: deja el directorio de instalación totalmente desechable. El
+         updater puede reemplazarlo entero sin lista de exclusiones, y el desinstalador
+         no tiene que elegir entre dejar 2 GB huérfanos o borrar los modelos del usuario.
+
+    DOWP_BIN_DIR fuerza la ruta: sirve para probar el comportamiento congelado sin
+    compilar, y como escape para quien quiera los binarios en otro disco.
+    """
+    override = os.environ.get("DOWP_BIN_DIR", "").strip()
+    if override:
+        root = os.path.abspath(os.path.expanduser(override))
+        os.makedirs(root, exist_ok=True)
+        return root
     if getattr(sys, "frozen", False):
-        return os.path.dirname(sys.executable)
+        return get_local_app_data_dir()
     return os.path.dirname(get_src_dir())
+
+
+def get_bundled_importer_dir() -> str:
+    """Carpeta del DowP Importer que viaja DENTRO de la app (unos 500 KB de HTML/JS).
+
+    Es el origen desde el que se copia al instalar el panel en la carpeta de
+    extensiones de CEP. Que viaje dentro del bundle es lo que hace que el importer
+    no necesite descarga, ni release propio, ni número de versión propio: se
+    actualiza solo cuando se actualiza la app.
+
+    Congelado: _internal/importer (lo pone --add-data en build_cross_platform.py).
+    Modo fuente: <repo>/importer, que es hermano de app/, no hijo -- por eso sube
+    dos niveles desde src/ y no uno como get_bin_root_dir().
+    """
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        return os.path.join(sys._MEIPASS, "importer")
+    return os.path.join(os.path.dirname(os.path.dirname(get_src_dir())), "importer")
 
 
 def get_app_data_dir() -> str:
@@ -103,18 +142,28 @@ def get_remote_thumbnail_cache_dir() -> str:
 
 def get_local_app_data_dir() -> str:
     r"""
-    Retorna un directorio de datos NO itinerante (no roaming) para archivos grandes que no
-    tiene sentido sincronizar entre equipos en entornos con perfiles de Windows en red:
-    - Windows: %LOCALAPPDATA%/DowP2 (a diferencia de get_app_data_dir(), que usa %APPDATA%)
-    - macOS/Linux: coincide con get_app_data_dir() (no existe la distinción roaming/local ahí)
+    Retorna un directorio de datos NO itinerante (no roaming) para lo que pesa: bin/
+    (dependencias y modelos de IA) y la caché de proxies de previsualización.
+    - Windows: %LOCALAPPDATA%/DowP2 (a diferencia de get_app_data_dir(), que usa
+      %APPDATA%, sincronizado por red en perfiles de Windows corporativos)
+    - macOS: ~/Library/Application Support/DowP2 (coincide con get_app_data_dir(),
+      no existe la distinción roaming/local ahí)
+    - Linux: $XDG_DATA_HOME/DowP2, o ~/.local/share/DowP2. A propósito NO coincide
+      con get_app_data_dir(), que es ~/.config/DowP2: el estándar XDG reserva
+      .config para configuración y .local/share para datos, y aquí caben varios GB.
     """
     system = platform.system()
     if system == "Windows":
         base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~/AppData/Local")
-        app_dir = os.path.join(base, "DowP2")
-        os.makedirs(app_dir, exist_ok=True)
-        return app_dir
-    return get_app_data_dir()
+    elif system == "Darwin":
+        return get_app_data_dir()
+    else:
+        base = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
+
+    app_dir = os.path.join(base, "DowP2")
+    os.makedirs(app_dir, exist_ok=True)
+    return app_dir
+
 
 def get_proxy_cache_dir() -> str:
     """Retorna el directorio de caché para los proxies de previsualización (video de baja
@@ -182,6 +231,102 @@ def get_config_path() -> str:
 def get_indexed_media_path() -> str:
     """Retorna la ruta al archivo de base de datos de medios indexados indexed_media.json."""
     return os.path.join(get_app_data_dir(), "indexed_media.json")
+
+def _dir_has_files(path: str) -> bool:
+    """True si el árbol contiene al menos un archivo (no solo carpetas vacías)."""
+    for _root, _dirs, files in os.walk(path):
+        if files:
+            return True
+    return False
+
+
+def _merge_tree(src: str, dst: str) -> None:
+    """Mueve el contenido de src dentro de dst archivo por archivo, sin pisar lo que
+    ya exista en destino, y borra src al terminar.
+
+    Lo que ya está en destino gana a propósito: si hay algo ahí es porque una
+    migración anterior se cortó a medias o porque la app ya descargó esa dependencia
+    en la ubicación nueva, y en ambos casos la copia nueva es la buena.
+
+    Usa shutil.move (no os.rename) porque este camino es justamente el que se toma
+    cuando origen y destino están en volúmenes distintos, donde rename falla."""
+    for root, _dirs, files in os.walk(src):
+        rel = os.path.relpath(root, src)
+        target_root = dst if rel == "." else os.path.join(dst, rel)
+        os.makedirs(target_root, exist_ok=True)
+        for name in files:
+            src_file = os.path.join(root, name)
+            dst_file = os.path.join(target_root, name)
+            if os.path.exists(dst_file):
+                try:
+                    os.remove(src_file)
+                except OSError:
+                    pass
+                continue
+            shutil.move(src_file, dst_file)
+    shutil.rmtree(src, ignore_errors=True)
+
+
+def migrate_bin_to_local_appdata(status_callback=None) -> bool:
+    """Mueve el bin/ que las versiones anteriores dejaban junto al ejecutable al perfil
+    de datos local del usuario (ver get_bin_root_dir() para el porqué del cambio).
+
+    Devuelve True solo si movió algo. Es idempotente: si ya se hizo, o si no hay nada
+    que mover, sale enseguida y no cuesta nada llamarla en cada arranque.
+
+    TIENE que correr antes de la primera verificación de dependencias. Si no, los
+    check_*() de core/setup/ miran la ubicación nueva, la encuentran vacía y la app se
+    pone a redescargar los cientos de MB (o los GB de modelos) que el usuario ya tenía.
+
+    En modo fuente no hace nada: ahí bin/ vive en el repo y se queda donde está.
+    """
+    if not getattr(sys, "frozen", False):
+        return False
+
+    try:
+        legacy_bin = os.path.join(os.path.dirname(sys.executable), "bin")
+        new_bin = os.path.join(get_bin_root_dir(), "bin")
+
+        if os.path.abspath(legacy_bin) == os.path.abspath(new_bin):
+            return False
+        if not os.path.isdir(legacy_bin):
+            return False
+
+        if not _dir_has_files(legacy_bin):
+            # Solo carpetas vacías: las crean los get_*_dir() con makedirs al arrancar.
+            shutil.rmtree(legacy_bin, ignore_errors=True)
+            return False
+
+        logger.info(f"Paths: migrando bin/ de {legacy_bin} -> {new_bin}")
+        if status_callback:
+            status_callback("Moviendo dependencias a la nueva ubicación...")
+
+        # Mismo caso que arriba, del otro lado: si el destino solo tiene el esqueleto
+        # de carpetas vacías, se borra para poder usar el rename de golpe.
+        if os.path.isdir(new_bin) and not _dir_has_files(new_bin):
+            shutil.rmtree(new_bin, ignore_errors=True)
+
+        if not os.path.exists(new_bin):
+            os.makedirs(os.path.dirname(new_bin), exist_ok=True)
+            try:
+                os.rename(legacy_bin, new_bin)
+                # El caso normal en Windows: instalación en %LOCALAPPDATA%\Programs y
+                # datos en %LOCALAPPDATA%, mismo volumen -- son 2 GB movidos al instante.
+                logger.info("Paths: bin/ movido con rename (mismo volumen), instantáneo")
+                return True
+            except OSError as e:
+                logger.info(f"Paths: rename no fue posible ({e}); se fusiona archivo por archivo")
+
+        _merge_tree(legacy_bin, new_bin)
+        logger.info("Paths: bin/ migrado y origen eliminado")
+        return True
+
+    except Exception as e:
+        # Nunca debe impedir el arranque: si falla, las dependencias simplemente se
+        # vuelven a descargar en la ubicación nueva y el bin/ viejo queda huérfano.
+        logger.error(f"Paths: error migrando bin/ al perfil local: {e}", exc_info=True)
+        return False
+
 
 def migrate_legacy_data():
     """Migra archivos de configuración y caché antiguos desde bin/ al nuevo directorio AppData/DowP2 si existen."""

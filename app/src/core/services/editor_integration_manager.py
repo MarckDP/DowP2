@@ -17,6 +17,7 @@ class ProcessMonitorThread(QThread):
         self.targets = {
             "premiere": "Adobe Premiere Pro.exe",
             "aftereffects": "AfterFX.exe",
+            "photoshop": "Photoshop.exe",
             "davinci": "Resolve.exe"
         }
         
@@ -71,6 +72,7 @@ class ProcessMonitorThread(QThread):
                     status = {
                         "premiere": "Adobe Premiere Pro" in output,
                         "aftereffects": ("After Effects" in output or "AfterFX" in output),
+                        "photoshop": "Photoshop" in output,
                         "davinci": bool(re.search(r'(?:^|/|\s)Resolve(?:\.app)?(?:\s|$)', output, re.MULTILINE)),
                     }
                     self.processes_updated.emit(status)
@@ -91,6 +93,9 @@ class EditorIntegrationManager(QObject):
     """
     # Se emite cuando el editor activo cambia (ej. None -> 'premiere' o viceversa)
     active_editor_changed = Signal(object)
+    # Reemite lo que llega del panel con "Enviar a DowP" (ver AdobeSocketServer.files_pushed)
+    # para que la ventana principal no tenga que conocer el servidor de sockets.
+    media_pushed_from_editor = Signal(list, str)
     # Se emite cuando cambia el estado de proceso en el SO {app_id: bool}
     process_status_changed = Signal(dict)
     
@@ -108,6 +113,7 @@ class EditorIntegrationManager(QObject):
         
         # Conectar señales del servicio Adobe
         self.adobe_service.active_target_changed.connect(self._on_adobe_target_changed)
+        self.adobe_service.files_pushed.connect(self.media_pushed_from_editor)
         
         # Futuros servicios irán aquí:
         # self.vegas_service = VegasIntegrationService()
@@ -189,7 +195,7 @@ class EditorIntegrationManager(QObject):
             logger.warning("[EditorManager] No hay un editor activo. No se enviará el archivo.")
             return False
 
-        if self.active_editor in ('premiere', 'aftereffects'):
+        if self.active_editor in ('premiere', 'aftereffects', 'photoshop'):
             return self.adobe_service.send_file_to_adobe(file_package)
         elif self.active_editor == 'davinci':
             return self.davinci_service.send_files_to_davinci([file_package])
@@ -208,7 +214,7 @@ class EditorIntegrationManager(QObject):
             logger.warning("[EditorManager] No hay un editor activo. No se enviará el lote.")
             return False
 
-        if self.active_editor in ('premiere', 'aftereffects'):
+        if self.active_editor in ('premiere', 'aftereffects', 'photoshop'):
             return self.adobe_service.send_batch_to_adobe(files, target_bin)
         elif self.active_editor == 'davinci':
             return self.davinci_service.send_files_to_davinci(files)
@@ -228,7 +234,7 @@ class EditorIntegrationManager(QObject):
             logger.warning("[EditorManager] No hay un editor activo. No se enviarán los subclips.")
             return False
 
-        if self.active_editor in ('premiere', 'aftereffects'):
+        if self.active_editor in ('premiere', 'aftereffects', 'photoshop'):
             return self.adobe_service.send_subclips_to_adobe(payload)
         elif self.active_editor == 'davinci':
             return self.davinci_service.send_subclips_to_davinci(payload)
@@ -263,6 +269,15 @@ class EditorIntegrationManager(QObject):
         self.process_raw_download(job.final_filepath, job.request_data)
 
     _IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp", ".gif")
+
+    # Formatos que cuentan como "el medio es una imagen" al empaquetar para el editor. Es
+    # mas amplia que _IMAGE_EXTENSIONS (que solo busca miniaturas) porque el Editor de
+    # Imagen exporta tambien psd, tiff, avif...: sin esto, esas salidas viajaban en el
+    # hueco de "video" y Photoshop no las reconocia.
+    _IMAGE_PAYLOAD_EXTENSIONS = (
+        ".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tif", ".tiff",
+        ".psd", ".psb", ".avif", ".heic", ".heif", ".svg", ".ico", ".tga",
+    )
 
     @staticmethod
     def _find_sidecar_image(output_dir, base_name):
@@ -312,33 +327,12 @@ class EditorIntegrationManager(QObject):
         import os
         import re
         
-        # Buscar el archivo real descargado si la ruta temporal fue eliminada (ej. Streams HLS / merger)
-        actual_filepath = final_filepath
-        if not os.path.exists(final_filepath):
-            parent_dir = os.path.dirname(final_filepath)
-            if os.path.exists(parent_dir):
-                base_name = os.path.splitext(os.path.basename(final_filepath))[0]
-                for temp_ext in ['.temp', '.ytdl', '.part']:
-                    if base_name.endswith(temp_ext):
-                        base_name = base_name[:-len(temp_ext)]
-                base_name = re.sub(r'\.f[a-zA-Z0-9-]+$', '', base_name)
-                
-                best_match = None
-                try:
-                    for entry in os.scandir(parent_dir):
-                        if entry.is_file():
-                            entry_base = os.path.splitext(entry.name)[0]
-                            if entry_base == base_name:
-                                actual_filepath = entry.path
-                                break
-                            if entry_base.startswith(base_name):
-                                best_match = entry.path
-                except Exception:
-                    pass
-                if actual_filepath == final_filepath and best_match:
-                    actual_filepath = best_match
-                    
-        final_filepath = actual_filepath
+        # Buscar el archivo real descargado si la ruta temporal fue eliminada (ej. Streams
+        # HLS / merger). Misma resolución que usan Modo Rápido y Proceso Avanzado: a
+        # igualdad de nombre base el medio gana sobre su miniatura o sus subtítulos, que
+        # antes podían colarse aquí y viajar al editor como si fueran el video.
+        from core.utils.output_artifacts import find_actual_downloaded_file
+        final_filepath = find_actual_downloaded_file(final_filepath) or final_filepath
         
         mode = request_data.get("mode") if request_data else None
         if mode not in ("thumbnail_only", "subtitle_only") and not os.path.exists(final_filepath):
@@ -488,7 +482,7 @@ class EditorIntegrationManager(QObject):
                         break
             except Exception: pass
             
-            if final_filepath.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')) and os.path.exists(final_filepath):
+            if final_filepath.lower().endswith(self._IMAGE_PAYLOAD_EXTENSIONS) and os.path.exists(final_filepath):
                 file_packages.append({
                     "video": None,
                     "thumbnail": vid_path,

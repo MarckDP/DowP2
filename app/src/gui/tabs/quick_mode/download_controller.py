@@ -9,7 +9,7 @@ from core.logger.logger_manager import logger
 from core.utils.cleanup_manager import CleanupManager
 from core.utils.config_manager import get_config
 from core.utils.queue_manager import get_queue_manager
-from core.utils.output_artifacts import SIDECAR_EXTENSIONS
+from core.utils.output_artifacts import find_actual_downloaded_file
 from core.tabs.quick_mode.quick_mode_logic import build_quick_request_data, reveal_in_file_manager
 from gui.tabs.advanced_process.workers import AnalysisWorker, DownloadWorker
 from gui.dialogs.playlist_selection_dialog import PlaylistSelectionDialog
@@ -383,54 +383,7 @@ class QuickDownloadController(QObject):
                 self.queue_mgr.cancel_job(job_id)
 
     def _find_actual_downloaded_file(self, filepath):
-        """Busca el archivo real descargado ignorando extensiones temporales."""
-        if not filepath:
-            return None
-            
-        import os
-        if os.path.exists(filepath):
-            return filepath
-            
-        parent_dir = os.path.dirname(filepath)
-        if not os.path.exists(parent_dir):
-            return None
-            
-        base_name = os.path.splitext(os.path.basename(filepath))[0]
-        
-        for temp_ext in ['.temp', '.ytdl', '.part']:
-            if base_name.endswith(temp_ext):
-                base_name = base_name[:-len(temp_ext)]
-                
-        import re
-        base_name = re.sub(r'\.f[a-zA-Z0-9-]+$', '', base_name)
-                
-        # Con "guardar miniatura" o subtítulos, el sidecar comparte EXACTAMENTE el
-        # nombre base del medio ('Título.jpg' junto a 'Título.mp4'), así que el primer
-        # coincidente que devolvía os.scandir decidía por orden alfabético y solía ser
-        # la miniatura: la fila quedaba apuntando al .jpg y una recodificación
-        # post-descarga intentaba recodificar la imagen en vez del video. A igualdad de
-        # nombre base, el medio gana; el sidecar solo se devuelve si no hay otra cosa
-        # (modo "solo miniatura", donde la imagen SÍ es el archivo descargado).
-        candidates = {}
-        try:
-            for entry in os.scandir(parent_dir):
-                if not entry.is_file():
-                    continue
-                entry_base, entry_ext = os.path.splitext(entry.name)
-                if entry_base == base_name:
-                    rank = 0 if entry_ext.lower() not in SIDECAR_EXTENSIONS else 1
-                elif entry_base.startswith(base_name):
-                    rank = 2 if entry_ext.lower() not in SIDECAR_EXTENSIONS else 3
-                else:
-                    continue
-                candidates.setdefault(rank, entry.path)
-        except Exception:
-            pass
-
-        for rank in (0, 1, 2, 3):
-            if rank in candidates:
-                return candidates[rank]
-        return None
+        return find_actual_downloaded_file(filepath)
 
     def _on_task_progress(self, data, task_data):
         has_fragments = bool(task_data["request_data"].get("selected_fragments"))

@@ -3,12 +3,16 @@ import asyncio
 from aiohttp import web
 from PySide6.QtCore import QThread, Signal
 from core.logger.logger_manager import logger
+from core.version import APP_VERSION
 
 class AdobeSocketServer(QThread):
     # Signals to communicate with the PySide6 UI if needed
     client_connected = Signal(str)
     client_disconnected = Signal(str)
     active_target_changed = Signal(object)
+    # Medios enviados DESDE el editor con el boton "Enviar a DowP": lista de dicts
+    # {path, in, out, has_trim, name} + el identificador de la app que los mando.
+    files_pushed = Signal(list, str)
 
     _instance = None
 
@@ -58,12 +62,27 @@ class AdobeSocketServer(QThread):
         @self.sio.event
         async def register(sid, data):
             app_id = data.get('appIdentifier', 'unknown')
-            logger.info(f"[Socket.IO] Client {sid} registered as {app_id}")
+            panel_version = data.get('extensionVersion') or 'desconocida'
+            logger.info(f"[Socket.IO] Client {sid} registered as {app_id} (panel v{panel_version})")
             self.clients[sid] = app_id
-            
+
             # Respond with current active target
             active_app = self.clients.get(self.active_target_sid) if self.active_target_sid else None
             await self.sio.emit('active_target_update', {'activeTarget': active_app}, to=sid)
+
+            # ── Handshake de versión ──
+            # El panel no consulta ningún servidor de actualizaciones: comparte número de
+            # versión con la app, viaja dentro de su bundle y se instala desde ella. Por
+            # eso esta respuesta es la única fuente de verdad para "tu panel quedó viejo",
+            # y sustituye al chequeo contra GitHub que tenía el panel (muerto desde hacía
+            # tiempo, y apuntando a un repositorio que ya no existe).
+            # Un desfase aquí significa que quedó una instalación antigua del panel: se
+            # arregla reinstalándolo desde Ajustes > Integraciones.
+            if panel_version != APP_VERSION:
+                logger.warning(
+                    f"[Socket.IO] Desfase de versión con {app_id}: panel v{panel_version}, "
+                    f"app v{APP_VERSION}. El panel debería reinstalarse desde Integraciones.")
+            await self.sio.emit('dowp_version', {'appVersion': APP_VERSION}, to=sid)
 
         @self.sio.event
         async def get_active_target(sid):
@@ -87,6 +106,56 @@ class AdobeSocketServer(QThread):
                 logger.info(f"[Socket.IO] Active target cleared by {sid}")
                 await self.sio.emit('active_target_update', {'activeTarget': None})
                 self.active_target_changed.emit(None)
+
+        @self.sio.event
+        async def adobe_push_files(sid, data):
+            """El usuario pulso "Enviar a DowP" en el panel con algo seleccionado en la
+            linea de tiempo o en el proyecto. El panel manda cada elemento con su recorte
+            de origen (in/out en segundos) cuando lo tiene; DowP decide a que pestana va
+            cada archivo segun su tipo (ver MainWindow._on_media_pushed_from_editor).
+
+            Se acepta tanto el formato nuevo ({items: [...]}) como el viejo de DowP 1
+            ({files: ["ruta", ...]}), para que un panel sin actualizar siga funcionando
+            aunque sin informacion de corte."""
+            app_id = self.clients.get(sid, 'unknown')
+            items = []
+
+            raw_items = (data or {}).get('items')
+            if not isinstance(raw_items, list):
+                raw_items = None
+
+            if raw_items is None:
+                # Formato antiguo: solo rutas, sin recorte.
+                raw_items = [{'path': f} for f in ((data or {}).get('files') or []) if f]
+
+            for raw in raw_items:
+                if isinstance(raw, str):
+                    raw = {'path': raw}
+                if not isinstance(raw, dict):
+                    continue
+                path = raw.get('path')
+                if not path:
+                    continue
+                item = {
+                    'path': str(path),
+                    'name': str(raw.get('name') or ''),
+                    'has_trim': bool(raw.get('hasTrim') or raw.get('has_trim')),
+                    'in': raw.get('in'),
+                    'out': raw.get('out'),
+                }
+                try:
+                    item['in'] = float(item['in']) if item['in'] is not None else None
+                    item['out'] = float(item['out']) if item['out'] is not None else None
+                except (TypeError, ValueError):
+                    item['in'] = item['out'] = None
+                    item['has_trim'] = False
+                if item['in'] is None or item['out'] is None or item['out'] <= item['in']:
+                    item['has_trim'] = False
+                items.append(item)
+
+            logger.info(f"[Socket.IO] {app_id} envio {len(items)} elemento(s) a DowP.")
+            if items:
+                self.files_pushed.emit(items, app_id)
 
         @self.sio.event
         async def log_message(sid, data):

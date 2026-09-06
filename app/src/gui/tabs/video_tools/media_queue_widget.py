@@ -82,6 +82,32 @@ _ROW_WAVEFORM_SIZE = QSize(32, 18)  # icono de waveform rápida (audio)
 
 _HEADERS = ("Nombre", "Tipo", "Tamaño", "Estado")
 
+# Una fila de la cola se identifica por una CLAVE, no por su ruta: el mismo archivo puede
+# estar varias veces con recortes distintos (ej. dos clips del mismo medio enviados desde
+# la línea de tiempo de Premiere, cada uno con su corte). Para la primera aparición la
+# clave ES la ruta, así que todo lo que ya existía sigue funcionando igual; a partir de la
+# segunda se le añade este marcador con el número de aparición. El separador usa \x00,
+# que ningún sistema de archivos admite dentro de un nombre, para que nunca pueda chocar
+# con una ruta real.
+_ENTRY_MARKER = "\x00#"
+
+
+def entry_path(entry_key: str) -> str:
+    """Ruta real en disco de una entrada de la cola (ver _ENTRY_MARKER)."""
+    if not entry_key:
+        return entry_key
+    return entry_key.split(_ENTRY_MARKER, 1)[0]
+
+
+def entry_occurrence(entry_key: str) -> int:
+    """1 para la primera aparición de un archivo, 2, 3... para las siguientes."""
+    if not entry_key or _ENTRY_MARKER not in entry_key:
+        return 1
+    try:
+        return int(entry_key.split(_ENTRY_MARKER, 1)[1])
+    except ValueError:
+        return 1
+
 
 class _QueueTableModel(QAbstractTableModel):
     """Lista de paths (strings) -- nunca un widget por fila. `data()` es perezoso
@@ -91,10 +117,12 @@ class _QueueTableModel(QAbstractTableModel):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        # Todos estos dicts van indexados por CLAVE de entrada, no por ruta (ver
+        # _ENTRY_MARKER): dos filas del mismo archivo tienen estado propio.
         self._paths: list[str] = []
         self._path_to_row: dict[str, int] = {}
-        self._sizes: dict[str, str] = {}     # cache perezoso: path -> "x.y MB"
-        self._statuses: dict[str, str] = {}  # path -> texto de estado (sobrevive a los resets, ver set_rows)
+        self._sizes: dict[str, str] = {}     # cache perezoso: clave -> "x.y MB"
+        self._statuses: dict[str, str] = {}  # clave -> texto de estado (sobrevive a los resets, ver set_rows)
         self._icon_cache = {}
 
     def rowCount(self, parent=QModelIndex()):
@@ -119,6 +147,10 @@ class _QueueTableModel(QAbstractTableModel):
             return self._paths[row]
         return None
 
+    def rows_for_path(self, file_path: str) -> list:
+        """Filas que apuntan al mismo archivo en disco (puede haber varias)."""
+        return [row for row, key in enumerate(self._paths) if entry_path(key) == file_path]
+
     def update_status(self, path: str, status_text: str):
         self._statuses[path] = status_text
         row = self._path_to_row.get(path)
@@ -128,9 +160,10 @@ class _QueueTableModel(QAbstractTableModel):
 
     def on_media_icon_loaded(self, file_path: str):
         """Conectado a thumbnail_loaded (video) Y waveform_loaded (audio) -- ambos
-        solo necesitan invalidar el ícono (columna 0) de esa fila puntual."""
-        row = self._path_to_row.get(file_path)
-        if row is not None:
+        solo necesitan invalidar el ícono (columna 0) de esa fila. Llega una RUTA real,
+        que puede corresponder a más de una fila si el archivo está repetido con recortes
+        distintos."""
+        for row in self.rows_for_path(file_path):
             idx = self.index(row, 0)
             self.dataChanged.emit(idx, idx, [Qt.DecorationRole])
 
@@ -140,24 +173,26 @@ class _QueueTableModel(QAbstractTableModel):
             self._icon_cache[key] = get_colored_svg_icon(svg_name, color, size=size)
         return self._icon_cache[key]
 
-    def _size_str(self, path: str) -> str:
-        cached = self._sizes.get(path)
+    def _size_str(self, entry_key: str) -> str:
+        cached = self._sizes.get(entry_key)
         if cached is not None:
             return cached
+        path = entry_path(entry_key)
         try:
             # Mismo formato que el Gestor de Medios (format_size, KB para archivos
             # chicos en vez de forzar siempre MB, ver editing_media_logic.py).
             s = format_size(os.path.getsize(path))
         except Exception:
             s = "N/A"
-        self._sizes[path] = s
+        self._sizes[entry_key] = s
         return s
 
-    def _icon_for(self, path: str):
+    def _icon_for(self, entry_key: str):
         """Ícono por defecto de la fila: nota musical (audio) / claqueta (video) como
         placeholder inmediato, sustituido por una miniatura real o una waveform rápida
         en cuanto termina de generarse en segundo plano (igual que en el Gestor de
         Medios) -- perezoso, se llama solo desde data() para filas visibles."""
+        path = entry_path(entry_key)
         ext_lower = os.path.splitext(path)[1].lower()
         if ext_lower in AUDIO_EXTENSIONS:
             wf_mgr = WaveformCacheManager.get_instance()
@@ -178,23 +213,30 @@ class _QueueTableModel(QAbstractTableModel):
         if not index.isValid():
             return None
         row, col = index.row(), index.column()
-        path = self._paths[row]
+        entry_key = self._paths[row]
+        path = entry_path(entry_key)
+        occurrence = entry_occurrence(entry_key)
 
         if col == 0:
             if role == Qt.DisplayRole:
-                return os.path.basename(path)
+                name = os.path.basename(path)
+                # La repetición se numera a la vista para que dos filas del mismo archivo
+                # con recortes distintos no parezcan un duplicado accidental.
+                return name if occurrence == 1 else f"{name}  ({occurrence})"
             if role == Qt.DecorationRole:
-                return self._icon_for(path)
+                return self._icon_for(entry_key)
             if role == Qt.UserRole:
+                return entry_key
+            if role == Qt.ToolTipRole:
                 return path
         elif col == 1:
             if role == Qt.DisplayRole:
                 return os.path.splitext(path)[1].upper().replace(".", "")
         elif col == 2:
             if role == Qt.DisplayRole:
-                return self._size_str(path)
+                return self._size_str(entry_key)
         elif col == 3:
-            status = self._statuses.get(path) or self.tr("Pendiente")
+            status = self._statuses.get(entry_key) or self.tr("Pendiente")
             if role == Qt.DisplayRole:
                 return status
             if role == Qt.DecorationRole:
@@ -454,10 +496,39 @@ class MediaQueueWidget(QFrame):
         if valid_paths:
             self.add_files(valid_paths)
 
-    def add_files(self, paths):
-        new_paths = [p for p in paths if p not in self._path_set]
+    def next_entry_key(self, path: str) -> str:
+        """Clave libre para `path`: la ruta tal cual si es su primera aparición, o la ruta
+        con el marcador de repetición si ya está en la cola (ver _ENTRY_MARKER)."""
+        if path not in self._path_set:
+            return path
+        occurrence = 2
+        while f"{path}{_ENTRY_MARKER}{occurrence}" in self._path_set:
+            occurrence += 1
+        return f"{path}{_ENTRY_MARKER}{occurrence}"
+
+    def add_files(self, paths, allow_duplicates=False):
+        """allow_duplicates=True agrega el archivo aunque ya esté en la cola, como una
+        entrada aparte con su propio recorte y estado. Lo usa el envío desde la línea de
+        tiempo del editor, donde dos clips del MISMO medio con cortes distintos son dos
+        trabajos distintos; el resto de vías (arrastrar, explorador) sigue deduplicando."""
+        if allow_duplicates:
+            new_paths = []
+            for p in paths:
+                key = self.next_entry_key(p)
+                new_paths.append(key)
+                self._path_set.add(key)
+        else:
+            # Se deduplica contra la cola Y dentro del propio lote: sin lo segundo, pasar
+            # dos veces la misma ruta en una sola llamada creaba dos filas iguales.
+            seen = set(self._path_set)
+            new_paths = []
+            for p in paths:
+                if p in seen:
+                    continue
+                seen.add(p)
+                new_paths.append(p)
         if not new_paths:
-            return
+            return []
         self.files_list.extend(new_paths)
         self._path_set.update(new_paths)
         # Un solo reset para todo el lote -- nada de construir un item por
@@ -467,6 +538,18 @@ class MediaQueueWidget(QFrame):
         self._update_counter()
         if self.files_list and not self.tree.selectionModel().hasSelection():
             self.tree.setCurrentIndex(self._model.index(0, 0))
+        # Las claves de las filas recien agregadas, en orden: quien las agrego necesita
+        # poder asociarles datos propios (p.ej. el recorte que vino del editor).
+        return new_paths
+
+    def select_entry(self, entry_key: str):
+        """Deja seleccionada esa fila (y por tanto cargada en la vista previa)."""
+        try:
+            row = self.files_list.index(entry_key)
+        except ValueError:
+            return
+        self.tree.setCurrentIndex(self._model.index(row, 0))
+        self.tree.scrollTo(self._model.index(row, 0))
 
     def clear_queue(self):
         self.files_list.clear()
@@ -495,6 +578,8 @@ class MediaQueueWidget(QFrame):
         self._update_counter()
 
     def get_all_filepaths(self):
+        """Claves de entrada, en orden. Para la ruta real usar entry_path() -- coinciden
+        salvo en las repeticiones del mismo archivo (ver _ENTRY_MARKER)."""
         return list(self.files_list)
 
     def _update_counter(self):
@@ -523,6 +608,7 @@ class MediaQueueWidget(QFrame):
         if action == action_remove:
             self.remove_selected()
         elif action == action_open_loc:
+            path = entry_path(path)
             if path and os.path.exists(path):
                 from PySide6.QtGui import QDesktopServices
                 QDesktopServices.openUrl(QUrl.fromLocalFile(os.path.dirname(path)))

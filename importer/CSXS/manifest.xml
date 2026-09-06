@@ -1,12 +1,16 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<ExtensionManifest Version="7.0" ExtensionBundleId="com.dowp.importer" ExtensionBundleVersion="1.2.0" ExtensionBundleName="DowP Importer">
+<ExtensionManifest Version="7.0" ExtensionBundleId="com.dowp.importer" ExtensionBundleVersion="2.0.0" ExtensionBundleName="DowP Importer">
     <ExtensionList>
-        <Extension Id="com.dowp.importer" Version="1.2.0" />
+        <Extension Id="com.dowp.importer" Version="2.0.0" />
     </ExtensionList>
     <ExecutionEnvironment>
         <HostList>
             <Host Name="PPRO" Version="[14.0,99.9]" />
             <Host Name="AEFT" Version="[17.0,99.9]" />
+            <!-- Photoshop publica dos identificadores segun la instalacion (PHSP y PHXS):
+                 hay que declarar los dos o el panel no aparece en algunas maquinas. -->
+            <Host Name="PHSP" Version="[22.0,99.9]" />
+            <Host Name="PHXS" Version="[22.0,99.9]" />
         </HostList>
         <CSXS-RequiredProperties>
             <Property Name="PlayerDebugMode">1</Property>
@@ -39,6 +43,13 @@
                     </CEFCommandLine>
                 </Resources>
                 <Lifecycle>
+                    <!-- SIN <StartOn>: cargar la extension al arrancar el host hacia que
+                         Photoshop se saltara la pantalla de inicio y abriera el panel solo,
+                         incluso con el panel cerrado por el usuario. La extension se carga
+                         cuando el usuario abre el panel; a partir de ahi, la marca de
+                         persistencia de main.js (Photoshop) la mantiene viva aunque se
+                         minimice o se cierre el panel, que es lo que necesita la conexion
+                         con DowP. -->
                     <AutoVisible>true</AutoVisible>
                 </Lifecycle>
                 <UI>

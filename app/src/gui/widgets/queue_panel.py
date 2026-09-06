@@ -51,6 +51,9 @@ class QueueItemCard(QFrame):
     configure_requested = Signal(str)
     open_folder_requested = Signal(str)
     drag_started = Signal(str)
+    # Arrastre del RESULTADO hacia otra aplicación (no el de reordenar la cola): se
+    # emite en vez de drag_started cuando la tarjeta ya terminó todo su proceso.
+    file_drag_requested = Signal(str)
 
     DRAG_THRESHOLD = 8
 
@@ -62,6 +65,12 @@ class QueueItemCard(QFrame):
         self._current_border = get_theme_token('borde', '#2d2d2d')
         self._press_pos = None
         self._dragging = False
+        # Una tarjeta terminada se arrastra a otra aplicación con todo lo que produjo;
+        # una en curso se arrastra dentro de la cola para reordenarla. Con
+        # recodificación pedida, "terminada" incluye que el recode haya terminado
+        # (lo marca DownloadController, ver set_recode_pending).
+        self._is_completed = False
+        self._recode_pending = False
         self._raw_title = title
         self._raw_speed_text = ""
         self.setObjectName("queueItemCard")
@@ -70,6 +79,30 @@ class QueueItemCard(QFrame):
     def set_selected(self, selected: bool):
         self._is_selected = selected
         self._apply_style()
+
+    def is_drag_ready(self) -> bool:
+        """Solo cuando el proceso COMPLETO terminó bien: si se pidió recodificación, no
+        basta con que la descarga haya terminado."""
+        return bool(self._is_completed and not self._recode_pending)
+
+    def set_completed(self, completed: bool):
+        self._is_completed = bool(completed)
+        self._update_drag_affordance()
+
+    def set_recode_pending(self, pending: bool):
+        """Llamado por DownloadController al encolar/resolver una recodificación
+        post-descarga: mientras esté pendiente, la tarjeta ya dice "Completado" (la
+        descarga sí terminó) pero arrastrarla entregaría el archivo a medio hacer."""
+        self._recode_pending = bool(pending)
+        self._update_drag_affordance()
+
+    def _update_drag_affordance(self):
+        ready = self.is_drag_ready()
+        self.setCursor(Qt.OpenHandCursor if ready else Qt.ArrowCursor)
+        if ready:
+            self.setToolTip(self.tr("Arrastra esta tarjeta a otra aplicación para llevarte todos sus archivos"))
+        else:
+            self.setToolTip("")
 
     def _apply_style(self):
         bg_color = get_theme_token('fondo_principal', '#121212')
@@ -117,6 +150,15 @@ class QueueItemCard(QFrame):
             return
         delta = (event.position().toPoint() - self._press_pos).manhattanLength()
         if delta >= self.DRAG_THRESHOLD:
+            if self.is_drag_ready():
+                # Reordenar una tarjeta ya terminada no significa nada (sus botones de
+                # subir/bajar están ocultos justamente por eso), así que ese gesto pasa
+                # a ser el arrastre del resultado hacia afuera de la app. Se limpia
+                # ANTES de emitir: el QDrag abre un bucle de eventos anidado y el gesto
+                # no debe poder relanzarse desde dentro de él.
+                self._press_pos = None
+                self.file_drag_requested.emit(self.job_id)
+                return
             self._dragging = True
             self.drag_started.emit(self.job_id)
 
@@ -610,6 +652,7 @@ class QueuePanel(QWidget):
         card.configure_requested.connect(self.configure_playlist_signal.emit)
         card.open_folder_requested.connect(self._on_open_folder_requested)
         card.drag_started.connect(self._on_card_drag_started)
+        card.file_drag_requested.connect(self._on_card_file_drag)
         
         self.scroll_layout.addWidget(card)
         self.cards[job_id] = card
@@ -680,6 +723,11 @@ class QueuePanel(QWidget):
             elif status == "SKIPPED":
                 speed_text = job.error_message or self.tr("El archivo ya existe")
         
+        # Una descarga con recodificación pedida pasa por COMPLETED antes de recodificar:
+        # DownloadController ya marcó set_recode_pending(True) al encolarla y lo levanta
+        # al terminar, así que aquí basta con reflejar el estado de la descarga.
+        card.set_completed(status == "COMPLETED")
+
         if status in ("COMPLETED", "FAILED", "CANCELLED", "SKIPPED"):
             card.progress_bar.setRange(0, 100)
             
@@ -778,6 +826,44 @@ class QueuePanel(QWidget):
     # empieza el arrastre (drag_started); a partir de ahí este panel "agarra" el
     # mouse (grabMouse) para recibir todos los eventos sin importar qué widget
     # hijo esté debajo del cursor.
+
+    def _on_card_file_drag(self, job_id):
+        """Arrastra hacia otra aplicación TODO lo que dejó en disco el trabajo de esta
+        tarjeta: el medio (o cada fragmento), el completo conservado, la miniatura, los
+        subtítulos y el recodificado -- según lo que el usuario haya elegido conservar,
+        que se resuelve recién ahora comprobando qué sigue existiendo. Es la misma vía
+        que Modo Rápido (ver quick_mode/activity_panel.py::_on_row_drag) y es
+        independiente del envío a editores conectados, que sigue su propio camino."""
+        job = self.queue_mgr.get_job(job_id)
+        card = self.cards.get(job_id)
+        if not job or not card:
+            return
+
+        # Las demás tarjetas pueden haber bajado a la misma carpeta con nombres
+        # emparentados ('Cancion' y 'Cancion_2'): sus rutas se pasan para que cada
+        # archivo se quede con su dueño más directo.
+        foreign = [
+            path
+            for other in self.queue_mgr.get_all_jobs()
+            if other.job_id != job_id and other.job_type in ("DOWNLOAD", "PLAYLIST")
+            for path in other.artifacts.stems()
+        ]
+        try:
+            files = job.artifacts.collect(foreign_stems=foreign)
+        except Exception as e:
+            logger.error(f"QueuePanel: No se pudieron reunir los archivos para arrastrar: {e}")
+            return
+
+        if not files:
+            logger.warning(
+                f"QueuePanel: No queda ningún archivo en disco para arrastrar de '{job.title}' "
+                "(¿se movieron o borraron?)."
+            )
+            return
+
+        badge = "" if len(files) == 1 else self.tr("{0} archivos").format(len(files))
+        from gui.widgets.native_file_drag import start_native_file_drag
+        start_native_file_drag(card, files, badge_text=badge)
 
     def _on_card_drag_started(self, job_id):
         self._dragging_job_id = job_id

@@ -66,8 +66,16 @@ class DependencyCheckWorker(QThread):
                 get_local_version as get_potprovider_version,
             )
             from core.utils.config_manager import get_config
+            from core.utils.paths import migrate_bin_to_local_appdata
 
             self.status_update.emit("Comprobando entorno...")
+
+            # bin/ (dependencias gestionadas + modelos de IA, hasta varios GB) dejó de
+            # vivir junto al ejecutable y pasó al perfil de datos local del usuario.
+            # Va antes de verify_all_dependencies() a propósito: los check_*() miran la
+            # ubicación nueva, así que si el bin/ viejo no se movió primero la app daría
+            # todo por faltante y volvería a descargarlo entero.
+            migrate_bin_to_local_appdata(status_callback=self.status_update.emit)
 
             status = verify_all_dependencies()
 

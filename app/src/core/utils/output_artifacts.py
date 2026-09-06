@@ -166,3 +166,119 @@ def collect_output_artifacts(known_paths, stem_paths=None, foreign_stems=None) -
             _add(sibling)
 
     return ordered
+
+
+def find_actual_downloaded_file(filepath, fallback_to_dir=False):
+    """
+    Resuelve la ruta REAL de un archivo descargado a partir de la pista que dejó yt-dlp,
+    que a menudo ya no existe: el hook de progreso reporta el stream intermedio
+    ('Título.f137.mp4') o un temporal ('Título.mp4.part'), y ffmpeg los borra al fusionar.
+
+    A igualdad de nombre base, el medio SIEMPRE gana sobre su sidecar: con "guardar
+    miniatura" o subtítulos activados, 'Título.jpg' y 'Título.mp4' comparten nombre y el
+    orden alfabético de os.scandir devolvía la imagen — con lo que una recodificación
+    post-descarga intentaba recodificar el .jpg y el envío al editor mandaba la miniatura
+    como si fuera el video. El sidecar solo se devuelve si no hay nada más (modo "solo
+    miniatura", donde la imagen SÍ es el archivo descargado).
+
+    fallback_to_dir=True devuelve la carpeta contenedora cuando no se encontró nada, para
+    quien la usa solo para abrir el explorador; el resto recibe None.
+    """
+    if not filepath:
+        return None
+    if os.path.exists(filepath):
+        return filepath
+
+    parent_dir = os.path.dirname(filepath)
+    if not parent_dir or not os.path.exists(parent_dir):
+        return None
+
+    base_name = os.path.splitext(os.path.basename(filepath))[0]
+    for temp_ext in ('.temp', '.ytdl', '.part'):
+        if base_name.endswith(temp_ext):
+            base_name = base_name[: -len(temp_ext)]
+    import re
+    base_name = re.sub(r'\.f[a-zA-Z0-9-]+$', '', base_name)
+
+    # rango 0: mismo nombre y no es sidecar | 1: mismo nombre, sidecar
+    #        2: cuelga del nombre, no sidecar | 3: cuelga del nombre, sidecar
+    candidates = {}
+    try:
+        for entry in os.scandir(parent_dir):
+            if not entry.is_file():
+                continue
+            entry_base, entry_ext = os.path.splitext(entry.name)
+            if _is_temp_artifact(entry.name):
+                continue
+            if entry_base == base_name:
+                rank = 0 if entry_ext.lower() not in SIDECAR_EXTENSIONS else 1
+            elif entry_base.startswith(base_name):
+                rank = 2 if entry_ext.lower() not in SIDECAR_EXTENSIONS else 3
+            else:
+                continue
+            candidates.setdefault(rank, entry.path)
+    except OSError:
+        pass
+
+    for rank in (0, 1, 2, 3):
+        if rank in candidates:
+            return candidates[rank]
+
+    return parent_dir if fallback_to_dir else None
+
+
+class OutputArtifactTracker:
+    """
+    Acumula las rutas que un proceso fue produciendo, para poder arrastrar su resultado
+    completo cuando termine. Es la misma pareja de listas que lleva cada fila de Modo
+    Rápido (ver gui/tabs/quick_mode/download_row.py), extraída aquí porque en Proceso
+    Avanzado hace falta en dos sitios más: colgada de cada Job de la cola (modo LOTES) y
+    en el controlador de la descarga directa (modo SOLO).
+
+    Nunca se filtra por existencia al registrar: eso se resuelve recién en collect(),
+    porque entre medio el pipeline puede borrar el original (no marcar "mantener medios
+    originales") o el usuario puede mover los archivos.
+    """
+
+    def __init__(self):
+        self._known = []
+        self._stems = []
+
+    def add(self, paths, is_stem_source=True):
+        """is_stem_source=False para la salida recodificada: su nombre lleva el
+        prefijo/sufijo elegido por el usuario, así que usarlo para barrer hermanos podría
+        arrastrar archivos de otra descarga."""
+        if isinstance(paths, str):
+            paths = [paths]
+        for path in paths or []:
+            if not path:
+                continue
+            # Varios resolutores caen a la CARPETA contenedora cuando no encuentran el
+            # archivo (ver find_actual_downloaded_file con fallback_to_dir). Registrarla
+            # como nombre base haría que el barrido de hermanos mirara al lado de la
+            # carpeta, fuera del directorio de salida.
+            try:
+                if os.path.isdir(path):
+                    continue
+            except OSError:
+                continue
+            if path not in self._known:
+                self._known.append(path)
+            if is_stem_source and path not in self._stems:
+                self._stems.append(path)
+
+    def stems(self):
+        """Rutas cuyo nombre base identifica a ESTE proceso, para que otro de la misma
+        carpeta no reclame sus archivos (ver collect_output_artifacts)."""
+        return list(self._stems)
+
+    def collect(self, foreign_stems=None):
+        return collect_output_artifacts(self._known, stem_paths=self._stems,
+                                        foreign_stems=foreign_stems)
+
+    def clear(self):
+        self._known = []
+        self._stems = []
+
+    def __bool__(self):
+        return bool(self._known)

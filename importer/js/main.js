@@ -1,7 +1,6 @@
 window.onload = function () {
     const csInterface = new CSInterface();
-    const CURRENT_EXTENSION_VERSION = "1.2.0";
-    const UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/MarckDP/DowP_Importer-Adobe/refs/heads/main/update.json";
+    const CURRENT_EXTENSION_VERSION = "2.0.0";
     const serverUrl = "http://127.0.0.1:7788";
     let thisAppName = "Desconocido";
     let thisAppIdentifier = "unknown";
@@ -36,6 +35,23 @@ window.onload = function () {
     let lastSuccessfulTimelineCheck = null;
     let timelineCheckFailureCount = 0;
 
+    // Intencion del usuario sobre las casillas, separada de la disponibilidad real de la
+    // linea de tiempo en el host. Sin esa separacion, un falso negativo momentaneo
+    // borraba la eleccion del usuario y no se restauraba al recuperarse el estado.
+    let panelReleased = false;
+    let userWantsTimeline = false;
+    let userWantsImages = false;
+    let suppressIntentUpdate = false;
+
+    // Importacion en curso: ExtendScript es de un solo hilo, asi que mientras importa no
+    // puede responder a getActiveTimelineInfo().
+    let importGuardCount = 0;
+    let importGuardTimeout = null;
+
+    // Identifica cada comprobacion para poder ignorar respuestas de llamadas viejas.
+    let timelineCallSeq = 0;
+    let currentTimelineCall = 0;
+
     let currentState = 'unconfigured';
 
     let messageQueue = [];
@@ -44,7 +60,6 @@ window.onload = function () {
     let isShowingPersistentMessage = false;
 
     let isUpdateNoticeActive = false;
-    let updateManifestData = null;
     let updateNoticeTimeout = null;
 
     const statusIndicator = document.getElementById('status-indicator');
@@ -402,7 +417,7 @@ window.onload = function () {
             }
 
             if (!isSocketRegistered) {
-                socket.emit('register', { appIdentifier: thisAppIdentifier });
+                socket.emit('register', { appIdentifier: thisAppIdentifier, extensionVersion: CURRENT_EXTENSION_VERSION });
                 isSocketRegistered = true;
             }
 
@@ -457,6 +472,17 @@ window.onload = function () {
                 setState('linked-other-app', data);
                 setLinkButtonState('linked-other');
             }
+        });
+
+        socket.on('dowp_version', (data) => {
+            const appVersion = data && data.appVersion;
+            if (!appVersion) return;
+            if (appVersion === CURRENT_EXTENSION_VERSION) {
+                console.log(`Panel y DowP sincronizados en v${appVersion}`);
+                return;
+            }
+            console.warn(`Desfase de version: panel v${CURRENT_EXTENSION_VERSION}, DowP v${appVersion}`);
+            showVersionMismatchNotice(appVersion);
         });
 
         socket.on('new_file', (data) => {
@@ -528,12 +554,31 @@ window.onload = function () {
         setLinkButtonState('connecting');
     }
 
+    function runImportScript(script, callback) {
+        // Unico punto por el que se lanzan los scripts que IMPORTAN. Mientras uno corre,
+        // ExtendScript (de un solo hilo) no puede contestar a getActiveTimelineInfo(), asi
+        // que se suspenden las comprobaciones de linea de tiempo hasta que vuelva: sin
+        // esto, la comprobacion vencia por tiempo y apagaba la casilla justo en el
+        // instante de importar (ver checkActiveTimeline).
+        beginImportGuard();
+        let settled = false;
+        csInterface.evalScript(script, (result) => {
+            if (!settled) {
+                settled = true;
+                endImportGuard();
+            }
+            callback(result);
+        });
+    }
+
     function importFileToProject(filePackage) {
         const targetBinName = filePackage.targetBin || null;
 
         const AUDIO_EXTENSIONS = /\.(mp3|m4a|wav|flac|aac|ogg|opus|weba)$/i;
         const VIDEO_EXTENSIONS = /\.(mp4|mkv|webm|mov|avi|flv|wmv|m4v)$/i;
-        const IMAGE_EXTENSIONS = /\.(jpg|jpeg|png|gif|bmp|tiff|tif)$/i;
+        // Incluye lo que exporta el Editor de Imagen de DowP (psd, avif, heic...): antes
+        // caian en 'unknown' y no se importaban a ningun host.
+        const IMAGE_EXTENSIONS = /\.(jpg|jpeg|png|gif|bmp|tiff|tif|webp|avif|heic|heif|psd|psb|svg|ico|tga)$/i;
         const SUBTITLE_EXTENSIONS = /\.(srt|vtt|ass|ssa|sub)$/i;
 
         const classifyFile = (path) => {
@@ -626,7 +671,7 @@ window.onload = function () {
                     const timelineInfo = JSON.parse(result);
                     if (timelineInfo.hasActiveTimeline) {
                         console.log("Timeline activa encontrada. Playhead:", timelineInfo.playheadTime);
-                        csInterface.evalScript(
+                        runImportScript(
                             `importFiles("${escapedJSON}", true, ${timelineInfo.playheadTime}, ${shouldImportImages}, ${escapedBinName})`,
                             (importResult) => {
                                 console.log("Resultado de importación:", importResult);
@@ -644,7 +689,7 @@ window.onload = function () {
             });
         } else {
             console.log("Importando sin timeline, archivo(s):", filesToImport);
-            csInterface.evalScript(
+            runImportScript(
                 `importFiles("${escapedJSON}", false, 0, ${shouldImportImages}, ${escapedBinName})`,
                 (importResult) => {
                     console.log("Resultado de importación (sin timeline):", importResult);
@@ -676,7 +721,7 @@ window.onload = function () {
                     const timelineInfo = JSON.parse(result);
                     const playhead = (timelineInfo && timelineInfo.hasActiveTimeline) ? timelineInfo.playheadTime : 0;
                     const playheadTicks = (timelineInfo && timelineInfo.hasActiveTimeline) ? timelineInfo.playheadTicks : "0";
-                    csInterface.evalScript(
+                    runImportScript(
                         `importSubclips("${escapedFilePath}", "${escapedJSON}", true, ${playhead}, "${playheadTicks}")`,
                         (importResult) => {
                             console.log("Resultado de importación de subclips:", importResult);
@@ -685,14 +730,14 @@ window.onload = function () {
                         }
                     );
                 } catch (e) {
-                    csInterface.evalScript(
+                    runImportScript(
                         `importSubclips("${escapedFilePath}", "${escapedJSON}", false, 0, "0")`,
                         (importResult) => handleImportResult(importResult)
                     );
                 }
             });
         } else {
-            csInterface.evalScript(
+            runImportScript(
                 `importSubclips("${escapedFilePath}", "${escapedJSON}", false, 0, "0")`,
                 (importResult) => {
                     console.log("Resultado de importación de subclips (sin timeline):", importResult);
@@ -752,7 +797,7 @@ window.onload = function () {
 
                 console.log("Importando lote a Premiere:", uniqueFilesToImport);
 
-                csInterface.evalScript(
+                runImportScript(
                     `importFiles("${escapedJSON}", ${shouldAddToTimeline}, ${playheadTime}, ${shouldImportImages}, ${escapedBinName})`,
                     (importResult) => {
                         console.log("Resultado de importación (lote Premiere):", importResult);
@@ -760,8 +805,11 @@ window.onload = function () {
                     }
                 );
 
-            } else if (host === 'aftereffects') {
-                console.log("Importando lote a After Effects (uno por uno)...");
+            } else if (host === 'aftereffects' || host === 'photoshop') {
+                // Photoshop, como AE, no tiene una llamada de lote: se importa de a una,
+                // con una pausa entre archivos para no encolar acciones sobre un host que
+                // todavia esta abriendo/colocando la anterior.
+                console.log(`Importando lote a ${host} (uno por uno)...`);
                 let importedCount = 0;
                 let errorCount = 0;
 
@@ -771,7 +819,8 @@ window.onload = function () {
                         if (errorCount > 0) {
                             finalMessage = `Importación a AE completada (${importedCount} archivos, ${errorCount} errores)`;
                         }
-                        showMessage(finalMessage, errorCount > 0 ? 'warning' : 'success', true, 3000);
+                        showMessage(finalMessage.replace('AE', host === 'photoshop' ? 'Photoshop' : 'AE'),
+                                    errorCount > 0 ? 'warning' : 'success', true, 3000);
                         return;
                     }
 
@@ -779,9 +828,9 @@ window.onload = function () {
                     const fileListJSON = JSON.stringify([fileToImport]);
                     const escapedJSON = escapeForExtendScript(fileListJSON);
 
-                    showMessage(`Importando ${index + 1} de ${totalFiles} a AE...`, 'info', true);
+                    showMessage(`Importando ${index + 1} de ${totalFiles} a ${host === 'photoshop' ? 'Photoshop' : 'AE'}...`, 'info', true);
 
-                    csInterface.evalScript(
+                    runImportScript(
                         `importFiles("${escapedJSON}", ${shouldAddToTimeline}, ${playheadTime}, ${shouldImportImages}, ${escapedBinName})`,
                         (importResult) => {
                             if (importResult === "success") {
@@ -899,7 +948,43 @@ window.onload = function () {
         }, 30000);
     }
 
+    function beginImportGuard() {
+        importGuardCount++;
+        clearTimeout(importGuardTimeout);
+        // Salvavidas: si algun callback de importacion nunca vuelve, el panel no puede
+        // quedarse sin comprobar la linea de tiempo para siempre.
+        importGuardTimeout = setTimeout(() => { importGuardCount = 0; }, 180000);
+    }
+
+    function endImportGuard() {
+        importGuardCount = Math.max(0, importGuardCount - 1);
+        if (importGuardCount > 0) return;
+        clearTimeout(importGuardTimeout);
+        importGuardTimeout = null;
+        // Terminada la importacion, resincronizar ya, saltando el acelerador.
+        lastTimelineCheck = 0;
+        checkActiveTimeline();
+    }
+
+    function noteTimelineCheckFailure() {
+        // Un fallo transitorio (host ocupado, respuesta lenta o ilegible) se tolera igual
+        // que una respuesta negativa suelta. Antes, el vencimiento por tiempo apagaba el
+        // estado a la primera, saltandose justo esta tolerancia.
+        if (lastSuccessfulTimelineCheck && timelineCheckFailureCount < 5) {
+            timelineCheckFailureCount++;
+            return;
+        }
+        timelineCheckFailureCount = 0;
+        lastSuccessfulTimelineCheck = null;
+        updateTimelineState(false);
+    }
+
     function checkActiveTimeline() {
+        // Mientras una importacion corre, el motor de ExtendScript esta ocupado y no puede
+        // contestar: la comprobacion venceria por tiempo y apagaria la casilla justo en el
+        // instante de importar, que es el sintoma que se veia en Premiere y en AE.
+        if (importGuardCount > 0) return;
+
         const now = Date.now();
 
         if (now - lastTimelineCheck < TIMELINE_CHECK_INTERVAL) {
@@ -910,14 +995,29 @@ window.onload = function () {
         if (checkingTimeline) return;
 
         checkingTimeline = true;
+        const callId = ++timelineCallSeq;
+        currentTimelineCall = callId;
 
-        const timeoutId = setTimeout(() => {
-            checkingTimeline = false;
-            updateTimelineState(false);
+        // Vencimiento blando: decide el estado CON tolerancia, pero no da por perdida la
+        // llamada -- la respuesta real puede llegar despues y es la que manda.
+        const softTimeout = setTimeout(() => {
+            if (currentTimelineCall === callId) {
+                noteTimelineCheckFailure();
+            }
         }, 1000);
 
+        // Vencimiento duro: solo para no quedar bloqueado si el host no responde nunca.
+        const hardTimeout = setTimeout(() => {
+            if (currentTimelineCall === callId) {
+                checkingTimeline = false;
+            }
+        }, 15000);
+
         csInterface.evalScript('getActiveTimelineInfo()', (result) => {
-            clearTimeout(timeoutId);
+            clearTimeout(softTimeout);
+            clearTimeout(hardTimeout);
+
+            if (currentTimelineCall !== callId) return; // respuesta de una llamada vieja
             checkingTimeline = false;
 
             try {
@@ -926,42 +1026,172 @@ window.onload = function () {
                 if (info.hasActiveTimeline) {
                     lastSuccessfulTimelineCheck = info;
                     timelineCheckFailureCount = 0;
-                    updateTimelineState(true);
+                    updateTimelineState(true, info);
                 } else {
-                    if (lastSuccessfulTimelineCheck && timelineCheckFailureCount < 5) {
-                        timelineCheckFailureCount++;
-                        return;
-                    }
-                    timelineCheckFailureCount = 0;
-                    lastSuccessfulTimelineCheck = null;
-                    updateTimelineState(false);
+                    noteTimelineCheckFailure();
                 }
             } catch (e) {
-                updateTimelineState(false);
+                noteTimelineCheckFailure();
             }
         });
     }
 
-    function updateTimelineState(hasActiveTimeline) {
-        if (lastTimelineState === hasActiveTimeline) return;
+    // Photoshop no tiene linea de tiempo: la misma casilla pasa a significar "colocar en
+    // el documento activo" (y si no hay documento, cada imagen se abre como documento
+    // nuevo). La de "importar imagenes a la linea de tiempo" no tiene sentido ahi.
+    function isPhotoshopHost() {
+        return thisAppIdentifier === 'photoshop';
+    }
 
-        lastTimelineState = hasActiveTimeline;
-        addToTimelineCheckbox.disabled = !hasActiveTimeline;
+    function timelineLabels(hasTarget, targetName) {
+        if (isPhotoshopHost()) {
+            return hasTarget
+                ? (targetName ? `Colocar en: ${targetName}` : 'Colocar en el documento activo')
+                : 'No hay ningún documento abierto (se abrirá uno nuevo)';
+        }
+        return hasTarget
+            ? (targetName ? `Añadir a: ${targetName}` : 'Añadir a la línea de tiempo activa')
+            : 'No hay una secuencia/composición activa';
+    }
 
-        if (hasActiveTimeline) {
-            addToTimelineContainer.title = "Añadir a la línea de tiempo activa";
-        } else {
-            addToTimelineContainer.title = "No hay una secuencia/composición activa";
-            if (addToTimelineCheckbox.checked) {
-                addToTimelineCheckbox.checked = false;
+    function applyHostUiMode() {
+        if (isPhotoshopHost() && importImagesContainer) {
+            importImagesContainer.style.display = 'none';
+        }
+    }
+
+    function unpersistPhotoshop() {
+        // Contrario de makePhotoshopPersistent: devuelve la extension a su ciclo de vida
+        // normal para que Photoshop pueda descargarla.
+        if (!isPhotoshopHost()) return;
+        try {
+            const event = new CSEvent('com.adobe.PhotoshopUnPersistent', 'APPLICATION');
+            event.extensionId = 'com.dowp.importer';
+            csInterface.dispatchEvent(event);
+            console.log('[DowP] Persistencia retirada en Photoshop.');
+        } catch (e) {
+            console.error('[DowP] No se pudo retirar la persistencia:', e);
+        }
+    }
+
+    function releaseOnPanelClose() {
+        // CERRAR el panel debe desconectar, como en Premiere y After Effects; MINIMIZARLO
+        // no. Al cerrarlo, el host descarga la pagina y esto se dispara: se retira la
+        // persistencia y se cierra el socket a proposito, para que DowP se entere en el
+        // acto en vez de esperar a que caduque la conexion. Al minimizar no hay descarga,
+        // asi que no pasa por aqui y la conexion sigue viva.
+        if (panelReleased) return;
+        panelReleased = true;
+        unpersistPhotoshop();
+        try {
+            if (socket && socket.connected) {
+                socket.emit('clear_active_target');
+                socket.disconnect();
+            }
+        } catch (e) {}
+    }
+
+    function makePhotoshopPersistent() {
+        // Photoshop DESCARGA la extension en cuanto su panel deja de estar visible
+        // (minimizado, contraido o en una pestana de fondo): el contexto JS muere, el
+        // socket se cae y DowP deja de ver a Photoshop como cliente, asi que tampoco se
+        // puede vincular desde DowP. Premiere y After Effects no hacen esto, por eso solo
+        // se notaba en Photoshop.
+        //
+        // La solucion oficial es declarar la extension como persistente: mientras lo
+        // este, Photoshop la mantiene cargada aunque el panel no se vea. Es especifico de
+        // Photoshop; en los otros hosts este evento no existe y no pasa nada.
+        if (!isPhotoshopHost()) return;
+        try {
+            const event = new CSEvent('com.adobe.PhotoshopPersistent', 'APPLICATION');
+            event.extensionId = 'com.dowp.importer';
+            csInterface.dispatchEvent(event);
+            console.log('[DowP] Extension declarada persistente en Photoshop.');
+        } catch (e) {
+            console.error('[DowP] No se pudo hacer persistente la extension:', e);
+        }
+    }
+
+    function updateTimelineState(hasActiveTimeline, info) {
+        const timelineName = (info && info.timelineName) ? info.timelineName : '';
+
+        if (lastTimelineState !== hasActiveTimeline) {
+            lastTimelineState = hasActiveTimeline;
+            addToTimelineCheckbox.disabled = !hasActiveTimeline;
+
+            // La casilla refleja "hay linea de tiempo Y el usuario la quiere". Al volver
+            // la linea de tiempo se restaura sola la eleccion del usuario, en vez de
+            // quedar habilitada pero apagada como pasaba antes.
+            const shouldBeChecked = hasActiveTimeline && userWantsTimeline;
+            if (addToTimelineCheckbox.checked !== shouldBeChecked) {
+                suppressIntentUpdate = true;
+                addToTimelineCheckbox.checked = shouldBeChecked;
                 addToTimelineCheckbox.dispatchEvent(new Event('change'));
+                suppressIntentUpdate = false;
             }
         }
+
+        addToTimelineContainer.title = timelineLabels(hasActiveTimeline, timelineName);
 
         setTimelineActiveState(hasActiveTimeline, { strong: addToTimelineCheckbox.checked });
     }
 
+    function reportPanelVisibility(source, eventData) {
+        if (!isPhotoshopHost()) return;
+        let windowVisible = 'n/d';
+        try { windowVisible = String(csInterface.isWindowVisible()); } catch (e) {}
+        sendLogToDowP(
+            `Panel: ${source}=${eventData} | isWindowVisible=${windowVisible} | ` +
+            `hidden=${document.hidden} | tamaño=${window.innerWidth}x${window.innerHeight}`,
+            'info'
+        );
+    }
+
+    function refreshTimelineNow() {
+        lastTimelineCheck = 0;   // el host acaba de avisar: saltar el acelerador
+        checkActiveTimeline();
+    }
+
     function setupEventListeners() {
+        // Premiere avisa cuando cambia la secuencia activa, asi que el estado se refresca
+        // al instante en vez de esperar al siguiente sondeo. Es aditivo: si algun
+        // identificador no existe en esta version del host, ese listener nunca se dispara
+        // y el sondeo sigue cubriendo el caso.
+        const HOST_TIMELINE_EVENTS = [
+            'com.dowp.sequenceChanged',
+            'com.adobe.PremierePro.event.ActiveSequenceChanged',
+            'com.adobe.PremierePro.event.SequenceActivated',
+            'com.adobe.PremierePro.event.SequenceSelectionChanged'
+        ];
+        HOST_TIMELINE_EVENTS.forEach((eventType) => {
+            try {
+                csInterface.addEventListener(eventType, () => {
+                    refreshTimelineNow();
+                });
+            } catch (e) {}
+        });
+
+        if (thisAppIdentifier === 'premiere') {
+            // Registra el enlace del lado de ExtendScript que emite 'com.dowp.sequenceChanged'.
+            try {
+                csInterface.evalScript('bindSequenceEvents()', (res) => {
+                    console.log('[DowP] bindSequenceEvents ->', res);
+                });
+            } catch (e) {}
+        }
+
+        window.addEventListener('beforeunload', releaseOnPanelClose);
+        window.addEventListener('unload', releaseOnPanelClose);
+
+        // Diagnostico de visibilidad: CEP no ofrece ninguna forma de distinguir "panel
+        // cerrado" de "panel minimizado/en pestana de fondo", asi que se dejan anotados en
+        // el log de DowP los valores que SI podrian distinguirlos. Si algun dia cerrar no
+        // desconectara (porque el host no descargue la pagina), estos numeros dicen que
+        // criterio usar sin tener que adivinar.
+        csInterface.addEventListener('com.adobe.csxs.events.WindowVisibilityChanged', (ev) => {
+            reportPanelVisibility('WindowVisibilityChanged', ev && ev.data);
+        });
+
         window.addEventListener('focus', () => {
             checkActiveTimeline();
         });
@@ -969,6 +1199,11 @@ window.onload = function () {
         document.addEventListener('visibilitychange', () => {
             if (!document.hidden) {
                 checkActiveTimeline();
+                // Si el host suspendio el panel mientras estaba oculto, la conexion pudo
+                // caerse sin que nadie lo notara: al volver, se reintenta.
+                if (!socket || !socket.connected) {
+                    connectToServer();
+                }
             }
         });
 
@@ -980,11 +1215,26 @@ window.onload = function () {
     addToTimelineCheckbox.addEventListener('change', () => {
         const isChecked = addToTimelineCheckbox.checked;
 
+        // Solo cuenta como intencion del usuario si el cambio NO lo hizo el panel al
+        // sincronizar con el estado del host (ver updateTimelineState).
+        if (!suppressIntentUpdate) {
+            userWantsTimeline = isChecked;
+        }
+
         importImagesCheckbox.disabled = !isChecked;
 
         if (isChecked) {
             addToTimelineContainer.classList.add('is-active');
             importImagesContainer.classList.remove('is-disabled');
+            // Devolver tambien la eleccion de "importar imagenes", que se apagaba en
+            // cascada al perderse la linea de tiempo.
+            if (importImagesCheckbox.checked !== userWantsImages) {
+                const previousSuppress = suppressIntentUpdate;
+                suppressIntentUpdate = true;
+                importImagesCheckbox.checked = userWantsImages;
+                importImagesCheckbox.dispatchEvent(new Event('change'));
+                suppressIntentUpdate = previousSuppress;
+            }
         } else {
             addToTimelineContainer.classList.remove('is-active');
             importImagesContainer.classList.add('is-disabled');
@@ -997,6 +1247,9 @@ window.onload = function () {
     });
 
     importImagesCheckbox.addEventListener('change', () => {
+        if (!suppressIntentUpdate) {
+            userWantsImages = importImagesCheckbox.checked;
+        }
         if (importImagesCheckbox.checked) {
             importImagesContainer.classList.add('is-active');
         } else {
@@ -1004,139 +1257,34 @@ window.onload = function () {
         }
     });
 
-    function compareVersions(currentVersion, remoteVersion) {
-        console.log(`Comparando versiones: actual=${currentVersion}, remota=${remoteVersion}`);
-
-        const current = currentVersion.split('.').map(Number);
-        const remote = remoteVersion.split('.').map(Number);
-        const maxLength = Math.max(current.length, remote.length);
-
-        for (let i = 0; i < maxLength; i++) {
-            const currentPart = current[i] || 0;
-            const remotePart = remote[i] || 0;
-
-            if (remotePart > currentPart) {
-                console.log(`Nueva versión disponible: ${remoteVersion} > ${currentVersion}`);
-                return 1;
-            }
-            if (currentPart > remotePart) {
-                console.log(`Versión actual es más nueva: ${currentVersion} > ${remoteVersion}`);
-                return -1;
-            }
-        }
-
-        console.log(`Versiones iguales: ${currentVersion} = ${remoteVersion}`);
-        return 0;
-    }
-
-    function showUpdateNotification() {
-        console.log("Mostrando notificación de actualización:", updateManifestData);
-
+    // ── Aviso de desfase de version ──
+    // El panel y DowP comparten numero de version: el panel se instala DESDE la app,
+    // viaja dentro de su bundle y no tiene canal de actualizacion propio. Por eso aqui
+    // ya no se consulta ningun servidor: la version de la app llega por el socket en el
+    // evento 'dowp_version', respuesta al 'register'. Si no coinciden es que quedo una
+    // instalacion vieja del panel, y se arregla desde la propia app.
+    //
+    // Reutiliza isUpdateNoticeActive/updateNoticeTimeout, el mecanismo de aviso fijo que
+    // hace que updateStatusMessage() no sobrescriba el mensaje mientras esta visible.
+    function showVersionMismatchNotice(appVersion) {
         const logArea = document.getElementById('log-text');
-        if (!logArea) {
-            console.error("No se encontró el elemento log-text");
-            return;
-        }
+        if (!logArea) return;
 
         if (updateNoticeTimeout) {
             clearTimeout(updateNoticeTimeout);
         }
         isUpdateNoticeActive = true;
 
-        const updateMessage = `✨ ¡Versión ${updateManifestData.extension_version} disponible! <a href="#" id="update-link" style="color: #0066cc; text-decoration: underline;">Descargar</a>`;
+        logArea.innerHTML =
+            `⚠ Panel v${CURRENT_EXTENSION_VERSION} · DowP v${appVersion}. ` +
+            `Reinstala el panel desde Ajustes &gt; Integraciones.`;
 
-        logArea.innerHTML = updateMessage;
-
-        const updateLink = document.getElementById('update-link');
-        if (updateLink) {
-            updateLink.addEventListener('click', (e) => {
-                e.preventDefault();
-                console.log("Abriendo URL de descarga:", updateManifestData.release_notes_url || updateManifestData.download_url);
+        updateNoticeTimeout = setTimeout(() => {
+            if (isUpdateNoticeActive) {
                 clearUpdateNotice();
-                const urlToOpen = updateManifestData.release_notes_url || updateManifestData.download_url || updateManifestData.url;
-                if (urlToOpen) {
-                    csInterface.openURLInDefaultBrowser(urlToOpen);
-                } else {
-                    console.error("No se encontró URL válida en el manifest");
-                    alert("No se pudo abrir la página de descarga. Revisa manualmente en GitHub.");
-                }
-            });
-
-            updateNoticeTimeout = setTimeout(() => {
-                if (isUpdateNoticeActive) {
-                    console.log("El temporizador de 20s para el aviso de actualización ha terminado.");
-                    clearUpdateNotice();
-                }
-            }, 20000);
-        }
+            }
+        }, 20000);
     }
-
-    async function checkForUpdates() {
-        // Deshabilitado por 404 en el repositorio
-        return;
-        console.log("Iniciando verificación de actualizaciones...");
-        console.log(`Versión actual: ${CURRENT_EXTENSION_VERSION}`);
-        console.log(`URL del manifest: ${UPDATE_MANIFEST_URL}`);
-
-        try {
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 10000);
-
-            const response = await fetch(UPDATE_MANIFEST_URL, {
-                signal: controller.signal,
-                cache: 'no-cache',
-                headers: {
-                    'Cache-Control': 'no-cache',
-                    'Pragma': 'no-cache'
-                }
-            });
-
-            clearTimeout(timeoutId);
-
-            if (!response.ok) {
-                throw new Error(`Error HTTP ${response.status}: ${response.statusText}`);
-            }
-
-            const manifest = await response.json();
-            console.log("Manifest obtenido:", manifest);
-
-            if (!manifest.extension_version) {
-                console.error("El manifest no contiene extension_version");
-                return;
-            }
-
-            const comparisonResult = compareVersions(CURRENT_EXTENSION_VERSION, manifest.extension_version);
-
-            if (comparisonResult === 1) {
-                console.log("Nueva versión encontrada, mostrando notificación");
-                updateManifestData = manifest;
-                showUpdateNotification();
-            } else if (comparisonResult === 0) {
-                console.log("La extensión está actualizada");
-            } else {
-                console.log("La versión actual es más nueva que la remota (¿versión de desarrollo?)");
-            }
-
-        } catch (error) {
-            if (error.name === 'AbortError') {
-                console.error("Timeout al verificar actualizaciones");
-            } else {
-                console.error("Error al verificar actualizaciones:", error);
-            }
-        }
-    }
-
-    function forceUpdateCheck() {
-        console.log("Verificación manual de actualizaciones forzada");
-        checkForUpdates();
-    }
-
-    window.debugUpdates = {
-        forceCheck: forceUpdateCheck,
-        currentVersion: CURRENT_EXTENSION_VERSION,
-        manifestUrl: UPDATE_MANIFEST_URL,
-        compareVersions: compareVersions
-    };
 
     function sendSelectionToDowP() {
         if (!socket || !socket.connected) {
@@ -1146,28 +1294,42 @@ window.onload = function () {
 
         showMessage("Buscando archivos seleccionados...", 'info');
 
-        csInterface.evalScript('getSelectedFilePathsFromAdobe()', (result) => {
-            console.log("Resultado raw de ExtendScript:", result); // DEBUG
-
+        csInterface.evalScript('getSelectionForDowP()', (result) => {
             try {
-                const files = JSON.parse(result);
+                const parsed = JSON.parse(result);
+                const items = parsed.items || [];
+                const skipped = parsed.skipped || [];
 
-                console.log("Archivos parseados:", files); // DEBUG
-                console.log("Cantidad:", files.length); // DEBUG
-
-                if (!files || files.length === 0) {
-                    showMessage("⚠️ Nada seleccionado en Timeline o Proyecto.", 'warning', true, 3000);
+                if (items.length === 0) {
+                    if (skipped.length > 0) {
+                        // No se manda nada, pero el usuario tenia algo seleccionado: hay
+                        // que decirle POR QUE, en vez de un "nada seleccionado" enganoso.
+                        showMessage(`No se pudo enviar nada: ${skipped.join(' | ')}`, 'warning', true, 8000);
+                        sendLogToDowP(`Seleccion descartada: ${skipped.join(' | ')}`, 'warning');
+                    } else {
+                        showMessage("⚠️ Nada seleccionado en Timeline o Proyecto.", 'warning', true, 3000);
+                    }
                     return;
                 }
 
-                console.log("Enviando archivos a DowP:", files);
-                socket.emit('adobe_push_files', { files: files });
+                socket.emit('adobe_push_files', {
+                    items: items,
+                    skipped: skipped,
+                    // Compatibilidad: solo las rutas, para cualquier consumidor viejo.
+                    files: items.map((it) => it.path)
+                });
 
-                showMessage(`🚀 Enviados ${files.length} archivo(s).`, 'success', true, 4000);
+                const trimmed = items.filter((it) => it.hasTrim).length;
+                let msg = `🚀 Enviados ${items.length} elemento(s)`;
+                if (trimmed > 0) msg += ` (${trimmed} con corte)`;
+                if (skipped.length > 0) msg += `. Sin enviar: ${skipped.join(' | ')}`;
+                showMessage(msg, skipped.length > 0 ? 'warning' : 'success', true, skipped.length > 0 ? 8000 : 4000);
 
+                if (skipped.length > 0) {
+                    sendLogToDowP(`Elementos no enviados: ${skipped.join(' | ')}`, 'warning');
+                }
             } catch (e) {
-                console.error("Error al parsear resultado:", e);
-                console.error("Resultado que causó el error:", result);
+                console.error("Error al parsear la seleccion:", e, result);
                 showMessage("Error al leer selección: " + e.message, 'error', true, 4000);
             }
         });
@@ -1208,6 +1370,9 @@ window.onload = function () {
 
             // Diagnostico de arranque: deja constancia de que mecanismo de
             // lanzamiento hay disponible (critico al depurar en macOS).
+            applyHostUiMode();
+            makePhotoshopPersistent();
+
             const launcher = DowPPlatform.hasNode()
                 ? 'node'
                 : ((window.cep && window.cep.process) ? 'cep.process' : 'extendscript');
@@ -1265,8 +1430,6 @@ window.onload = function () {
                     checkActiveTimeline();
                 }
             }, 1000);
-
-            setTimeout(checkForUpdates, 1000);
         });
     }
 

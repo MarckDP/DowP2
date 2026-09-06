@@ -176,6 +176,15 @@ class AdvancedProcessTab(QWidget):
         self.output_options.btn_start_download.clicked.connect(self._on_download_button_clicked)
         self.output_options.btn_open_output_path.clicked.disconnect()
         self.output_options.btn_open_output_path.clicked.connect(self._on_open_output_path_clicked)
+
+        # Botón de arrastre del resultado (solo modo SOLO, ver _on_solo_toggled): las
+        # rutas se piden en el momento del arrastre, nunca antes.
+        self.output_options.set_output_drag_files_provider(
+            lambda: self.download_controller.collect_solo_drag_files()
+        )
+        self.output_options.output_drag_clicked.connect(
+            lambda: self.download_controller.reveal_solo_outputs()
+        )
         
         self._current_video_data = None
 
@@ -683,6 +692,12 @@ class AdvancedProcessTab(QWidget):
         # Combo de política de conflicto: visible solo en modo LOTES (oculto en SOLO,
         # donde en su lugar se pregunta con un diálogo modal por archivo).
         self.output_options.set_conflict_policy_visible(not checked, animated=True)
+
+        # Botón de arrastre del resultado: al revés, solo en SOLO. En LOTES cada tarjeta
+        # de la cola se arrastra sola (ver queue_panel.py::_on_card_file_drag), así que
+        # un botón único no sabría a cuál de todas se refiere.
+        self.output_options.set_output_drag_visible(checked)
+        self.output_options.set_output_drag_enabled(False)
 
         # Detener animaciones previas si están corriendo
         if hasattr(self, "_toggle_anim_group") and self._toggle_anim_group.state() == QParallelAnimationGroup.State.Running:

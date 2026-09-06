@@ -19,8 +19,7 @@ from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QFontDatabase, QIcon
 from core.utils.i18n import load_language
 from core.utils.config_manager import get_config
-
-__version__ = "2.0.0"
+from core.version import APP_VERSION as __version__
 
 # pillow_heif (soporte HEIC/HEIF) se registra bajo demanda la primera vez que se
 # necesita, en core/tabs/image_tools/image_converter.py -- no hace falta cargarlo
@@ -147,6 +146,15 @@ def main():
     recovered = recover_orphaned_backups()
     if recovered:
         logger.info(f"Se restauraron {len(recovered)} archivo(s) tras un cierre inesperado: {recovered}")
+
+    # Mantener al día el panel de Adobe para quien lo tenga instalado. NO instala nada
+    # por su cuenta: si no hay panel, no hace nada. Instalarlo es siempre una decisión
+    # del usuario desde Ajustes > Integraciones.
+    from core.setup.importer_setup import sync_if_installed
+    try:
+        sync_if_installed()
+    except Exception as e:
+        logger.debug(f"No se pudo sincronizar el DowP Importer: {e}")
 
     # Iniciar Master Manager de Editores (Adobe, DaVinci, Vegas)
     from core.services.editor_integration_manager import EditorIntegrationManager

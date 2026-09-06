@@ -6,6 +6,7 @@ import time
 from uuid import uuid4
 from PySide6.QtCore import QObject, Signal, QThread, QMutex, QRecursiveMutex, QMutexLocker
 from core.logger.logger_manager import logger
+from core.utils.output_artifacts import OutputArtifactTracker, find_actual_downloaded_file
 
 
 def _extract_vf_value(args: list) -> tuple:
@@ -50,7 +51,15 @@ class Job:
         self.title = config.get("title", "Tarea de descarga")
         self.error_message = ""
         self.final_filepath = None
+        # Todo lo que este trabajo dejó en disco (medio, fragmentos, recodificado...),
+        # para poder arrastrar la tarjeta terminada a otra aplicación con TODO su
+        # resultado -- los sidecars (miniatura, subtítulos) se barren por nombre base al
+        # arrastrar, no hace falta registrarlos. Ver core/utils/output_artifacts.py.
+        self.artifacts = OutputArtifactTracker()
         self.created_at = time.time()
+
+    def add_output_files(self, paths, is_stem_source=True):
+        self.artifacts.add(paths, is_stem_source=is_stem_source)
 
 class SingleJobWorker(QThread):
     """Hilo individual de descarga para un trabajo en la cola."""
@@ -271,6 +280,10 @@ class QueueWorker(QThread):
                 job.progress = 100.0
                 if d.get("filename"):
                     job.final_filepath = d.get("filename")
+                    # Nombre DERIVADO (stream sin fusionar, o un fragmento ya cortado):
+                    # se registra igual porque de él cuelga el nombre base del que se
+                    # barren los hermanos al arrastrar (ver output_artifacts).
+                    job.add_output_files([d.get("filename")])
                 self.job_progress_changed.emit(job.job_id, 100.0, "", "Procesando final...")
             elif d.get("status") == "fragment_progress":
                 idx = d.get("fragment_index")
@@ -308,6 +321,7 @@ class QueueWorker(QThread):
                     job.status = JobStatus.COMPLETED
                     job.progress = 100.0
                     job.final_filepath = thumb_path
+                    job.add_output_files([thumb_path])
                     self.job_status_changed.emit(job.job_id, JobStatus.COMPLETED)
                     return
             
@@ -384,6 +398,7 @@ class QueueWorker(QThread):
                 predicted_path = os.path.join(output_path_final, f"{title}{predicted_ext}")
                 if os.path.exists(predicted_path):
                     job.final_filepath = predicted_path
+                    job.add_output_files([predicted_path])
 
             if should_download_thumb_file:
                 try:
@@ -391,8 +406,10 @@ class QueueWorker(QThread):
                     title = config_to_use.get("title") or job.title or "download"
                     data_source = job.video_data if job.video_data else job.analysis_data
                     if data_source:
-                        self._download_best_thumb(data_source, output_dir, title,
-                                                  force_png=True, media_path=job.final_filepath)
+                        thumb_path = self._download_best_thumb(data_source, output_dir, title,
+                                                               force_png=True, media_path=job.final_filepath)
+                        if thumb_path:
+                            job.add_output_files([thumb_path], is_stem_source=False)
                 except Exception as e:
                     logger.warning(f"QueueWorker: Falló la descarga de miniatura: {e}")
                     
@@ -524,6 +541,7 @@ class QueueWorker(QThread):
                 elif d.get("status") == "finished":
                     if d.get("filename"):
                         child_final_path[0] = d.get("filename")
+                        job.add_output_files([d.get("filename")])
                     total_percent = item_pos / total * 100.0
                     job.progress = total_percent
                     self.job_progress_changed.emit(job.job_id, total_percent, f"[{item_pos}/{total}] Procesando", "")
@@ -537,15 +555,26 @@ class QueueWorker(QThread):
             if success:
                 completed_count += 1
 
+                # El hook de yt-dlp reporta el ÚLTIMO stream descargado
+                # ('001 - Título.f395.mp4'), que ffmpeg borra al fusionar: comprobar
+                # os.path.exists() sobre esa ruta daba False y la recodificación de CADA
+                # ítem de la playlist se saltaba en silencio (reproducido con una
+                # playlist de dos ítems en 360p: ni un solo archivo recodificado, sin un
+                # solo error en el log). Se resuelve al archivo real igual que en el
+                # resto de la app.
+                child_media_path = find_actual_downloaded_file(child_final_path[0])
+                if child_media_path:
+                    job.add_output_files([child_media_path])
+
                 # Recodificación post-descarga: config única para toda la playlist (ver
                 # advanced_process_view.py - los jobs PLAYLIST no tienen request_data por
                 # ítem). Corre síncrona e inline, en el mismo hilo que el resto del loop
                 # (no se encola un job RECODE aparte) - mismo criterio que ya usaba
                 # DowP-Lite para no competir por el cupo de "1 recode simultáneo" de la
                 # cola ni complicar el borrado del original con una espera async.
-                if job.config.get("recode_enabled") and child_final_path[0] and os.path.exists(child_final_path[0]):
+                if job.config.get("recode_enabled") and child_media_path:
                     self._recode_downloaded_file(
-                        job, child_final_path[0],
+                        job, child_media_path,
                         preset_name=job.config.get("recode_preset_name"),
                         keep_original=job.config.get("recode_keep_original", True),
                         duration_sec=entry.get("duration") or 0.0,
@@ -555,8 +584,10 @@ class QueueWorker(QThread):
 
                 if should_download_thumb_file:
                     try:
-                        self._download_best_thumb(entry, playlist_output, f"{prefix}{item_title}",
-                                                  force_png=True, media_path=child_final_path[0])
+                        thumb_path = self._download_best_thumb(entry, playlist_output, f"{prefix}{item_title}",
+                                                               force_png=True, media_path=child_media_path)
+                        if thumb_path:
+                            job.add_output_files([thumb_path], is_stem_source=False)
                     except Exception as e:
                         logger.warning(f"QueueWorker: Falló miniatura de playlist {item_title}: {e}")
             elif message == "SKIPPED_CONFLICT":
@@ -665,6 +696,7 @@ class QueueWorker(QThread):
                 rollback_backup(backup_path)  # éxito + mantener: restaura el original junto al recodificado
             else:
                 commit_backup(backup_path)  # éxito + no mantener: confirma (borra) el original
+            job.add_output_files([out_file], is_stem_source=False)
             logger.info(f"QueueWorker: [Playlist] Recodificado: {out_file}")
         else:
             rollback_backup(backup_path)  # fallo o cancelación: SIEMPRE se restaura, sin importar keep_original
@@ -931,6 +963,7 @@ class QueueWorker(QThread):
             job.status = JobStatus.COMPLETED
             job.progress = 100.0
             job.final_filepath = output_file
+            job.add_output_files([output_file], is_stem_source=False)
             self.job_progress_changed.emit(job.job_id, 100.0, "Completado", "")
             self.job_status_changed.emit(job.job_id, JobStatus.COMPLETED)
             logger.info(f"QueueWorker: [RECODE] Recodificación finalizada exitosamente: {output_file}")

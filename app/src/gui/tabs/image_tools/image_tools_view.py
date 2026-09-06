@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QSize, QEvent, QUrl, QStandardPaths, QThread, Signal, QTimer
 from PySide6.QtGui import QDesktopServices, QPixmap
 
+from core.logger.logger_manager import logger
 from core.setup.ghostscript_setup import check_ghostscript, download_ghostscript
 from core.utils.config_manager import get_config, save_config
 from gui.styles import (
@@ -1538,3 +1539,21 @@ class ImageToolsTab(QWidget):
                 btn.reposition()
         if hasattr(self, "layers_floating_panel") and self.layers_floating_panel.isVisible():
             self.layers_floating_panel.clamp_to_host()
+
+    def receive_media_from_editor(self, items: list) -> int:
+        """Agrega imagenes enviadas desde el editor con "Enviar a DowP". Aqui no hay
+        recorte que aplicar (ver receive_media_from_editor en Herramientas Multimedia),
+        asi que se deduplican como cualquier archivo agregado a mano."""
+        paths = []
+        for item in items or []:
+            path = item.get("path")
+            if not path or not os.path.exists(path):
+                logger.warning(f"ImageToolsTab: El editor mando un archivo que no existe: {path}")
+                continue
+            paths.append(path)
+        if not paths:
+            return 0
+        before = len(self.image_queue.get_all_filepaths()) if hasattr(self.image_queue, "get_all_filepaths") else 0
+        self.image_queue.add_files(paths)
+        after = len(self.image_queue.get_all_filepaths()) if hasattr(self.image_queue, "get_all_filepaths") else before + len(paths)
+        return max(0, after - before)

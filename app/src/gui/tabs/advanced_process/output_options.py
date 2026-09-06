@@ -22,7 +22,9 @@ from PySide6.QtGui import QDesktopServices, QIcon
 from PySide6.QtCore import Qt, QUrl, QSize, QPropertyAnimation, QParallelAnimationGroup, QEasingCurve
 from gui.widgets.animated_button import AnimatedButton
 from gui.widgets.combo_box import AutoPopupComboBox
-from gui.styles import apply_folder_browse_button_style, apply_folder_open_button_style
+from gui.styles import apply_folder_browse_button_style, apply_folder_open_button_style, apply_cut_button_style
+from gui.widgets.native_file_drag import DraggableFilesButton
+from PySide6.QtCore import Signal
 
 
 _SPINBOX_SYMBOLS = getattr(QAbstractSpinBox, "ButtonSymbols", QAbstractSpinBox)
@@ -36,6 +38,10 @@ PLUS_MINUS_BUTTONS = getattr(
 class OutputOptionsWidget(QFrame):
     TOOL_BUTTON_SIZE = 32
     PANEL_HEIGHT = 210
+
+    # Clic simple sobre el botón de arrastre (ver btn_drag_output): abre el explorador
+    # con los archivos producidos seleccionados. El arrastre en sí no pasa por aquí.
+    output_drag_clicked = Signal()
 
     def __init__(self):
         super().__init__()
@@ -109,6 +115,20 @@ class OutputOptionsWidget(QFrame):
         self.btn_select_output_path.clicked.connect(self.select_output_path)
         self.btn_open_output_path.clicked.connect(self.open_output_path)
 
+        # --- ARRASTRE DEL RESULTADO (solo Proceso Avanzado en modo SOLO) ---
+        # En modo LOTES cada tarjeta de la cola se arrastra sola (ver queue_panel.py) y
+        # en Modo Rápido lo hace cada fila, pero en SOLO no hay ninguna lista: sin este
+        # botón no habría de dónde agarrar el resultado. Mismo gesto que el botón de
+        # corte físico del diálogo de subclips: se puede clicar y se puede arrastrar.
+        # Oculto por defecto; lo muestra advanced_process_view.py::_on_solo_toggled.
+        self.btn_drag_output = DraggableFilesButton(files_provider=None)
+        self.btn_drag_output.setFixedSize(self.TOOL_BUTTON_SIZE, self.TOOL_BUTTON_SIZE)
+        self.btn_drag_output.setEnabled(False)
+        self.btn_drag_output.hide()
+        self.btn_drag_output.clicked.connect(self.output_drag_clicked.emit)
+        self._refresh_output_drag_style()
+        controls_layout.addWidget(self.btn_drag_output)
+
         controls_layout.addWidget(self.output_path_input, 1) # Stretch 1
         controls_layout.addWidget(self.btn_select_output_path)
         controls_layout.addWidget(self.btn_open_output_path)
@@ -157,6 +177,31 @@ class OutputOptionsWidget(QFrame):
         self.progress_bar.setTextVisible(True)
 
         layout.addWidget(self.progress_bar)
+
+    def _refresh_output_drag_style(self):
+        """Verde cuando hay algo que arrastrar, gris cuando no -- mismos tres estados
+        que el resto de botones de acción de la app (ver styles.apply_cut_button_style)."""
+        enabled = self.btn_drag_output.isEnabled()
+        apply_cut_button_style(
+            self.btn_drag_output, "saved" if enabled else "normal",
+            icon_size=18, shape="square", icon_name="drag_pan.svg"
+        )
+        self.btn_drag_output.setToolTip(
+            self.tr("Arrastra para llevarte todos los archivos de esta descarga a otra "
+                    "aplicación (clic: abrirlos en el explorador)")
+            if enabled else
+            self.tr("Aquí podrás arrastrar el resultado cuando la descarga termine")
+        )
+
+    def set_output_drag_visible(self, visible: bool):
+        self.btn_drag_output.setVisible(bool(visible))
+
+    def set_output_drag_files_provider(self, provider):
+        self.btn_drag_output.set_files_provider(provider)
+
+    def set_output_drag_enabled(self, enabled: bool):
+        self.btn_drag_output.setEnabled(bool(enabled))
+        self._refresh_output_drag_style()
 
     def set_download_state(self, state, text=None):
         state_names = {

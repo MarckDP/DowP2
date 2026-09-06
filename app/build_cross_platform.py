@@ -10,6 +10,7 @@ Uso:
 import os
 import sys
 import platform
+import subprocess
 
 import PyInstaller.__main__
 
@@ -70,6 +71,94 @@ def stamp_importer_version(version):
         with open(path, "w", encoding="utf-8", newline="\n") as f:
             f.write(content)
     print(f"DowP Importer estampado a v{version}")
+
+
+def prune_bundle(dist_root):
+    """Quita del bundle YA CONSTRUIDO los __pycache__ que arrastra --add-data.
+
+    El --add-data de src/ copia la carpeta entera, y con ella 182 archivos .pyc que no
+    sirven de nada: el bytecode que la app ejecuta de verdad es el del PYZ embebido en
+    el ejecutable, no estos. Son 4,2 MB de peso muerto.
+
+    Ademas ensucian el updater: cada .pyc cambia cuando cambia su .py, asi que el
+    manifiesto de actualizacion se llenaria de archivos que nadie usa.
+
+    Actua sobre dist/, NO sobre el arbol de fuentes: borrar los __pycache__ del repo
+    solo obligaria a Python a regenerarlos en el siguiente arranque, y ademas seria un
+    efecto secundario desagradable de un script de build.
+    """
+    import shutil
+
+    borrados, liberado = 0, 0
+    for dirpath, dirnames, _files in os.walk(dist_root):
+        if "__pycache__" not in dirnames:
+            continue
+        objetivo = os.path.join(dirpath, "__pycache__")
+        for r, _d, fs in os.walk(objetivo):
+            for f in fs:
+                try:
+                    liberado += os.path.getsize(os.path.join(r, f))
+                except OSError:
+                    pass
+        shutil.rmtree(objetivo, ignore_errors=True)
+        dirnames.remove("__pycache__")
+        borrados += 1
+
+    if borrados:
+        print(f"Limpieza del bundle: {borrados} carpetas __pycache__ eliminadas "
+              f"({liberado / 1048576:.1f} MB)")
+
+
+def adhoc_sign_macos_bundle(bundle_path):
+    """Firma ad-hoc del .app recien construido.
+
+    NO ES OPCIONAL EN macOS. En Apple Silicon, un binario sin ninguna firma no arranca:
+    no es un aviso de Gatekeeper que el usuario pueda saltarse con clic derecho > Abrir,
+    es el cargador del sistema rechazandolo. Sin este paso, el .app que sale de aqui no
+    abre en ningun Mac moderno.
+
+    La firma ad-hoc (-s -) es gratis: no necesita certificado, ni cuenta de Apple, ni
+    notarizacion, y codesign viene de fabrica en macOS. No quita el aviso de Gatekeeper
+    -- el usuario seguira teniendo que hacer clic derecho > Abrir la primera vez -- pero
+    hace que el binario sea ejecutable.
+
+    IMPORTANTE para el updater: cualquier cosa que modifique archivos DENTRO del bundle
+    rompe esta firma y devuelve la app al estado de "no arranca en arm64". El helper de
+    actualizacion tendra que volver a ejecutar exactamente esto como ultimo paso, despues
+    de aplicar los cambios y antes de relanzar.
+
+    Se usa --deep porque un bundle de PyInstaller trae decenas de dylibs anidadas. Apple
+    lo tiene desaconsejado para firmas de distribucion (ahi hay que firmar de dentro
+    hacia fuera), pero para ad-hoc sigue siendo el camino practico. Si algun dia deja de
+    funcionar, la alternativa es recorrer los Mach-O y firmarlos de abajo arriba antes
+    del bundle.
+    """
+    print(f"Firmando ad-hoc {bundle_path} ...")
+    try:
+        subprocess.run(
+            ["codesign", "--force", "--deep", "--sign", "-", "--timestamp=none", bundle_path],
+            check=True, capture_output=True, text=True,
+        )
+    except FileNotFoundError:
+        print("ERROR: no se encontro 'codesign'. Viene de serie en macOS; si falta, "
+              "instala las Command Line Tools de Xcode.")
+        sys.exit(1)
+    except subprocess.CalledProcessError as e:
+        print(f"ERROR: codesign fallo:\n{e.stderr}")
+        sys.exit(1)
+
+    # Verificar de verdad en vez de dar por hecho que salio bien: una firma rota se
+    # manifiesta como "la app no abre" en la maquina del usuario, sin ningun mensaje util.
+    try:
+        subprocess.run(
+            ["codesign", "--verify", "--deep", "--strict", "--verbose=2", bundle_path],
+            check=True, capture_output=True, text=True,
+        )
+    except subprocess.CalledProcessError as e:
+        print(f"ERROR: la firma no verifica:\n{e.stderr}")
+        sys.exit(1)
+
+    print("Firma ad-hoc aplicada y verificada.")
 
 
 APP_VERSION = read_app_version()
@@ -245,6 +334,12 @@ else:
     final_target = os.path.join(DIST_DIR, APP_NAME, exe_name)
 
 if os.path.exists(final_target):
+    # Limpiar ANTES de firmar: en macOS la firma cubre el contenido del bundle, asi que
+    # tocar archivos despues de firmarla la invalidaria.
+    prune_bundle(os.path.join(DIST_DIR, f"{APP_NAME}.app") if IS_MACOS
+                 else os.path.join(DIST_DIR, APP_NAME))
+    if IS_MACOS:
+        adhoc_sign_macos_bundle(final_target)
     print(f"\nBuild lista en: {final_target}")
 else:
     print(f"\nADVERTENCIA: no se encontro el resultado esperado en {final_target}")

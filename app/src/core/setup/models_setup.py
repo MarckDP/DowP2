@@ -54,6 +54,31 @@ def get_rembg_model_size_bytes(model_info: dict) -> int:
     return int(model_info.get("size_bytes") or 0)
 
 
+def is_rembg_model_custom(model_info: dict) -> bool:
+    """True para los .onnx que el usuario importó a mano.
+
+    El discriminante es no tener URL: un modelo del catálogo (REMBG_MODEL_FAMILIES)
+    siempre trae de dónde bajarse, y uno importado nunca —import_custom_rembg_model()
+    lo guarda con url="" precisamente para marcarlo.
+
+    Distinguirlos importa porque el resto de la interfaz da por hecho que "no está en
+    disco" equivale a "se puede descargar", y para un importado eso es falso: no hay
+    nada de donde bajarlo.
+    """
+    return not (model_info or {}).get("url")
+
+
+def is_rembg_model_orphaned(model_info: dict) -> bool:
+    """Modelo importado cuyo .onnx ya no está en disco porque el usuario lo borró por fuera.
+
+    Su entrada sigue en config.json y hay que poder quitarla. Antes este caso se mostraba
+    como "No descargado" con el botón de eliminar apagado, así que la entrada huérfana
+    era imposible de eliminar desde la interfaz y el modelo se quedaba en la lista para
+    siempre.
+    """
+    return is_rembg_model_custom(model_info) and not is_rembg_model_installed(model_info)
+
+
 def is_rembg_model_gated(model_info: dict) -> bool:
     """True si la URL apunta a una página de HuggingFace (no a un archivo directo) --
     esos modelos necesitan descarga manual con cuenta, no se pueden bajar solos."""

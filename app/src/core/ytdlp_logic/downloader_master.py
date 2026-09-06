@@ -1236,55 +1236,11 @@ class DownloaderMaster:
 
     @staticmethod
     def _sanitize_filename(filename):
-        """
-        Sanitización completa de nombres de archivo.
-        Replica de sanitize_filename del DowP 1.0:
-        - NFC normalize
-        - Eliminar caracteres de control
-        - Eliminar caracteres prohibidos por filesystems
-        - Normalizar espacios
-        - Limitar a 150 chars / 220 bytes UTF-8
-        """
-        import unicodedata
-        import re
+        """Delega en la única fuente de verdad (ver output_artifacts.sanitize_filename).
 
-        original = filename
+        La lógica vivía aquí, pero queue_manager tenía su propia copia divergente para
+        predecir la ruta del archivo, y las dos tenían que dar exactamente el mismo
+        nombre o la predicción apuntaba a algo inexistente. Ahora hay una sola."""
+        from core.utils.output_artifacts import sanitize_filename
+        return sanitize_filename(filename)
 
-        # 1. Normalizar Unicode (NFC)
-        filename = unicodedata.normalize('NFC', filename)
-
-        # 2. Eliminar caracteres de control
-        filename = ''.join(
-            char for char in filename
-            if unicodedata.category(char)[0] != 'C'
-        )
-
-        # 3. Eliminar caracteres prohibidos por filesystems
-        filename = re.sub(r'[\\/:\*\?"<>|]', '', filename)
-
-        # 4. Normalizar espacios múltiples
-        filename = re.sub(r'\s+', ' ', filename).strip()
-
-        # 5. Eliminar puntos y espacios al final (Windows)
-        filename = filename.rstrip('. ')
-
-        # 6. Límite visual: 150 caracteres
-        max_chars = 150
-        if len(filename) > max_chars:
-            filename = filename[:max_chars].rstrip('. ')
-            logger.debug(f"Título truncado de {len(original)} a {max_chars} caracteres")
-
-        # 7. Límite técnico: 220 bytes UTF-8
-        max_bytes = 220
-        if len(filename.encode('utf-8')) > max_bytes:
-            filename_bytes = filename.encode('utf-8')[:max_bytes]
-            filename = filename_bytes.decode('utf-8', errors='ignore').rstrip('. ')
-
-        # 8. Fallback de seguridad
-        if not filename or filename.strip() == '':
-            filename = "video_descargado"
-
-        if filename != original:
-            logger.debug(f"Nombre sanitizado: '{original[:80]}' -> '{filename}'")
-
-        return filename

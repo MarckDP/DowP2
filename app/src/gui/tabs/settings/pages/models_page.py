@@ -227,15 +227,32 @@ class ModelRow(QFrame):
         if self.gated:
             return
         dis_color = get_theme_token("texto_deshabilitado", "#777777")
+
         if self.is_installed():
             size = get_folder_size(self.path_for_size)
             self.lbl_status.setText(f"{self.tr('Instalado')} ({format_bytes(size)})")
             self.lbl_status.setStyleSheet("color: #4CAF50; font-size: 11px; font-weight: bold;")
-            self.btn_download.setIcon(get_colored_svg_icon("check_circle.svg", "#000000", size=18, disabled_color_hex=dis_color))
-            self.btn_download.setIconSize(QSize(18, 18))
-            self.btn_download.setToolTip(self.tr("Instalado (clic para reinstalar)"))
+            if not self.no_download:
+                self.btn_download.setIcon(get_colored_svg_icon("check_circle.svg", "#000000", size=18, disabled_color_hex=dis_color))
+                self.btn_download.setIconSize(QSize(18, 18))
+                self.btn_download.setToolTip(self.tr("Instalado (clic para reinstalar)"))
             self.btn_folder.setDisabled(False)
             self.btn_delete.setDisabled(False)
+
+        elif self.no_download:
+            # Modelo importado a mano cuyo archivo ya no está en disco (el usuario lo
+            # borró por fuera). No se puede "descargar" porque nunca vino de una URL,
+            # así que lo único útil es poder quitarlo de la lista.
+            #
+            # El botón de eliminar TIENE que quedar activo. Apagarlo, como se hacía
+            # antes al compartir esta rama con los modelos del catálogo, dejaba la
+            # entrada huérfana de config.json imposible de borrar desde la interfaz:
+            # el modelo seguía apareciendo en la lista para siempre.
+            self.lbl_status.setText(self.tr("Archivo no encontrado — elimínalo de la lista"))
+            self.lbl_status.setStyleSheet("color: #FFC107; font-size: 11px; font-weight: bold;")
+            self.btn_folder.setDisabled(False)
+            self.btn_delete.setDisabled(False)
+
         else:
             self.lbl_status.setText(self.tr("No descargado"))
             self.lbl_status.setStyleSheet("color: #888888; font-size: 11px;")

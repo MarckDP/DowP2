@@ -64,6 +64,7 @@ from gui.tabs.editing_media.editing_media_icons import get_colored_svg_icon
 from core.constants import AI_ENGINE_HOLDER, AI_MODEL_HOLDER
 from core.setup.models_setup import (
     get_all_rembg_families, is_rembg_model_installed, is_rembg_model_gated,
+    is_rembg_model_custom, is_rembg_model_orphaned,
     get_rembg_model_size_bytes, download_rembg_model, delete_rembg_model,
     delete_custom_rembg_model, CUSTOM_REMBG_FAMILY,
 )
@@ -288,6 +289,13 @@ class RembgPopoverContent(QFrame):
                 icon = get_colored_svg_icon(
                     "check_circle.svg", get_theme_token('estado_exito', '#40d66b'), size=14)
                 tooltip = self.tr("Instalado")
+            elif is_rembg_model_orphaned(model_info):
+                # Importado a mano y con el archivo ya borrado del disco. No lleva
+                # icono de descarga: no hay nada de donde bajarlo, y ofrecerlo mandaba
+                # al usuario a una descarga contra una URL vacía.
+                icon = get_colored_svg_icon(
+                    "warning.svg", get_theme_token('estado_aviso', '#d8c94a'), size=14)
+                tooltip = self.tr("Archivo no encontrado — elimínalo de la lista")
             elif is_rembg_model_gated(model_info):
                 icon = get_colored_svg_icon(
                     "login.svg", get_theme_token('estado_aviso', '#d8c94a'), size=14)
@@ -330,13 +338,25 @@ class RembgPopoverContent(QFrame):
         downloading = self._model_id(model_info) in self._downloads
         # Borrar a media descarga dejaría el .part huérfano y el worker escribiendo
         # sobre un archivo recién borrado.
+        #
+        # Un importado sin archivo (huérfano) TAMBIÉN se puede borrar, aunque no esté
+        # instalado: lo que se elimina entonces es su entrada en config.json, que es
+        # justo lo que hay que poder quitar. Con la condición anterior —solo
+        # is_rembg_model_installed()— el botón quedaba apagado y no había forma de
+        # sacarlo de la lista.
         self.actions_row.set_delete_enabled(
-            is_rembg_model_installed(model_info) and not downloading)
+            (is_rembg_model_installed(model_info) or is_rembg_model_orphaned(model_info))
+            and not downloading)
         if downloading:
             # Descarga en curso: manda el porcentaje, no el estado en disco.
             return
         if is_rembg_model_installed(model_info):
             self.status_row.show_ready(self.tr("Modelo listo para usar."))
+        elif is_rembg_model_orphaned(model_info):
+            self.status_row.show_error(self.tr(
+                "El archivo de este modelo importado ya no está en el disco. "
+                "Elimínalo de la lista o vuelve a importarlo."
+            ))
         elif is_rembg_model_gated(model_info):
             self.status_row.show_locked(self.tr(
                 "Requiere descarga manual con cuenta — ve a Ajustes > Modelos."
@@ -358,13 +378,21 @@ class RembgPopoverContent(QFrame):
     def _on_delete_clicked(self):
         model_name = self.combo_model.currentData()
         model_info = self._current_model_info()
-        if not model_info or not is_rembg_model_installed(model_info):
+        # Un importado huérfano no está "instalado" y aun así debe poder eliminarse:
+        # lo que se quita es su entrada en config.json.
+        orphaned = model_info and is_rembg_model_orphaned(model_info)
+        if not model_info or not (is_rembg_model_installed(model_info) or orphaned):
             return
-        if QMessageBox.question(
-            self, self.tr("Eliminar modelo"),
-            self.tr("¿Eliminar '{0}' del disco?\n\nPuedes volver a descargarlo cuando quieras.")
-                .format(model_name)
-        ) != QMessageBox.Yes:
+
+        if orphaned:
+            pregunta = self.tr(
+                "El archivo de '{0}' ya no está en el disco.\n\n"
+                "¿Quitarlo de la lista de modelos?").format(model_name)
+        else:
+            pregunta = self.tr(
+                "¿Eliminar '{0}' del disco?\n\nPuedes volver a descargarlo cuando quieras."
+            ).format(model_name)
+        if QMessageBox.question(self, self.tr("Eliminar modelo"), pregunta) != QMessageBox.Yes:
             return
 
         # Los importados a mano no son solo un archivo: también tienen su entrada en
@@ -389,6 +417,11 @@ class RembgPopoverContent(QFrame):
         todavía cerrándose -- abrir un modal justo ahí deja el popup a medio cerrar
         por encima del diálogo."""
         if not model_info or is_rembg_model_installed(model_info) or is_rembg_model_gated(model_info):
+            return
+        # Un importado a mano no tiene URL: ofrecer descargarlo abría un diálogo que
+        # solo podía acabar en error. Si falta su archivo, la salida es eliminarlo o
+        # volver a importarlo, y eso ya lo dice _update_status().
+        if is_rembg_model_custom(model_info):
             return
         if self._model_id(model_info) in self._downloads:
             return

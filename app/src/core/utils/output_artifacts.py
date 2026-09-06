@@ -22,8 +22,58 @@ se escriben junto al medio sin pasar por ningún callback, igual que los subtít
 recortados que genera _handle_subtitle_cuts_local.
 """
 import os
+import re
+import unicodedata
 
 from core.utils.file_conflict_manager import BACKUP_SUFFIX
+
+# Caracteres que ningún sistema de archivos admite en un nombre. La almohadilla NO
+# está: '#' es perfectamente legal en Windows, macOS y Linux, y quitarla solo servía
+# para que el nombre predicho dejara de coincidir con el que escribe yt-dlp.
+_FORBIDDEN_FILENAME_CHARS = re.compile(r'[\\/:\*\?"<>|]')
+
+# Límites de nombre: 150 caracteres para que siga siendo legible, y 220 bytes UTF-8
+# porque el límite real de la mayoría de sistemas de archivos se cuenta en bytes, no
+# en caracteres (un título en japonés gasta 3 bytes por carácter).
+_MAX_FILENAME_CHARS = 150
+_MAX_FILENAME_BYTES = 220
+
+
+def sanitize_filename(filename, fallback="video_descargado"):
+    """Convierte un título en un nombre de archivo. ÚNICA fuente de verdad.
+
+    Tiene que ser una sola función porque el nombre se calcula DOS veces por descarga,
+    en dos sitios distintos, y ambos resultados deben ser idénticos:
+
+      1. downloader_master lo mete en la plantilla -o de yt-dlp -> nombre REAL en disco.
+      2. queue_manager lo usa para predecir job.final_filepath -> con lo que después se
+         envía al editor y se abre la carpeta contenedora.
+
+    Cuando divergían, el archivo se descargaba bien pero la ruta predicha apuntaba a
+    algo que no existía: no se enviaba nada al editor y el botón de abrir la carpeta no
+    hacía nada. Las dos versiones anteriores discrepaban en seis cosas —la almohadilla,
+    la normalización NFC, los caracteres de control, los espacios múltiples, el punto
+    final y los límites de longitud—, así que fallaban muchos más títulos que los que
+    llevan '#'.
+    """
+    original = str(filename or "")
+
+    # NFC: 'é' puede venir como un carácter o como 'e' + acento combinante. Sin
+    # normalizar, dos títulos que se ven iguales producen nombres distintos.
+    name = unicodedata.normalize('NFC', original)
+    # Categoría 'C' = caracteres de control y de formato.
+    name = ''.join(ch for ch in name if unicodedata.category(ch)[0] != 'C')
+    name = _FORBIDDEN_FILENAME_CHARS.sub('', name)
+    name = re.sub(r'\s+', ' ', name).strip()
+    # Windows no admite nombres terminados en punto o espacio.
+    name = name.rstrip('. ')
+
+    if len(name) > _MAX_FILENAME_CHARS:
+        name = name[:_MAX_FILENAME_CHARS].rstrip('. ')
+    if len(name.encode('utf-8')) > _MAX_FILENAME_BYTES:
+        name = name.encode('utf-8')[:_MAX_FILENAME_BYTES].decode('utf-8', errors='ignore').rstrip('. ')
+
+    return name or fallback
 
 # Acompañantes de un medio: nunca son "el archivo descargado" salvo que no haya otro
 # (modo "solo miniatura"). Ver QuickDownloadController._find_actual_downloaded_file.

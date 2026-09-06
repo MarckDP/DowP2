@@ -6,7 +6,7 @@ import time
 from uuid import uuid4
 from PySide6.QtCore import QObject, Signal, QThread, QMutex, QRecursiveMutex, QMutexLocker
 from core.logger.logger_manager import logger
-from core.utils.output_artifacts import OutputArtifactTracker, find_actual_downloaded_file
+from core.utils.output_artifacts import OutputArtifactTracker, find_actual_downloaded_file, sanitize_filename
 
 
 def _extract_vf_value(args: list) -> tuple:
@@ -628,8 +628,16 @@ class QueueWorker(QThread):
 
     @staticmethod
     def _sanitize_filename(filename):
-        cleaned = re.sub(r'[<>:"/\\|?*#]', '', str(filename or "")).strip()
-        return cleaned or "Playlist"
+        """Delega en la única fuente de verdad (ver output_artifacts.sanitize_filename).
+
+        Antes tenía su propia versión, y discrepaba con la de downloader_master —la que
+        acaba escribiendo yt-dlp— en seis cosas, empezando por eliminar la almohadilla.
+        Resultado: la ruta que se predecía aquí no era la del archivo real, así que el
+        medio no llegaba al editor y el botón de abrir su carpeta no hacía nada.
+
+        El fallback sigue siendo "Playlist" porque este sanitizador también nombra
+        carpetas de listas de reproducción (ver _execute_playlist)."""
+        return sanitize_filename(filename, fallback="Playlist")
 
     @staticmethod
     def _entry_url(entry):

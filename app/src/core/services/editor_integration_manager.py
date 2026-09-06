@@ -254,14 +254,29 @@ class EditorIntegrationManager(QObject):
         if status == "COMPLETED" and self.active_editor:
             job = self._queue_mgr.get_job(job_id)
             if job and job.final_filepath:
-                # Ignorar recodificaciones (generan temporales que se envían desde cada pestaña tras limpiar)
+                # ── Quién envía cada tipo de trabajo ──────────────────────────────
+                # La pestaña que CREA el trabajo es la que lo envía al editor, nunca
+                # este gestor. La pestaña sabe cosas que aquí no se saben: cuál es el
+                # archivo realmente escrito en disco (_find_actual_downloaded_file
+                # resuelve la extensión y los sufijos que pone yt-dlp), si la descarga
+                # se partió en fragmentos, y cuándo terminó el grupo entero.
+                #
+                # RECODE: lo envía la pestaña después de limpiar sus temporales.
                 if job.job_type == "RECODE":
                     return
-                # Ignorar descargas si van a recodificarse justo después (la pestaña enviará el recodificado)
+                # DOWNLOAD y PLAYLIST: los envía siempre la pestaña, se recodifiquen
+                # después o no.
+                #
+                # Antes aquí solo se descartaban los que tenían recode_enabled, así que
+                # una descarga normal del Proceso Avanzado se enviaba DOS VECES: una
+                # desde aquí y otra desde download_controller._on_job_status_changed.
+                # En el proyecto de Premiere aparecían dos copias de cada medio y de
+                # cada miniatura. El Modo Rápido no lo sufría porque solo mete trabajos
+                # RECODE en la cola, y esos ya estaban descartados arriba.
                 if job.job_type in ("DOWNLOAD", "PLAYLIST"):
-                    if job.request_data and job.request_data.get("recode_enabled"):
-                        return
-                        
+                    return
+
+                # Tipos de trabajo futuros que ninguna pestaña reclame acaban aquí.
                 self.process_completed_job(job)
 
     def process_completed_job(self, job):

@@ -287,6 +287,16 @@ class QuickModeTab(QWidget):
                 logger.error(f"QuickModeTab: No se pudo inicializar TaskbarProgressManager: {e}")
         self._reposition_recode_popover()
 
+        # Iniciar tutorial si no se ha visto
+        from core.utils.config_manager import get_config, save_config
+        config = get_config()
+        if not config.get("tutorial_quick_mode_seen", False):
+            config["tutorial_quick_mode_seen"] = True
+            save_config(config)
+            # Retrasar un poco para asegurar que la UI está lista y renderizada
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(300, self.start_tutorial)
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._reposition_recode_popover()
@@ -562,3 +572,141 @@ class QuickModeTab(QWidget):
                 self.output_options.output_path_input.setText(path)
             self.output_options.output_path_input.setEnabled(False)
             self.output_options.btn_select_output_path.setEnabled(False)
+
+
+    def start_tutorial(self):
+        from gui.widgets.tutorial_overlay import TutorialOverlay
+        from PySide6.QtWidgets import QApplication, QPushButton
+
+        # Ventanas simuladas
+        self._dummy_frag_dialog = None
+        self._dummy_playlist_dialog = None
+
+        def run_frag_tutorial():
+            if self.tutorial_overlay.is_skipping: return
+            from gui.dialogs.fragment_dialog import FragmentDialog
+            self._dummy_frag_dialog = FragmentDialog(self, duration=300, fps=30)
+            
+            frag_steps = [
+                {
+                    "widgets": [self._dummy_frag_dialog.range_slider],
+                    "title": self.tr("Selector de Corte"),
+                    "desc": self.tr("Aquí puedes elegir el inicio y fin exacto del fragmento que deseas descargar.")
+                },
+                {
+                    "widgets": [self._dummy_frag_dialog.btn_add_ctrl],
+                    "title": self.tr("Añadir Fragmento"),
+                    "desc": self.tr("Usa el botón '+' para guardar el corte en la lista de la derecha.")
+                },
+                {
+                    "widgets": [self._dummy_frag_dialog.rb_precise, self._dummy_frag_dialog.rb_download, self._dummy_frag_dialog.rb_keep],
+                    "title": self.tr("Opciones de Corte"),
+                    "desc": self.tr("Elige la modalidad: Corte preciso, Descargar para cortar, o Conservar el original completo.")
+                },
+                {
+                    "widgets": [self._dummy_frag_dialog.btn_save],
+                    "title": self.tr("Guardar y Descargar"),
+                    "desc": self.tr("Al guardar, empezará inmediatamente la descarga de esos fragmentos.")
+                }
+            ]
+            
+            sub_tut = TutorialOverlay(self._dummy_frag_dialog, frag_steps)
+            sub_tut.finished.connect(self._dummy_frag_dialog.accept)
+            self._dummy_frag_dialog.exec()
+            self._dummy_frag_dialog.deleteLater()
+            self._dummy_frag_dialog = None
+
+        def run_playlist_tutorial():
+            if self.tutorial_overlay.is_skipping: return
+            from gui.dialogs.playlist_selection_dialog import PlaylistSelectionDialog
+            dummy_info = {
+                "title": "Tutorial Playlist",
+                "entries": [{"title": "Video 1"}, {"title": "Video 2"}]
+            }
+            self._dummy_playlist_dialog = PlaylistSelectionDialog(dummy_info, self)
+            
+            btn_accept = self._dummy_playlist_dialog.findChild(QPushButton, "analyzeButton")
+            
+            play_steps = [
+                {
+                    "widgets": [self._dummy_playlist_dialog.scroll],
+                    "title": self.tr("Selección de Medios"),
+                    "desc": self.tr("Aquí puedes marcar o desmarcar qué videos específicos de la playlist quieres descargar.")
+                },
+                {
+                    "widgets": [self._dummy_playlist_dialog.mode_combo, self._dummy_playlist_dialog.quality_combo],
+                    "title": self.tr("Controles Internos"),
+                    "desc": self.tr("Los controles de Modo y Calidad se manejan internamente aquí. Las opciones de afuera no afectarán a la playlist.")
+                },
+                {
+                    "widgets": [btn_accept],
+                    "title": self.tr("Aceptar"),
+                    "desc": self.tr("Al aceptar, se guardará la configuración para esta playlist.")
+                }
+            ]
+            
+            sub_tut = TutorialOverlay(self._dummy_playlist_dialog, play_steps)
+            sub_tut.finished.connect(self._dummy_playlist_dialog.accept)
+            self._dummy_playlist_dialog.exec()
+            self._dummy_playlist_dialog.deleteLater()
+            self._dummy_playlist_dialog = None
+
+        steps = [
+            {
+                "widgets": [self.url_input],
+                "title": self.tr("Pegado de Enlaces"),
+                "desc": self.tr("DowP pega automáticamente toda URL que tengas en tu portapapeles, pero también puedes hacerlo manualmente con CTRL + V o clic derecho y 'pegar'. Si esta opción no te gusta, puedes desactivarla en Ajustes -> General.")
+            },
+            {
+                "widgets": [self.combo_tags],
+                "title": self.tr("Etiquetas de Carpeta"),
+                "desc": self.tr("Las etiquetas se configuran desde 'Ajustes -> Etiquetas' y sirven para preconfigurar distintas rutas a tu gusto para la descarga de medios, para que ya no tengas que estar configurando las rutas en las opciones de salida para cada medio.")
+            },
+            {
+                "widgets": [self.mode_combo, self.quality_combo],
+                "title": self.tr("Modos y Calidades"),
+                "desc": self.tr("Selecciona las opciones rápidas que necesites como Video + Audio, Solo Audio o Solo Video y sus respectivas calidades. Aquí la opción de 'Mejor compatible' siempre buscará la calidad del medio que sea compatible con los programas de Adobe.")
+            },
+            {
+                "widgets": [self.btn_cut],
+                "title": self.tr("Recorte de Fragmentos"),
+                "desc": self.tr("Al seleccionar esta opción puedes escoger fragmentos de un medio. Se abrirá una ventana donde puedes controlar exactamente qué parte del video quieres descargar y sus opciones de corte."),
+                "on_leave": run_frag_tutorial
+            },
+            {
+                "widgets": [self.chk_playlist_selector],
+                "title": self.tr("Descarga de Playlist"),
+                "desc": self.tr("Al habilitar esta opción también se despliega una ventana. En esta ventana de playlist puedes seleccionar qué medios de la lista quieres descargar y cuáles no. Los controles de modo y calidad se manejan internamente en la ventana (aquí no mandan las opciones externas), y TODAS LAS PLAYLIST se descargan en una carpeta con el título de la playlist, el cual en el Modo Rápido no es editable (eso es para el Modo Avanzado)."),
+                "on_leave": run_playlist_tutorial
+            },
+            {
+                "widgets": [self.options_panel],
+                "title": self.tr("Opciones de Descarga"),
+                "desc": self.tr("En esta sección se decide si quieres guardar los medios junto con sus miniaturas/carátulas, o descargar únicamente las miniaturas/carátulas.")
+            },
+            {
+                "widgets": [self.recode_bar],
+                "title": self.tr("Recodificación Post-Descarga"),
+                "desc": self.tr("En esta sección puedes decidir un post-procesado luego de una descarga de forma opcional, para convertirlo a otros formatos o crear proxys para mayor compatibilidad con otros editores.")
+            },
+            {
+                "widgets": [self.activity_panel],
+                "title": self.tr("Lista de Descargas y Tareas"),
+                "desc": self.tr("Aquí aparecerán todas las descargas/procesos que hagas. Cada una cuenta con barra de progreso y son arrastrables una vez terminadas. Funciona como un explorador de archivos: simplemente arrastra tu medio a tu editor o carpeta.")
+            },
+            {
+                "widgets": [self.output_options],
+                "title": self.tr("Opciones de Salida"),
+                "desc": self.tr("Decide a dónde mandar los medios, qué hacer con duplicados, limitar la velocidad de descarga y ver el progreso general. Si seleccionaste una etiqueta previamente, la ruta se bloqueará; selecciona 'Etiqueta' para dejarlo en default y recuperar el control.")
+            },
+            {
+                "widgets": [self.btn_download],
+                "title": self.tr("¡Empezar Descarga!"),
+                "desc": self.tr("UNA VEZ CONFIGURES TODO A TU GUSTO O NECESIDAD, PUEDES PRESIONAR EL BOTÓN DE DESCARGAR PARA EMPEZAR.")
+            }
+        ]
+
+        main_window = self.window()
+        self.tutorial_overlay = TutorialOverlay(main_window, steps)
+        self.tutorial_overlay.resize(main_window.size())
+        self.tutorial_overlay.show()

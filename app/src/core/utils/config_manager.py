@@ -26,8 +26,9 @@ def get_config():
 
     # Rellenar con valores por defecto si no existen
     defaults = {
-        "language": "es", 
-        "theme": "dark", 
+        "language": "es",
+        "theme": "dark",
+        "last_seen_version": "",  # ultima version cuyas novedades ya se mostraron (gui/dialogs/whats_new_dialog.py)
         "auto_analyze": False,
         "use_impersonate": False,
         "adobe_compat_default": True,

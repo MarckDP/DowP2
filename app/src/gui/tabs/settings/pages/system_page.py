@@ -69,6 +69,20 @@ class SystemPage(QWidget):
         self.content_layout.setSpacing(14)
         self.content_layout.setAlignment(Qt.AlignTop)
 
+        # --- SECCIÓN: VERSIÓN Y NOVEDADES ---
+        # Mismo contenido que la ventana de "Novedades" que se muestra una vez
+        # tras actualizar (gui/dialogs/whats_new_dialog.py) -- una sola
+        # implementación, aquí se puede volver a consultar cuando se quiera.
+        from core.version import APP_VERSION
+        from gui.dialogs.whats_new_dialog import build_whats_new_content
+        self.content_layout.addWidget(build_whats_new_content(APP_VERSION, self))
+
+        version_divider = QFrame()
+        version_divider.setObjectName("settingsDivider")
+        version_divider.setFrameShape(QFrame.HLine)
+        version_divider.setFrameShadow(QFrame.Sunken)
+        self.content_layout.addWidget(version_divider)
+
         # --- SECCIÓN: SISTEMA (Texto puro) ---
         self.section_title = QLabel(self.tr("Sistema"))
         self.section_title.setStyleSheet("""

@@ -138,6 +138,15 @@ def main():
         main_window.show()
         splash.cleanup()
         logger.info("Application main window shown")
+
+        # Novedades de la version: se muestran UNA sola vez por version instalada
+        # (no en cada arranque). __version__ es APP_VERSION -- ver core/version.py.
+        if config.get("last_seen_version", "") != __version__:
+            from core.utils.config_manager import save_config
+            from gui.dialogs.whats_new_dialog import WhatsNewDialog
+            WhatsNewDialog(__version__, main_window).exec()
+            config["last_seen_version"] = __version__
+            save_config(config)
     
     def on_splash_failed():
         logger.error("Dependency installation failed. Exiting.")

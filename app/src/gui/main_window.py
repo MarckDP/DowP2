@@ -316,6 +316,20 @@ class EditorStatusCornerWidget(QWidget):
         self.btn_settings.setIcon(QIcon(os.path.join(self.icons_dir, "settings.svg")))
         self.btn_settings.setToolTip("Ajustes")
 
+        # Punto rojo de "hay una actualización" -- hijo del propio botón para no
+        # necesitar reposicionarlo si el layout cambia; oculto hasta que
+        # set_update_badge_visible(True) diga lo contrario (ver
+        # SettingsTab.update_status_changed, conectado desde MainWindow).
+        self.update_badge = QLabel(self.btn_settings)
+        self.update_badge.setFixedSize(10, 10)
+        self.update_badge.setStyleSheet("""
+            background-color: #e74c3c;
+            border-radius: 5px;
+            border: 1.5px solid #1a1a1a;
+        """)
+        self.update_badge.move(26, 0)
+        self.update_badge.hide()
+
         # Íconos LED cacheados
         self._led_green = make_led_icon("#00e676", size=32, glow=True)   # Verde: conectado
         self._led_yellow = make_led_icon("#f1c40f", size=32, glow=True)  # Amarillo: abierto sin vincular
@@ -490,6 +504,9 @@ class EditorStatusCornerWidget(QWidget):
 
     def on_settings_clicked(self):
         self.main_window.settings_overlay.open_page(0)
+
+    def set_update_badge_visible(self, visible: bool):
+        self.update_badge.setVisible(visible)
 
 
 class SettingsModalOverlay(QWidget):
@@ -684,7 +701,13 @@ class MainWindow(QMainWindow):
         self.tab_settings.theme_changed.connect(self.update_theme)
         self.tab_settings.font_changed.connect(self.update_font)
         self.tab_settings.integrations_changed.connect(self.editor_status_widget.refresh_app_icons)
+        self.tab_settings.update_status_changed.connect(self.editor_status_widget.set_update_badge_visible)
         self.tabs.currentChanged.connect(self.on_tab_changed)
+
+        # Chequeo de actualizaciones: diferido al siguiente ciclo del event loop
+        # (no bloquea, y evita competir con el resto de la construccion de la
+        # ventana). No-op en modo fuente -- ver SettingsTab.start_update_check().
+        QTimer.singleShot(0, self.tab_settings.start_update_check)
 
         logger.info("MainWindow: Sistema de pestañas inicializado")
 

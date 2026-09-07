@@ -25,3 +25,8 @@ APP_VERSION = "2.0.0"
 # instalador completo. Se sube solo ante un cambio estructural que el updater no
 # pueda expresar, como mover el directorio de instalación.
 MIN_UPDATABLE_VERSION = "2.0.0"
+
+# Repo de GitHub donde tools/updater/publish.py sube los releases y de donde el
+# cliente de descarga (core/updater/) los lee. Única fuente -- evita que el "--repo"
+# del publicador y el que consulta la app real diverjan.
+UPDATE_REPO = "MarckDP/DowP2"

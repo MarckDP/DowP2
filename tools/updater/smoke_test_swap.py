@@ -68,8 +68,18 @@ def main():
         sys.exit(1)
 
     is_macos_bundle = dist.lower().endswith(".app")
-    copy_root = dist.rstrip(os.sep) + "_smoketest_copy"
-    scratch = dist.rstrip(os.sep) + "_smoketest_scratch"
+    if is_macos_bundle:
+        # El sufijo tiene que ir ANTES de ".app": spawn_detached() y
+        # find_app_bundle_root() detectan un bundle mirando si la ruta
+        # termina en ".app" -- "DowP.app_smoketest_copy" ya no califica,
+        # y eso hace que se intente ejecutar el directorio como si fuera
+        # un binario (PermissionError) en vez de usar 'open -n'.
+        base = dist[: -len(".app")]
+        copy_root = base + "_smoketest_copy.app"
+        scratch = base + "_smoketest_scratch"
+    else:
+        copy_root = dist.rstrip(os.sep) + "_smoketest_copy"
+        scratch = dist.rstrip(os.sep) + "_smoketest_scratch"
     for d in (copy_root, scratch):
         if os.path.exists(d):
             shutil.rmtree(d)
@@ -78,7 +88,11 @@ def main():
     shutil.copytree(dist, copy_root, symlinks=True)
 
     if is_macos_bundle:
-        install_root = os.path.join(copy_root, "Contents", "MacOS")
+        # El .app ENTERO, no Contents/MacOS: el onedir real de un bundle de
+        # macOS queda partido entre Contents/Frameworks y Contents/Resources
+        # (con symlinks cruzados) -- Contents/MacOS solo tiene los dos
+        # ejecutables. Ver install_dir_from_executable() en launcher.py.
+        install_root = copy_root
         relaunch_exe = copy_root  # se abre el .app entero, via 'open'
         main_exe_name = "DowP"
     elif platform.system() == "Windows":
@@ -90,7 +104,7 @@ def main():
         relaunch_exe = os.path.join(copy_root, "DowP")
         main_exe_name = "DowP"
 
-    helper_path = os.path.join(install_root, launcher.helper_name())
+    helper_path = launcher.helper_path_in(install_root)
     if not os.path.exists(helper_path):
         print(f"ERROR: no se encontro el helper compilado en {helper_path}")
         print("¿Se corrio build_cross_platform.py con los cambios de la pieza 3 (helper de swap)?")

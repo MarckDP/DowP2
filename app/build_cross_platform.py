@@ -153,18 +153,28 @@ def build_updater_helper(dist_root, work_root):
     helper_exe_name = f"{HELPER_NAME}.exe" if IS_WINDOWS else HELPER_NAME
     print(f"\nCompilando {helper_exe_name} (helper de swap)...")
 
-    PyInstaller.__main__.run([
+    helper_args = [
         HELPER_SCRIPT,
         "--name", HELPER_NAME,
         "--onefile",
-        "--windowed",
         "--clean",
         "--noconfirm",
         "--distpath", dist_root,
         "--workpath", os.path.join(work_root, "helper"),
         "--specpath", os.path.join(work_root, "helper"),
         "--paths", SRC_DIR,
-    ])
+    ]
+    if not IS_MACOS:
+        # En Windows suprime el flash de una consola al lanzar el helper. En
+        # macOS, --onefile + --windowed hace que PyInstaller genere ADEMAS un
+        # DowP_Updater.app anidado dentro de Contents/MacOS/ (mal formado --
+        # "a required plist file or resource is malformed"), que rompe la
+        # re-firma final de todo el bundle con --deep. El helper es un binario
+        # de fondo sin ventana propia: no necesita --windowed en ningun SO,
+        # pero en macOS directamente rompe el build si se incluye.
+        helper_args.append("--windowed")
+
+    PyInstaller.__main__.run(helper_args)
 
     helper_path = os.path.join(dist_root, helper_exe_name)
     if not os.path.exists(helper_path):

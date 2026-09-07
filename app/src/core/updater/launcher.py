@@ -28,6 +28,41 @@ def helper_name() -> str:
     return HELPER_NAME_WINDOWS if platform.system() == "Windows" else HELPER_NAME_POSIX
 
 
+def install_dir_from_executable(executable_path: str) -> str:
+    """Dado sys.executable del proceso principal en marcha, devuelve la raiz
+    que el updater debe tratar como "la instalacion" -- el mismo arbol que
+    hashea tools/updater/publish.py al publicar.
+
+    En Windows/Linux es simplemente la carpeta que contiene el ejecutable (el
+    --onedir de PyInstaller, plano). En macOS NO es lo mismo: el onedir real
+    queda partido entre Contents/Frameworks y Contents/Resources (con
+    symlinks cruzados entre ambas -- ni siquiera Frameworks, con casi todo,
+    tiene el 100%: _tcl_data/_tk_data son reales solo en Resources).
+    Comprobado contra un bundle real: la unica raiz que cubre las dos sin
+    ambiguedad, y que hash_tree() recorre completo sin duplicar nada (no
+    sigue directorios symlink), es el .app entero -- no Contents/MacOS,
+    que es donde vive sys.executable pero NO contiene los datos de la app."""
+    parent = os.path.dirname(executable_path)
+    if platform.system() == "Darwin":
+        from core.updater.swap_executor import find_app_bundle_root
+        bundle = find_app_bundle_root(parent)
+        if bundle:
+            return bundle
+    return parent
+
+
+def helper_path_in(install_dir: str) -> str:
+    """Ruta real del binario del helper de swap dentro de `install_dir`.
+
+    En Windows/Linux, install_dir ES la carpeta que contiene el helper
+    directamente. En macOS, install_dir ahora es la raiz del .app (ver
+    install_dir_from_executable) mientras que el helper compilado vive
+    dentro de Contents/MacOS/, no suelto en la raiz del bundle."""
+    if platform.system() == "Darwin" and install_dir.lower().endswith(".app"):
+        return os.path.join(install_dir, "Contents", "MacOS", helper_name())
+    return os.path.join(install_dir, helper_name())
+
+
 def is_process_alive(pid: int) -> bool:
     """True si el proceso `pid` sigue vivo. En Windows distingue un PID
     reciclado por otro proceso de uno de verdad sigue corriendo, via el
@@ -115,7 +150,7 @@ def hand_off_to_helper(state_dir: str, install_dir: str, own_pid: int, relaunch_
     [journal_path, own_pid, relaunch_exe]. Quien llama es responsable de
     salir (sys.exit) inmediatamente despues -- seguir ejecutando con archivos
     a punto de moverse debajo es como se corrompe una instalacion."""
-    helper_src = os.path.join(install_dir, helper_name())
+    helper_src = helper_path_in(install_dir)
     if not os.path.exists(helper_src):
         raise FileNotFoundError(f"No se encontro el helper de swap en {helper_src}")
 
@@ -150,5 +185,5 @@ def resume_pending_swap() -> bool:
 
     from core.utils.paths import get_updater_state_dir
     state_dir = get_updater_state_dir()
-    install_dir = os.path.dirname(sys.executable)
+    install_dir = install_dir_from_executable(sys.executable)
     return resume_pending_swap_at(state_dir, install_dir)

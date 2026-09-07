@@ -34,10 +34,12 @@ def _version_tuple(v: str) -> tuple:
 
 def compute_diff(manifest: dict, install_dir: str | None = None,
                   current_version: str | None = None) -> UpdateInfo:
-    """install_dir por defecto es el directorio del .exe/.app en una instalacion
-    congelada (la raiz --onedir, el mismo arbol que hashea tools/updater al
-    publicar) -- en modo fuente no hay arbol congelado que hashear, asi que hay
-    que pasarlo a mano (por ejemplo, app/dist/DowP, para probar contra un build
+    """install_dir por defecto es la raiz de la instalacion congelada -- el mismo
+    arbol que hashea tools/updater al publicar (ver
+    launcher.install_dir_from_executable(): en Windows/Linux es la carpeta del
+    .exe, en macOS es el .app completo, no Contents/MacOS) -- en modo fuente no
+    hay arbol congelado que hashear, asi que hay que pasarlo a mano (por
+    ejemplo, app/dist/DowP o app/dist/DowP.app, para probar contra un build
     real sin instalar nada)."""
     current_version = current_version or APP_VERSION
     remote_version = manifest.get("app_version", "0.0.0")
@@ -67,7 +69,8 @@ def compute_diff(manifest: dict, install_dir: str | None = None,
 
     if install_dir is None:
         if getattr(sys, "frozen", False):
-            install_dir = os.path.dirname(sys.executable)
+            from core.updater.launcher import install_dir_from_executable
+            install_dir = install_dir_from_executable(sys.executable)
         else:
             raise ValueError(
                 "compute_diff necesita install_dir explicito en modo fuente "

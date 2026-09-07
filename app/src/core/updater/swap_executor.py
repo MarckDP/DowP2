@@ -26,12 +26,16 @@ class SwapError(Exception):
     rollback_journal -- nunca dejar la instalacion en un estado a medias."""
 
 
-def _find_app_bundle_root(path: str):
+def find_app_bundle_root(path: str):
     """Busca un directorio *.app subiendo desde `path` (hasta 4 niveles) --
     cubre tanto install_dir == el propio .app como install_dir apuntando a
-    Contents/MacOS dentro de el. Devuelve None si no encuentra ninguno: la
-    firma se salta en vez de fallar el swap por una convencion de rutas que
-    todavia no esta cerrada para macOS (ver riesgos en ACTUALIZACIONES.md)."""
+    Contents/MacOS dentro de el. Devuelve None si no encuentra ninguno.
+
+    Publica (no `_privada`) porque `launcher.install_dir_from_executable()`
+    tambien la usa: es la misma pregunta ("¿donde esta la raiz del bundle?")
+    que resuelve tanto "que .app hay que re-firmar tras un swap" como "cual
+    es el install_dir real de una instalacion macOS en marcha" (ver
+    ACTUALIZACIONES.md, seccion de la particion Frameworks/Resources)."""
     current = os.path.abspath(path)
     for _ in range(4):
         if current.lower().endswith(".app"):
@@ -78,7 +82,7 @@ def apply_journal(journal: dict, state_dir: str) -> None:
 
     if platform.system() == "Darwin":
         from core.updater.macos_sign import SigningError, adhoc_sign
-        bundle = _find_app_bundle_root(install_dir)
+        bundle = find_app_bundle_root(install_dir)
         if bundle:
             try:
                 adhoc_sign(bundle)

@@ -9,6 +9,14 @@ de una plataforma y lo sube, junto con los objetos nuevos, a un GitHub Release.
     python tools/updater/publish.py --dist app/dist/DowP --platform windows-x64 \
         --private-key tools/updater/secrets/private_key.pem --dry-run
 
+    # macOS: el .app COMPLETO, no Contents/MacOS -- el onedir real de un
+    # bundle queda partido entre Contents/Frameworks y Contents/Resources
+    # (symlinks cruzados entre ambas), y solo el .app entero cubre las dos
+    # sin ambiguedad. Debe coincidir con lo que calcula
+    # launcher.install_dir_from_executable() del lado del cliente.
+    python tools/updater/publish.py --dist app/dist/DowP.app --platform macos-arm64 \
+        --repo MarckDP/DowP2 --private-key tools/updater/secrets/private_key.pem
+
 Ver ACTUALIZACIONES.md y el plan de la sesion para el diseno completo: manifiesto
 de hashes + almacen direccionado por contenido, sin bsdiff, URL completa por
 objeto. Simplificacion explicita de esta v1: la reutilizacion de objetos ya
@@ -127,7 +135,9 @@ def build_platform_manifest(dist_dir: str, reuse_map: dict, staging_dir: str,
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--dist", required=True, help="Carpeta del build (ej. app/dist/DowP)")
+    parser.add_argument("--dist", required=True,
+                         help="Carpeta del build (ej. app/dist/DowP; en macOS el .app completo, "
+                              "ej. app/dist/DowP.app -- no Contents/MacOS)")
     parser.add_argument("--platform", help="ej. windows-x64, macos-arm64, linux-x64. "
                          "Por defecto, autodetectada con get_platform_key() del SO donde corre esto")
     parser.add_argument("--repo", help="owner/repo en GitHub. Obligatorio salvo con --dry-run")

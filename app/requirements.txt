@@ -4,6 +4,10 @@ curl_cffi==0.14.0
 mutagen>=1.47.0
 pycryptodomex>=3.23.0
 websockets>=16.0
+# Compresion de los objetos del updater (tools/updater/): formato de los objetos
+# content-addressed que sube el publicador y que el cliente de descarga (pieza 2,
+# aun no implementada) tendra que descomprimir con la misma libreria.
+zstandard>=0.22.0
 brotli>=1.2.0
 watchdog>=6.0.0
 python-socketio>=5.11.0

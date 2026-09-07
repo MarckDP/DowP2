@@ -18,9 +18,15 @@ APP_NAME = "DowP"
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 MAIN_SCRIPT = os.path.join(SCRIPT_DIR, "main.py")
+HELPER_SCRIPT = os.path.join(SCRIPT_DIR, "updater_helper.py")
 SRC_DIR = os.path.join(SCRIPT_DIR, "src")
 # El importer es hermano de app/, no hijo: <repo>/importer
 IMPORTER_DIR = os.path.join(os.path.dirname(SCRIPT_DIR), "importer")
+
+# Firma ad-hoc de macOS consolidada en core/updater/ (la necesita tambien el
+# helper de swap para volver a firmar el bundle tras aplicar una actualizacion).
+sys.path.insert(0, SRC_DIR)
+from core.updater.macos_sign import SigningError, adhoc_sign  # noqa: E402
 
 
 def read_app_version():
@@ -109,56 +115,65 @@ def prune_bundle(dist_root):
               f"({liberado / 1048576:.1f} MB)")
 
 
-def adhoc_sign_macos_bundle(bundle_path):
-    """Firma ad-hoc del .app recien construido.
-
-    NO ES OPCIONAL EN macOS. En Apple Silicon, un binario sin ninguna firma no arranca:
-    no es un aviso de Gatekeeper que el usuario pueda saltarse con clic derecho > Abrir,
-    es el cargador del sistema rechazandolo. Sin este paso, el .app que sale de aqui no
-    abre en ningun Mac moderno.
-
-    La firma ad-hoc (-s -) es gratis: no necesita certificado, ni cuenta de Apple, ni
-    notarizacion, y codesign viene de fabrica en macOS. No quita el aviso de Gatekeeper
-    -- el usuario seguira teniendo que hacer clic derecho > Abrir la primera vez -- pero
-    hace que el binario sea ejecutable.
-
-    IMPORTANTE para el updater: cualquier cosa que modifique archivos DENTRO del bundle
-    rompe esta firma y devuelve la app al estado de "no arranca en arm64". El helper de
-    actualizacion tendra que volver a ejecutar exactamente esto como ultimo paso, despues
-    de aplicar los cambios y antes de relanzar.
-
-    Se usa --deep porque un bundle de PyInstaller trae decenas de dylibs anidadas. Apple
-    lo tiene desaconsejado para firmas de distribucion (ahi hay que firmar de dentro
-    hacia fuera), pero para ad-hoc sigue siendo el camino practico. Si algun dia deja de
-    funcionar, la alternativa es recorrer los Mach-O y firmarlos de abajo arriba antes
-    del bundle.
-    """
-    print(f"Firmando ad-hoc {bundle_path} ...")
+def adhoc_sign_macos_bundle(path, deep=True):
+    """Firma ad-hoc y verifica -- ver core/updater/macos_sign.py para el porque
+    (NO es opcional en Apple Silicon) y para la implementacion real, compartida
+    con el helper de swap, que tiene que volver a firmar el .app como ultimo
+    paso tras aplicar una actualizacion."""
+    print(f"Firmando ad-hoc {path} ...")
     try:
-        subprocess.run(
-            ["codesign", "--force", "--deep", "--sign", "-", "--timestamp=none", bundle_path],
-            check=True, capture_output=True, text=True,
-        )
-    except FileNotFoundError:
-        print("ERROR: no se encontro 'codesign'. Viene de serie en macOS; si falta, "
-              "instala las Command Line Tools de Xcode.")
+        adhoc_sign(path, deep=deep)
+    except SigningError as e:
+        print(f"ERROR: {e}")
         sys.exit(1)
-    except subprocess.CalledProcessError as e:
-        print(f"ERROR: codesign fallo:\n{e.stderr}")
-        sys.exit(1)
-
-    # Verificar de verdad en vez de dar por hecho que salio bien: una firma rota se
-    # manifiesta como "la app no abre" en la maquina del usuario, sin ningun mensaje util.
-    try:
-        subprocess.run(
-            ["codesign", "--verify", "--deep", "--strict", "--verbose=2", bundle_path],
-            check=True, capture_output=True, text=True,
-        )
-    except subprocess.CalledProcessError as e:
-        print(f"ERROR: la firma no verifica:\n{e.stderr}")
-        sys.exit(1)
-
     print("Firma ad-hoc aplicada y verificada.")
+
+
+HELPER_NAME = "DowP_Updater"
+
+
+def build_updater_helper(dist_root, work_root):
+    """Compila el helper de swap como un segundo ejecutable, aparte de DowP.exe.
+
+    Tiene que ser un binario DISTINTO al principal: en Windows un proceso no
+    puede sobrescribir su propio .exe ni las DLLs que tiene cargadas, y
+    DowP.exe cambia en casi todos los releases (ver core/updater/journal.py).
+
+    --onefile en vez de --onedir: el helper corre una vez por actualizacion,
+    asi que la extraccion a temp en cada arranque no importa, y evita meter
+    un segundo _internal/ dentro del arbol de DowP.exe. Sin --add-data de
+    src/ completo: el helper solo importa core.updater/.logger/.utils.paths
+    (puro stdlib), no necesita iconos, temas, ni el importer.
+
+    Sale DENTRO del mismo arbol que dist_root (junto a DowP.exe en Windows,
+    dentro de Contents/MacOS en el .app de macOS): al vivir en el arbol que
+    hashea tools/updater/publish.py, se publica y actualiza solo, sin
+    tratamiento especial en el publicador ni en el cliente de descarga.
+    """
+    helper_exe_name = f"{HELPER_NAME}.exe" if IS_WINDOWS else HELPER_NAME
+    print(f"\nCompilando {helper_exe_name} (helper de swap)...")
+
+    PyInstaller.__main__.run([
+        HELPER_SCRIPT,
+        "--name", HELPER_NAME,
+        "--onefile",
+        "--windowed",
+        "--clean",
+        "--noconfirm",
+        "--distpath", dist_root,
+        "--workpath", os.path.join(work_root, "helper"),
+        "--specpath", os.path.join(work_root, "helper"),
+        "--paths", SRC_DIR,
+    ])
+
+    helper_path = os.path.join(dist_root, helper_exe_name)
+    if not os.path.exists(helper_path):
+        print(f"ERROR: no se genero el helper esperado en {helper_path}")
+        sys.exit(1)
+    if IS_MACOS:
+        # Binario Mach-O suelto (no un bundle): sin --deep, no trae dylibs anidadas.
+        adhoc_sign_macos_bundle(helper_path, deep=False)
+    print(f"Helper de swap listo en: {helper_path}")
 
 
 APP_VERSION = read_app_version()
@@ -338,6 +353,19 @@ if os.path.exists(final_target):
     # tocar archivos despues de firmarla la invalidaria.
     prune_bundle(os.path.join(DIST_DIR, f"{APP_NAME}.app") if IS_MACOS
                  else os.path.join(DIST_DIR, APP_NAME))
+
+    # El helper de swap se compila y coloca DENTRO del mismo arbol que DowP.exe
+    # -- en macOS, best-effort: Contents/MacOS/ es donde PyInstaller pone el
+    # ejecutable principal del bundle, pero esta ruta no se ha podido validar
+    # en un Mac real (ver riesgos abiertos en ACTUALIZACIONES.md).
+    helper_dist_root = (
+        os.path.join(final_target, "Contents", "MacOS") if IS_MACOS
+        else os.path.join(DIST_DIR, APP_NAME)
+    )
+    build_updater_helper(helper_dist_root, BUILD_DIR)
+
+    # Firmar SIEMPRE despues de que el helper ya este dentro del bundle: la
+    # firma del .app cubre todo su contenido, incluido el helper.
     if IS_MACOS:
         adhoc_sign_macos_bundle(final_target)
     print(f"\nBuild lista en: {final_target}")

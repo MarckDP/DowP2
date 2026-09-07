@@ -174,6 +174,28 @@ def get_proxy_cache_dir() -> str:
     os.makedirs(proxy_dir, exist_ok=True)
     return proxy_dir
 
+def get_updater_state_dir() -> str:
+    """Retorna el directorio donde vive el journal del swap en curso
+    (journal.json) y los backups de los archivos que reemplaza o borra --
+    hermano de get_update_staging_dir() (que solo guarda los objetos ya
+    descargados y verificados, listos para aplicar). Separado a proposito:
+    staging_dir es "lo que hay que poner", este directorio es "lo que habia
+    antes, por si hay que deshacer" -- vidas distintas, se limpian en
+    momentos distintos."""
+    state_dir = os.path.join(get_local_app_data_dir(), "updater_state")
+    os.makedirs(state_dir, exist_ok=True)
+    return state_dir
+
+def get_update_staging_dir() -> str:
+    """Retorna el directorio donde el cliente de descarga del updater deja los
+    objetos ya descomprimidos y verificados, listos para que el helper de swap
+    (pieza 3, todavia no implementada) los aplique. Vive en el perfil LOCAL
+    (no roaming) por el mismo motivo que get_proxy_cache_dir(): puede pesar
+    cientos de MB por actualizacion pendiente."""
+    staging_dir = os.path.join(get_local_app_data_dir(), "update_staging")
+    os.makedirs(staging_dir, exist_ok=True)
+    return staging_dir
+
 def get_subclips_dir() -> str:
     """Retorna el directorio para guardar subclips rápidos de medios cuando no hay editores conectados."""
     from core.utils.config_manager import get_default_subclip_dir

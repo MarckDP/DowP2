@@ -83,7 +83,16 @@ class HandCursorInstaller(QObject):
         return False
 
 def main():
-    # 0. Setup App y base
+    # 0. Reanudar un swap de actualizacion que quedo a medias por un corte de
+    # luz, ANTES de tocar Qt. Si hay uno, se le vuelve a entregar al helper y
+    # se sale enseguida -- seguir arrancando con archivos a medio reemplazar
+    # es exactamente lo que este chequeo existe para evitar. En una
+    # instalacion sana (el caso de siempre) esto no hace nada.
+    from core.updater.launcher import resume_pending_swap
+    if resume_pending_swap():
+        sys.exit(0)
+
+    # 1. Setup App y base
     app = QApplication(sys.argv)
     app.setStyle("Fusion")  # Estilo base multiplataforma que previene bugs de QComboBox en Windows
 

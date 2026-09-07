@@ -31,6 +31,11 @@ class DownloaderMaster:
         """
         self.cancellation_event = cancellation_event
         self._pending_backup = None
+        # Índices de playlist que SÍ terminaron de descargarse, alimentado por el hook
+        # de progreso. Es lo que permite reintentar solo los que fallaron: con
+        # ignoreerrors='only_download' yt-dlp se traga el error por ítem y no hay
+        # excepción de la que deducirlo (ver _retry_failed_playlist_items).
+        self._completed_playlist_indices = set()
         url = request_data.get("url")
         if not url:
             return False, "No URL provided"
@@ -245,12 +250,23 @@ class DownloaderMaster:
                 # resultado, solo se pierde el detalle del resumen.
                 if request_data.get('is_playlist') and isinstance(info, dict) and 'entries' in info:
                     try:
-                        entries = list(info.get('entries') or [])
-                        total_entries = len(entries)
-                        ok_entries = sum(1 for e in entries if e)
+                        # Antes de resumir, recuperar lo que YouTube bloqueó con 403: sin
+                        # esto la playlist entera se quedaba en cero mientras la misma
+                        # descarga suelta sí funcionaba.
+                        self._retry_failed_playlist_items(url, ydl_opts, info, yt_dlp)
+
+                        requested = self._requested_playlist_items(ydl_opts, info)
+                        total_entries = len(requested)
+                        # Se cuenta contra lo que el hook vio TERMINAR, no contra las
+                        # entradas no nulas: con ignoreerrors='only_download' un ítem que
+                        # falló al descargar conserva su dict de metadatos, así que
+                        # contarlo como bueno daba "9 de 9 completados" con cero archivos.
+                        ok_entries = sum(1 for i in requested if i in self._completed_playlist_indices)
                         failed_entries = total_entries - ok_entries
                         if total_entries and failed_entries:
                             return True, f"{ok_entries} de {total_entries} completados, {failed_entries} con error"
+                    except DownloadCancelledError:
+                        raise
                     except Exception as summary_err:
                         logger.debug(f"DownloaderMaster: No se pudo armar el resumen de playlist: {summary_err}")
 
@@ -1217,10 +1233,91 @@ class DownloaderMaster:
                 logger.info("DownloaderMaster: Cancelación detectada en el hook")
                 raise DownloadCancelledError("Descarga cancelada por el usuario")
 
-            # 2. Ejecutar callback externo
+            # 2. Anotar qué ítem de playlist llegó a terminar. Es la ÚNICA señal fiable
+            # de éxito por ítem: con ignoreerrors='only_download' yt-dlp registra el
+            # error y sigue, sin lanzar nada que se pueda inspeccionar después.
+            if d.get("status") == "finished":
+                index = (d.get("info_dict") or {}).get("playlist_index")
+                if index is not None:
+                    try:
+                        self._completed_playlist_indices.add(int(index))
+                    except (TypeError, ValueError):
+                        pass
+
+            # 3. Ejecutar callback externo
             if external_callback:
                 external_callback(d)
         return hook
+
+    def _requested_playlist_items(self, ydl_opts, info):
+        """Índices que se pidieron descargar, tal y como los numera yt-dlp.
+
+        Sale de 'playlist_items' cuando el usuario eligió ítems concretos (el caso del
+        selector de playlist), y si no, de las propias entradas devueltas."""
+        spec = ydl_opts.get("playlist_items")
+        if spec:
+            requested = []
+            for chunk in str(spec).split(","):
+                chunk = chunk.strip()
+                if not chunk:
+                    continue
+                try:
+                    if "-" in chunk:  # rangos del estilo "3-7"
+                        start, end = chunk.split("-", 1)
+                        requested.extend(range(int(start), int(end) + 1))
+                    else:
+                        requested.append(int(chunk))
+                except ValueError:
+                    continue
+            return requested
+
+        entries = list((info or {}).get("entries") or [])
+        return [((entry or {}).get("playlist_index") or pos)
+                for pos, entry in enumerate(entries, start=1)]
+
+    def _retry_failed_playlist_items(self, url, ydl_opts, info, yt_dlp):
+        """Reintenta con el cliente alternativo SOLO los ítems de la playlist que fallaron.
+
+        Por qué hace falta: una descarga suelta que recibe un 403 de YouTube se recupera
+        sola, porque la excepción llega al except de download() y ahí se reintenta con
+        'web_embedded'. Una playlist NO, porque lleva ignoreerrors='only_download' para
+        que un vídeo privado no tumbe a los demás — y eso hace que yt-dlp se trague
+        también los 403 reales, sin lanzar excepción. El reintento nunca se disparaba y
+        la playlist entera acababa vacía mientras las descargas sueltas funcionaban.
+
+        Se reintenta por índice en vez de repetir la playlist completa para no volver a
+        bajar lo que ya está en disco. El hook sigue enganchado en las opciones de
+        respaldo (deepcopy no clona funciones), así que los ítems que se recuperen aquí
+        se anotan igual en _completed_playlist_indices.
+        """
+        from core.ytdlp_logic.resilient_downloader import make_fallback_ydl_opts
+
+        pending = [i for i in self._requested_playlist_items(ydl_opts, info)
+                   if i not in self._completed_playlist_indices]
+        if not pending:
+            return
+
+        logger.warning(
+            f"DownloaderMaster: {len(pending)} ítem(s) de la playlist no se descargaron "
+            f"(YouTube suele devolver 403 en el primer intento). Reintentando solo esos "
+            f"con cliente alternativo (web_embedded): {pending}"
+        )
+        fallback_opts = make_fallback_ydl_opts(ydl_opts)
+        fallback_opts["playlist_items"] = ",".join(str(i) for i in pending)
+        try:
+            with yt_dlp.YoutubeDL(fallback_opts) as ydl_fallback:
+                ydl_fallback.extract_info(url, download=True)
+        except DownloadCancelledError:
+            raise
+        except Exception as retry_err:
+            # El reintento es un extra: si también falla, se sigue adelante y el resumen
+            # dirá cuántos quedaron sin descargar.
+            logger.error(f"DownloaderMaster: el reintento de la playlist también falló: {retry_err}")
+
+        recovered = [i for i in pending if i in self._completed_playlist_indices]
+        if recovered:
+            logger.info(f"DownloaderMaster: recuperados {len(recovered)} de {len(pending)} "
+                        f"ítem(s) con el cliente alternativo.")
 
     def _cleanup_on_cancel(self, request_data):
         """Limpia archivos temporales/parciales cuando se cancela o falla una descarga."""

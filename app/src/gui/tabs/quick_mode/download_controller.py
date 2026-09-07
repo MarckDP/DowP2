@@ -153,13 +153,16 @@ class QuickDownloadController(QObject):
             )
             
             req["mode"] = dialog.result_data.get("playlist_mode") or req["mode"]
+            item_quality = dialog.result_data.get("playlist_quality") or quality
             from core.ytdlp_logic.format_selectors import quick_format_selector
-            req["format_selector"] = quick_format_selector(req["mode"], dialog.result_data.get("playlist_quality") or quality, url=req.get("url", ""))
+            req["format_selector"] = quick_format_selector(req["mode"], item_quality, url=req.get("url", ""))
             if recode_data:
                 req.update(recode_data)
 
             selected_entries = [entries[i] for i in selected if 0 <= i < len(entries)]
-            self.start_worker(req, selected_entries=selected_entries, selected_indices=selected)
+            # Una descarga por ítem en vez de una sola con playlist_items: así el 403 de
+            # cada vídeo se reintenta al momento y no al terminar la pasada entera.
+            self.start_playlist_workers(req, selected_entries, selected, req["mode"], item_quality)
 
         self.analysis_worker.finished.connect(on_finished)
         self.analysis_worker.start()
@@ -279,26 +282,22 @@ class QuickDownloadController(QObject):
             self.busy_state_changed.emit(False, "")
             self.progress_updated.emit(0, self.tr("Recorte cancelado") if hasattr(self, "tr") else "Recorte cancelado", "wait")
 
-    def start_worker(self, request_data, selected_entries=None, selected_indices=None):
-        """Inicia un DownloadWorker respectando la concurrencia global."""
-        from core.utils.config_manager import get_config
-        max_concurrent = get_config().get("max_concurrent_downloads", 3)
-
-        # Si no hay nada activo ni encolado, esta es una tanda nueva: reiniciar
-        # los contadores para la barra general ("X de Y completados").
+    def _reset_batch_if_idle(self):
+        """Si no hay nada activo ni encolado, esta es una tanda nueva: reiniciar los
+        contadores de la barra general ('X de Y completados')."""
         if not self.active_workers and not self.pending_tasks:
             self._batch_total = 0
             self._batch_completed = 0
-        self._batch_total += 1
 
-        self.last_request_data = request_data.copy()
-        self.last_downloaded_filepath = None
+    def _enqueue_task(self, request_data, item_rows, item_keys):
+        """Crea el trabajo de descarga para unas filas ya existentes y lo arranca (o lo
+        deja en cola si se llegó al máximo de descargas simultáneas).
 
-        item_rows, item_keys = self.tab.activity_panel.add_activity_rows(
-            selected_entries or [], selected_indices or []
-        )
-        self.current_item_rows.extend(item_rows)
-        self.current_item_keys.extend(item_keys)
+        Va aparte de start_worker porque una playlist crea TODAS sus filas de una vez
+        (una tarjeta de grupo) pero lanza una descarga por ítem, ver
+        start_playlist_workers."""
+        from core.utils.config_manager import get_config
+        max_concurrent = get_config().get("max_concurrent_downloads", 3)
 
         canc_event = threading.Event()
         task_data = {
@@ -316,6 +315,83 @@ class QuickDownloadController(QObject):
             self.pending_tasks.append(task_data)
             self.is_downloading = True
             self._emit_batch_progress()
+        return task_data
+
+    def start_playlist_workers(self, base_request, entries, selected_indices, mode, quality):
+        """Descarga una playlist con UNA descarga por ítem, no con una sola llamada.
+
+        Es el mismo patrón que ya usa Proceso Avanzado (_execute_playlist en
+        queue_manager.py): cada ítem es una descarga suelta, así que un 403 de YouTube
+        llega como excepción y se reintenta con el cliente alternativo EN ESE MOMENTO
+        (ver downloader_master.download).
+
+        Con la forma anterior -- una única llamada con 'playlist_items' -- yt-dlp llevaba
+        ignoreerrors='only_download' y se tragaba los 403 sin excepción, así que la
+        recuperación no podía dispararse hasta que terminaba la pasada COMPLETA: con
+        1000 ítems, 1000 fallos antes del primer reintento, y la sensación de que la
+        descarga no arrancaba nunca.
+        """
+        from core.utils.queue_manager import QueueWorker
+        from core.ytdlp_logic.format_selectors import quick_format_selector
+
+        self._reset_batch_if_idle()
+        self.last_request_data = base_request.copy()
+        self.last_downloaded_filepath = None
+
+        # Las filas se crean de una sola vez para que la tarjeta de grupo agrupe la
+        # playlist entera, aunque después cada una tenga su propia descarga.
+        item_rows, item_keys = self.tab.activity_panel.add_activity_rows(
+            entries, selected_indices, group_title=base_request.get("playlist_title")
+        )
+        self.current_item_rows.extend(item_rows)
+        self.current_item_keys.extend(item_keys)
+
+        for pos, (row, key, entry) in enumerate(zip(item_rows, item_keys, entries), start=1):
+            item_url = QueueWorker._entry_url(entry or {})
+            if not item_url:
+                logger.warning(f"QuickModeTab: Ítem de playlist sin URL utilizable: {row.original_title}")
+                row.update_progress(0, status=self.tr("Error") if hasattr(self, "tr") else "Error")
+                row.mark_error()
+                continue
+
+            child = base_request.copy()
+            # SIN ESTO NO SIRVE DE NADA: 'playlist_items' es justo lo que hace que
+            # _prepare_opts active ignoreerrors y vuelva a tragarse los 403.
+            child.pop("playlist_items", None)
+            child["url"] = item_url
+            # " #N" reproduce lo que ponía la plantilla %(playlist_autonumber)s, que solo
+            # funciona dentro del bucle de playlist de yt-dlp: sin esto los archivos
+            # perderían la numeración.
+            titulo = (entry or {}).get("title") or row.original_title or f"Item {pos}"
+            child["title"] = f"{titulo} #{pos}"
+            child["format_selector"] = quick_format_selector(mode, quality, url=item_url)
+
+            self._batch_total += 1
+            self._enqueue_task(child, [row], [key])
+
+        if not self.active_workers and not self.pending_tasks:
+            self.busy_state_changed.emit(False, "")
+
+    def start_worker(self, request_data, selected_entries=None, selected_indices=None):
+        """Inicia un DownloadWorker respectando la concurrencia global."""
+        self._reset_batch_if_idle()
+        self._batch_total += 1
+
+        self.last_request_data = request_data.copy()
+        self.last_downloaded_filepath = None
+
+        # El nombre de la lista viaja en "playlist_title", NO en "title": para una
+        # playlist build_quick_request_data vacía "title" a propósito (el nombre de cada
+        # archivo lo pone yt-dlp por ítem). Leerlo de "title" dejaba la tarjeta llamándose
+        # siempre "Playlist".
+        group_title = request_data.get("playlist_title") if request_data.get("is_playlist") else None
+        item_rows, item_keys = self.tab.activity_panel.add_activity_rows(
+            selected_entries or [], selected_indices or [], group_title=group_title
+        )
+        self.current_item_rows.extend(item_rows)
+        self.current_item_keys.extend(item_keys)
+
+        self._enqueue_task(request_data, item_rows, item_keys)
 
     def _emit_batch_progress(self):
         """
@@ -443,6 +519,10 @@ class QuickDownloadController(QObject):
             filepath = data.get("filename")
             if filepath:
                 self.last_downloaded_filepath = filepath
+                # Rastro PROPIO de esta tarea. self.last_downloaded_filepath es global y
+                # con varias descargas a la vez (una playlist ahora son N tareas) la
+                # última en escribir puede ser la de otra fila.
+                task_data["_last_path"] = filepath
             if has_fragments:
                 # Se acumula cada archivo en task_data['_fragment_files'], indexado
                 # por fragment_index (last-write-wins por índice: un mismo fragmento
@@ -556,8 +636,14 @@ class QuickDownloadController(QObject):
                 # "Completado" con el archivo de OTRA fila si esta nunca recibió su
                 # propio evento "finished" (p. ej. un ítem fallido con
                 # ignoreerrors='only_download', ver downloader_master.py).
-                if not actual_path and is_single_row and self.last_downloaded_filepath:
-                    actual_path = self._find_actual_downloaded_file(self.last_downloaded_filepath)
+                # Se prefiere SIEMPRE el rastro de esta tarea; el global solo queda como
+                # último recurso para una descarga suelta, que es cuando no hay otra
+                # tarea que pueda haberlo pisado.
+                respaldo = task_data.get("_last_path") or (
+                    self.last_downloaded_filepath if len(self.active_workers) <= 1 else None
+                )
+                if not actual_path and is_single_row and respaldo:
+                    actual_path = self._find_actual_downloaded_file(respaldo)
 
                 if not actual_path and not is_single_row:
                     # Ítem de playlist que nunca recibió su propio evento "finished" (p.
@@ -683,6 +769,48 @@ class QuickDownloadController(QObject):
         except Exception:
             return 0.0
 
+    def _resolve_media_duration(self, row, path) -> float:
+        """Duración del medio en segundos, para que la barra de la recodificación pueda
+        calcular un porcentaje.
+
+        Es imprescindible: _run_ffmpeg_command (queue_manager.py) solo emite progreso
+        `if duration_sec > 0`. Con 0 no manda ni un porcentaje, así que la barra se
+        quedaba clavada en 0% durante toda la recodificación y saltaba a 100 al acabar.
+
+        Antes se pedía con FFprobeMetadataManager.get_metadata_instant(), y ahí estaba el
+        fallo: ese método es SOLO-CACHÉ por diseño —si no tiene el archivo cacheado
+        devuelve datos básicos de os.stat y encola el sondeo para más tarde—. El archivo
+        que se le pasaba acababa de descargarse y de renombrarse a cuarentena, así que
+        nunca estaba en caché y siempre devolvía 0. Y en silencio, porque no lanza
+        excepción: por eso no había ni un aviso en el log.
+
+        Ahora se intenta en tres capas, de la más barata a la más cara:
+          1. La duración que yt-dlp ya dio en el análisis y que la fila guardó.
+          2. Un sondeo de ffprobe BLOQUEANTE, que sí lee el archivo.
+          3. Si aun así no hay número, 0.0 y quien llama pone la barra indeterminada.
+        """
+        conocida = getattr(row, "media_duration_sec", None)
+        if conocida and conocida > 0:
+            return float(conocida)
+
+        try:
+            from core.tabs.editing_media.ffprobe_metadata_manager import FFprobeMetadataManager
+            # _extract_ffprobe_json es el sondeo síncrono real (el que corre FFprobeTask
+            # en su hilo), a diferencia de get_metadata_instant, que no bloquea y por eso
+            # no sirve para un archivo recién creado.
+            meta = FFprobeMetadataManager.get_instance()._extract_ffprobe_json(path, "video")
+            duracion = self._parse_duration_to_seconds((meta or {}).get("duración", "0"))
+            if duracion > 0:
+                return duracion
+        except Exception as e:
+            logger.debug(f"QuickModeTab: no se pudo sondear la duración de {path}: {e}")
+
+        logger.warning(
+            f"QuickModeTab: sin duración para '{os.path.basename(path)}'; la barra de "
+            f"recodificación irá en modo indeterminado."
+        )
+        return 0.0
+
     def _start_post_download_recode(self, actual_path, request_data, row, title,
                                      fragment_position=None, fragment_total=None):
         """
@@ -719,14 +847,7 @@ class QuickDownloadController(QObject):
             logger.error(f"QuickModeTab: No se pudo poner en cuarentena '{actual_path}': {e}")
             return False
 
-        # Obtener duración real para que la barra de progreso funcione
-        from core.tabs.editing_media.ffprobe_metadata_manager import FFprobeMetadataManager
-        duration_sec = 0.0
-        try:
-            meta = FFprobeMetadataManager.get_instance().get_metadata_instant(backup_path, "video")
-            duration_sec = self._parse_duration_to_seconds(meta.get("duración", "0"))
-        except Exception as e:
-            logger.error(f"QuickModeTab: No se pudo obtener duración de {backup_path}: {e}")
+        duration_sec = self._resolve_media_duration(row, backup_path)
 
         recode_job_id = self.queue_mgr.add_job({
             "input_path": backup_path,
@@ -746,7 +867,13 @@ class QuickDownloadController(QObject):
             "fragment_total": fragment_total,
         }
 
-        row.update_progress(0, info="", status=self._recode_status_text(fragment_position, fragment_total))
+        estado = self._recode_status_text(fragment_position, fragment_total)
+        if duration_sec > 0:
+            row.update_progress(0, info="", status=estado)
+        else:
+            # Sin duración no habrá porcentajes (ver _resolve_media_duration): barra en
+            # movimiento en vez de un 0% congelado que parece un cuelgue.
+            row.set_busy(estado)
         # La cola global nace pausada y solo se reanuda desde Proceso Avanzado (modo
         # LOTES) o Herramientas Multimedia (ver video_tools_view.py) - sin esto, un job
         # RECODE encolado desde Modo Rápido se queda esperando indefinidamente si el
@@ -854,8 +981,17 @@ class QuickDownloadController(QObject):
                 row.update_progress(0, status=self.tr("Error al recodificar") if hasattr(self, "tr") else "Error al recodificar")
                 row.mark_error()
             if final_path:
+                # La recodificación falló pero el original volvió de la cuarentena. Se
+                # registra el archivo para que el botón de carpeta funcione, PERO sin
+                # marcar la fila como completada: antes se llamaba a mark_completed()
+                # justo después de mark_error(), y la fila quedaba a la vez terminada y
+                # fallida -- se pintaba de verde y el grupo la contaba dos veces.
                 row.downloaded_filepath = final_path
-                row.mark_completed(filepath=final_path)
+                row.add_output_files([final_path])
+                if row.is_error():
+                    row.refresh_reveal_button()
+                else:
+                    row.mark_completed(filepath=final_path)
 
         # El job RECODE interno ya cumplió su propósito - no debe quedar visible ni
         # reintentable en la cola compartida con Proceso Avanzado / Herramientas

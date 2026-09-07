@@ -23,6 +23,55 @@ def _extract_vf_value(args: list) -> tuple:
     return value, remaining
 
 
+def source_has_real_video(input_file: str) -> bool:
+    """True si el archivo tiene un stream de video de verdad.
+
+    La carátula incrustada de un audio (la que la propia app mete con
+    `embed_thumbnail`) viaja como un stream de VIDEO mjpeg con disposición
+    `attached_pic`. ffmpeg la elige automáticamente como "el video" del archivo, así que
+    un preset de video aplicado a un .m4a intentaba codificar la carátula:
+
+        [mov] Could not find tag for codec prores in stream #0
+        Conversion failed!
+
+    El muxer mov guarda un attached_pic como carátula, y ahí solo caben jpeg/png -- no
+    prores. Distinguirlo por la disposición es preciso: un archivo de imagen de verdad
+    (jpg/png de entrada) NO es attached_pic, así que convertir una imagen a video sigue
+    funcionando igual. Mismo criterio que usa ffprobe_metadata_manager.py al decidir si
+    un medio "tiene video".
+
+    Ante la duda (sin ffprobe, salida ilegible) devuelve True: se mantiene el
+    comportamiento de siempre en vez de tirar el video de un archivo que sí lo tenía.
+    """
+    import json
+    import subprocess
+    from core.setup.ffmpeg_setup import get_ffprobe_path
+
+    try:
+        ffprobe = get_ffprobe_path()
+        if not ffprobe or not os.path.exists(ffprobe):
+            return True
+        startupinfo = None
+        if os.name == 'nt':
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        salida = subprocess.run(
+            [ffprobe, "-v", "quiet", "-print_format", "json", "-show_streams",
+             "-select_streams", "v", input_file],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=30, startupinfo=startupinfo,
+        )
+        if salida.returncode != 0:
+            return True
+        streams = (json.loads(salida.stdout or "{}") or {}).get("streams") or []
+        if not streams:
+            return False
+        return any(not (st.get("disposition") or {}).get("attached_pic", 0) for st in streams)
+    except Exception as e:
+        logger.warning(f"QueueWorker: No se pudo sondear el video de '{input_file}': {e}")
+        return True
+
+
 class JobStatus:
     PENDING = "PENDING"
     ANALYZING = "ANALYZING"
@@ -771,7 +820,22 @@ class QueueWorker(QThread):
 
         # Opciones de Video
         video_mode = settings.get("video_mode", "recode")
-        if stream_mode == "audio_only" or video_mode == "none":
+        is_gif = (settings.get("video_codec") == "gif" or settings.get("container") == "gif")
+        # Un preset de video sobre un archivo SIN video (un audio con carátula
+        # incrustada) hacía que ffmpeg intentase codificar la carátula y el job entero
+        # fallaba. Con una playlist de audio eso tumbaba la recodificación de todos los
+        # ítems, uno por uno.
+        sin_video_real = (stream_mode != "audio_only" and video_mode != "none"
+                          and not source_has_real_video(input_file))
+        if sin_video_real:
+            logger.info(f"QueueWorker: '{os.path.basename(input_file)}' no tiene video "
+                        f"(solo audio o carátula incrustada): se recodifica solo el audio.")
+            audio_mode_previo = settings.get("audio_mode", "recode")
+            if audio_mode_previo == "none" or stream_mode == "video_only" or is_gif:
+                return False, ("El archivo no tiene pista de video y el ajuste elegido "
+                               "descarta el audio: no quedaría nada que guardar.")
+
+        if stream_mode == "audio_only" or video_mode == "none" or sin_video_real:
             cmd.append("-vn")
         elif use_watermark_image and video_mode != "copy":
             # No se puede usar -vf junto con -filter_complex apuntando al mismo stream:
@@ -800,7 +864,6 @@ class QueueWorker(QThread):
 
         # Opciones de Audio
         audio_mode = settings.get("audio_mode", "recode")
-        is_gif = (settings.get("video_codec") == "gif" or settings.get("container") == "gif")
         if stream_mode == "video_only" or audio_mode == "none" or is_gif:
             cmd.append("-an")
         else:

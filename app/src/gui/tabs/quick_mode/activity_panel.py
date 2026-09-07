@@ -13,7 +13,7 @@ from PySide6.QtCore import Qt, QSize, Signal, QEvent
 from PySide6.QtGui import QIcon
 
 from gui.styles import get_theme_token
-from gui.tabs.quick_mode.download_row import QuickDownloadRow
+from gui.tabs.quick_mode.download_row import QuickDownloadRow, PlaylistGroupRow
 from gui.widgets.native_file_drag import start_native_file_drag
 from core.logger.logger_manager import logger
 from core.utils.paths import get_src_dir
@@ -30,6 +30,10 @@ class ActivityPanel(QFrame):
         super().__init__(parent)
         self.setObjectName("activityPanel")
         self.item_rows = []
+        # Tarjetas de grupo (una por playlist). Van aparte de item_rows porque item_rows
+        # sigue siendo la lista PLANA de filas de ítem, que es contra la que trabajan la
+        # selección, el arrastre y el reparto de progreso del controlador.
+        self.group_rows = []
         self.item_keys = []
         self.current_item_pos = 0
         self.completed_items = 0
@@ -156,7 +160,7 @@ class ActivityPanel(QFrame):
         self.activity_scroll.viewport().installEventFilter(self)
         layout.addWidget(self.activity_scroll, 1)
 
-    def add_activity_rows(self, entries, selected_indices):
+    def add_activity_rows(self, entries, selected_indices, group_title=None):
         self.empty_lbl.hide()
         self.btn_cancel_all.show()
         self.btn_clear_all.show()
@@ -164,26 +168,72 @@ class ActivityPanel(QFrame):
         new_rows = []
         new_keys = []
 
+        # Con más de un elemento se trata de una playlist: sus filas van DENTRO de una
+        # tarjeta de grupo plegable en vez de sueltas en la lista. Nueve vídeos ya no
+        # inundan el panel, y desplegándola se sigue viendo el estado de cada uno.
+        #
+        # Lo que se devuelve no cambia: las mismas filas y las mismas claves de siempre.
+        # Todo el reparto de progreso por ítem del controlador sigue funcionando sin
+        # enterarse de que ahora están agrupadas.
+        group = None
+        if len(entries) > 1:
+            group = PlaylistGroupRow(
+                self._playlist_group_title(entries, group_title), len(entries),
+                self.activity_container)
+            group.close_requested.connect(self._on_group_close)
+            group.drag_requested.connect(self._on_group_drag)
+            self.activity_layout.insertWidget(self.activity_layout.count() - 1, group)
+            self.group_rows.append(group)
+
         for idx, entry in enumerate(entries):
             title = entry.get("title") or entry.get("id") or entry.get("url") or (self.tr(f"Item {idx + 1}") if hasattr(self, "tr") else f"Item {idx + 1}")
             playlist_idx = entry.get("playlist_index") or (selected_indices[idx] + 1 if idx < len(selected_indices) else idx + 1)
             new_keys.append(playlist_idx)
-            
-            row = QuickDownloadRow(str(title), self.activity_container)
+
+            parent = group.items_container if group else self.activity_container
+            row = QuickDownloadRow(str(title), parent)
             row.update_metadata_from_dict(entry)
             row.close_requested.connect(self.row_close_requested.emit)
             row.reveal_requested.connect(self.row_reveal_requested.emit)
             row.selection_requested.connect(self._on_row_selection)
             row.drag_requested.connect(self._on_row_drag)
-            
-            self.activity_layout.insertWidget(self.activity_layout.count() - 1, row)
+
+            if group:
+                group.add_row(row)
+            else:
+                self.activity_layout.insertWidget(self.activity_layout.count() - 1, row)
             self.item_rows.append(row)
             new_rows.append(row)
 
         if new_rows:
-            new_rows[0].update_progress(0, status=self.tr("Preparando") if hasattr(self, "tr") else "Preparando")
-            
+            # Intermitente, no 0%: hasta que llegue el primer byte no hay porcentaje que
+            # enseñar, y en YouTube ese arranque tarda lo suficiente como para que una
+            # barra parada parezca que la app se colgó.
+            new_rows[0].set_waiting(self.tr("Preparando") if hasattr(self, "tr") else "Preparando")
+
         return new_rows, new_keys
+
+    def _playlist_group_title(self, entries, group_title=None):
+        """Nombre de la tarjeta de grupo.
+
+        El título de la lista lo da quien llama, porque en una extracción plana vive en
+        el nivel superior del análisis y NO en cada entrada: buscarlo en las entradas
+        dejaba la tarjeta llamándose "Playlist" siempre. Se mantiene la búsqueda en las
+        entradas como respaldo por si algún extractor sí lo pone ahí."""
+        base = self.tr("Playlist") if hasattr(self, "tr") else "Playlist"
+        titulo = group_title
+        if not titulo:
+            for entry in entries:
+                titulo = (entry or {}).get("playlist_title") or (entry or {}).get("playlist")
+                if titulo:
+                    break
+        return f'{base}: "{titulo}"' if titulo else base
+
+    def _on_group_close(self, group):
+        """La X del grupo cancela/quita sus ítems reutilizando la misma ruta que la X de
+        una fila suelta -- así no hay dos lógicas de cancelación que mantener."""
+        for row in group.rows():
+            self.row_close_requested.emit(row)
 
     def clear_activity_rows(self):
         for row in self.item_rows:
@@ -191,6 +241,12 @@ class ActivityPanel(QFrame):
                 row.destroy_row()
             self.activity_layout.removeWidget(row)
             row.deleteLater()
+        # Las tarjetas de grupo no están en item_rows (ver __init__): sin esto quedaban
+        # en el panel como cascarones vacíos tras vaciar la lista.
+        for group in self.group_rows:
+            self.activity_layout.removeWidget(group)
+            group.deleteLater()
+        self.group_rows = []
         self.item_rows = []
         self.item_keys = []
         self.current_item_pos = 0
@@ -259,6 +315,18 @@ class ActivityPanel(QFrame):
         if row not in rows:
             # Se arrastró una fila que no estaba seleccionada: manda ella sola.
             rows = [row] if row.is_draggable() else []
+        self._start_drag_for_rows(row, rows)
+
+    def _on_group_drag(self, group):
+        """Arrastrar la tarjeta de una playlist manda TODOS sus ítems terminados.
+
+        Se ignora la selección a propósito: el gesto es sobre la playlist entera, y es lo
+        que se espera al arrastrarla plegada, que es cuando no se ven los ítems."""
+        self._start_drag_for_rows(group, group.draggable_rows())
+
+    def _start_drag_for_rows(self, source_widget, rows):
+        """Única ruta de arrastre: la comparten una fila suelta y una tarjeta de
+        playlist, para que ambas resuelvan los archivos y los duplicados igual."""
         if not rows:
             return
 
@@ -282,7 +350,19 @@ class ActivityPanel(QFrame):
         badge = "" if len(files) == 1 else (
             self.tr("{0} archivos").format(len(files)) if hasattr(self, "tr") else f"{len(files)} archivos"
         )
-        start_native_file_drag(row, files, badge_text=badge)
+        start_native_file_drag(source_widget, files, badge_text=badge)
+
+    def _group_of(self, row):
+        for group in self.group_rows:
+            if row in group.rows():
+                return group
+        return None
+
+    def _remove_group(self, group):
+        if group in self.group_rows:
+            self.group_rows.remove(group)
+        self.activity_layout.removeWidget(group)
+        group.deleteLater()
 
     def remove_row(self, row):
         if row not in self.item_rows:
@@ -292,9 +372,17 @@ class ActivityPanel(QFrame):
         if self._selection_anchor is row:
             self._selection_anchor = None
         row.destroy_row()
+        # Si la fila vivía dentro de una playlist hay que sacarla DE AHÍ: su layout es el
+        # del grupo, no el del panel, así que este removeWidget no la tocaría y el grupo
+        # seguiría contándola. Y una playlist sin ítems no debe dejar la tarjeta vacía.
+        group = self._group_of(row)
+        if group:
+            group.remove_row(row)
         self.activity_layout.removeWidget(row)
         row.deleteLater()
-        
+        if group and group.is_empty():
+            self._remove_group(group)
+
         if not self.item_rows:
             self.empty_lbl.show()
             self.btn_cancel_all.hide()

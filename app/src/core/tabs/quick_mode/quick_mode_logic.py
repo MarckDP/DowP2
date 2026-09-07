@@ -46,9 +46,15 @@ def build_quick_request_data(url, title, mode, quality, output_path, speed_limit
         format_selector = quick_format_selector(mode, quality, url=url)
 
     request_title = title
+    # El título de la playlist se conserva aparte: `title` se vacía porque en una lista
+    # el nombre de cada archivo lo pone yt-dlp por ítem, y el de la lista solo sirve
+    # como carpeta. Pero la interfaz sí necesita saber cómo se llama la playlist para
+    # poder nombrar su tarjeta, y sin esta clave llegaba vacío.
+    playlist_title = None
     if is_playlist and title:
         safe_folder = re.sub(r'[<>:"/\\|?*#]', '', str(title)).strip() or "Playlist"
         output_path = os.path.join(output_path, safe_folder)
+        playlist_title = str(title)
         request_title = ""
 
     config = get_config()
@@ -65,6 +71,7 @@ def build_quick_request_data(url, title, mode, quality, output_path, speed_limit
         "embed_thumbnail": config.get("embed_thumbnail", True),
         "remove_sponsors": config.get("remove_sponsors", False),
         "is_playlist": is_playlist,
+        "playlist_title": playlist_title,
         "force_audio_extract": mode_selector == "audio_only",
         "audio_ext": "mp3" if mode_selector == "audio_only" and quality in ("320", "192", "128") else None,
         "video_ext": "mp4" if mode_selector != "audio_only" else None,

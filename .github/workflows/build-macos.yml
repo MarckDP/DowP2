@@ -1,0 +1,46 @@
+name: Build macOS (manual)
+
+# Disparo manual a proposito: el repo es privado, y macOS consume la bolsa de
+# minutos gratis de Actions a 10x contra Linux/Windows -- mejor gastarla solo
+# cuando de verdad hace falta un build de prueba, no en cada push.
+on:
+  workflow_dispatch: {}
+
+jobs:
+  build-macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14   # Apple Silicon (arm64) -- el caso estricto: sin firma no arranca
+            arch_label: arm64
+          - os: macos-13   # Intel (x64)
+            arch_label: x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r app/requirements.txt
+          pip install pyinstaller==6.22.2
+
+      - name: Compilar DowP (DowP.app + helper de swap, firma ad-hoc incluida)
+        working-directory: app
+        run: python build_cross_platform.py
+
+      - name: Empaquetar el .app preservando firma/atributos (ditto, no zip)
+        working-directory: app/dist
+        run: ditto -c -k --keepParent DowP.app DowP-macos-${{ matrix.arch_label }}.zip
+
+      - name: Subir como artifact del run
+        uses: actions/upload-artifact@v4
+        with:
+          name: DowP-macos-${{ matrix.arch_label }}
+          path: app/dist/DowP-macos-${{ matrix.arch_label }}.zip
+          retention-days: 5

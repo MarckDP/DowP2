@@ -1,0 +1,295 @@
+body {
+    background-color: #1d1d1d;
+    color: #dcdcdc;
+    font-family: sans-serif;
+    margin: 0;
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    overflow-y: hidden;
+}
+.container {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+#status-indicator {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    transition: background-color 0.3s ease;
+}
+.disconnected { background-color: #070707; }
+.linked-elsewhere { background-color: #f39c12; } 
+.connected { background-color: #2ecc71; }
+.dowp-closed { 
+    background-color: #e74c3c; 
+}
+.launching {
+    background: linear-gradient(45deg, #3498db, #74c0fc);
+    animation: pulse-launching 1.5s ease-in-out infinite;
+}
+
+.connecting {
+    background-color: #74c0fc;
+    animation: pulse-connecting 1s ease-in-out infinite;
+}
+.icon-button {
+    width: 32px;
+    height: 32px;
+    background-color: #4a4a4a;
+    border-radius: 8px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-size: 18px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+.icon-button:hover,
+.checkbox-container:hover {
+    background-color: #6a6a6a;
+    transform: scale(1.1);
+}
+.icon-button:active {
+    background-color: #3a3a3a;
+    transform: scale(1.0);
+}
+.log-area {
+    padding-top: 2px;
+    flex-grow: 1;
+}
+#log-text {
+    font-size: 12px;
+    color: #999;
+}
+@keyframes pulse-animation {
+  0% { opacity: 1; }
+  50% { opacity: 0.5; }
+  100% { opacity: 1; }
+}
+.loading {
+  background-color: #f39c12;
+  animation: pulse-animation 1.5s infinite ease-in-out;
+}
+.checkbox-container {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    background-color: #4a4a4a; 
+    border-radius: 8px;
+    transition: all 0.2s ease;
+}
+
+.checkbox-container:hover {
+    background-color: #6a6a6a;
+}
+
+.checkbox-container.is-active {
+    background-color: #2680eb;
+}
+.checkbox-container.is-active:hover {
+    background-color: #4a9eef;
+    transform: scale(1.1);
+}
+
+#add-to-timeline-label {
+    font-size: 18px;
+    cursor: pointer;
+    opacity: 0.7; 
+    transition: opacity 0.2s ease;
+}
+
+#add-to-timeline-checkbox:checked + #add-to-timeline-label {
+    opacity: 1;
+}
+
+#add-to-timeline-checkbox:disabled + #add-to-timeline-label {
+    cursor: not-allowed;
+    opacity: 0.2;
+}
+
+#add-to-timeline-checkbox:disabled ~ .checkbox-container {
+    background-color: #333333;
+    cursor: not-allowed;
+}
+
+.checkbox-container input[type="checkbox"] {
+    display: none;
+}
+
+@keyframes pulse-launching {
+    0%, 100% {
+        transform: scale(1);
+        opacity: 0.8;
+    }
+    50% {
+        transform: scale(1.2);
+        opacity: 1;
+    }
+}
+
+@keyframes pulse-connecting {
+    0%, 100% {
+        opacity: 0.5;
+    }
+    50% {
+        opacity: 1;
+    }
+
+}
+@media (max-width: 160px) {
+    .container {
+        flex-direction: column; 
+        align-items: stretch;   
+        gap: 8px;               
+    }
+
+    .log-area {
+        padding-top: 8px;
+    }
+}
+
+#btn-launch {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;               
+  height: 32px;
+  padding: 0;
+  border-radius: 6px;
+  border: none;
+  cursor: pointer;
+  color: white;
+  font-size: 18px;
+  box-sizing: border-box;   
+  transition: transform .14s ease, box-shadow .18s ease, background-color .18s ease;
+  vertical-align: middle;    
+  background: transparent;   
+}
+
+#btn-launch.state-closed {
+  background: #4a4a4f; 
+  box-shadow: none;
+  transform: none; 
+}
+
+#btn-launch.state-open {
+  background: #2ecc71; 
+  box-shadow: 0 8px 22px rgba(46,204,113,0.14);
+  transform: none;
+}
+
+#btn-launch:hover {
+  transform: scale(1.06); 
+  box-shadow: 0 12px 30px rgba(0,0,0,0.08); 
+}
+
+#btn-launch.state-open:hover {
+  box-shadow: 0 14px 36px rgba(46,204,113,0.20); 
+  transform: scale(1.08);
+}
+
+#btn-launch:focus {
+  outline: 3px solid rgba(255,255,255,0.06);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+#btn-launch .icon {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  line-height: 1;
+  text-align: center;
+}
+
+#btn-check.state-disconnected { background: #3a3a3f; box-shadow: none; }   /* gris oscuro */
+#btn-check.state-connecting   { background: #030423; box-shadow: 0 6px 18px rgba(127,179,255,0.12); color:#022b44; }
+#btn-check.state-connected    { background: #2680eb; box-shadow: 0 6px 18px rgba(47,111,214,0.12); } /* azul */
+#btn-check.state-linked-other { background: #f39c12; box-shadow: 0 6px 18px rgba(243,156,18,0.12); } /* naranja */
+#btn-check.state-linked-me    { background: #2ecc71; box-shadow: 0 6px 18px rgba(46,204,113,0.12); } /* verde */
+
+@keyframes link-pulse {
+  0% { transform: translateY(0); }
+  50% { transform: translateY(-2px); }
+  100% { transform: translateY(0); }
+}
+#btn-check.state-connecting { animation: link-pulse 1.2s infinite ease-in-out; }
+
+#btn-check .icon {
+  display: inline-flex;          
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  line-height: 1;
+  font-size: 18px;               
+  vertical-align: middle;
+  transform: translateY(0);      
+}
+
+#btn-check:focus { outline: 3px solid rgba(255,255,255,0.06); outline-offset: 2px; border-radius:6px; }
+
+.glow-active {
+  box-shadow: 0 10px 28px rgba(46,204,113,0.16), inset 0 1px 0 rgba(255,255,255,0.03);
+  transform: translateY(-1px);
+  transition: box-shadow .22s ease, transform .14s ease;
+}
+
+.glow-strong {
+  box-shadow: 0 14px 40px rgba(46,204,113,0.22), 0 2px 8px rgba(46,204,113,0.08);
+  transform: translateY(-2px);
+}
+
+@keyframes active-pulse {
+  0% { box-shadow: 0 8px 22px rgba(46,204,113,0.12); transform: translateY(0); }
+  50% { box-shadow: 0 14px 36px rgba(46,204,113,0.18); transform: translateY(-1px); }
+  100% { box-shadow: 0 8px 22px rgba(46,204,113,0.12); transform: translateY(0); }
+}
+.glow-pulse {
+  animation: active-pulse 1.6s infinite ease-in-out;
+}
+
+.glow-blue { box-shadow: 0 10px 28px rgba(47,111,214,0.14); }
+.glow-orange { box-shadow: 0 10px 28px rgba(243,156,18,0.14); }
+
+.is-disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+/* --- Estilo Botón de Envío --- */
+#btn-send-to-dowp {
+    background-color: #6F42C1; /* Morado (Color de proceso) */
+    color: white;
+    transition: all 0.2s ease;
+    opacity: 1;
+    pointer-events: auto;
+}
+
+#btn-send-to-dowp:hover {
+    background-color: #845ef7; /* Morado más claro */
+    transform: scale(1.05);
+    box-shadow: 0 0 8px rgba(111, 66, 193, 0.5);
+}
+
+#btn-send-to-dowp:active {
+    transform: scale(0.95);
+    background-color: #59369a;
+}
+
+/* Clase para deshabilitar visualmente (cuando no hay conexión) */
+#btn-send-to-dowp.is-disabled {
+    background-color: #3a3a3f; /* Gris oscuro */
+    color: #777;
+    cursor: not-allowed;
+    opacity: 0.5;
+    pointer-events: none;
+    box-shadow: none;
+    transform: none;
+}

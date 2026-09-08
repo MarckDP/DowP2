@@ -1,0 +1,41 @@
+PySide6>=6.11.0
+requests>=2.33.1
+curl_cffi==0.14.0
+mutagen>=1.47.0
+pycryptodomex>=3.23.0
+websockets>=16.0
+# Compresion de los objetos del updater (tools/updater/): formato de los objetos
+# content-addressed que sube el publicador y que el cliente de descarga (pieza 2,
+# aun no implementada) tendra que descomprimir con la misma libreria.
+zstandard>=0.22.0
+brotli>=1.2.0
+watchdog>=6.0.0
+python-socketio>=5.11.0
+aiohttp>=3.9.5
+fonttools>=4.63.0
+Pillow>=10.0.0
+psd-tools>=1.9.0
+pillow-heif>=0.18.0
+pillow-avif-plugin>=1.4.0
+rawpy>=0.20.0
+pypdfium2>=4.30.0
+resvg_py>=0.5.0
+img2pdf>=0.5.0
+
+# Motor de inferencia ONNX (rembg / futuros modelos de IA) -- mismo paquete a nivel de
+# import ("import onnxruntime") en los 3 SO, pero NO instalable dos veces: DirectML y el
+# build estándar comparten el mismo nombre de módulo top-level, así que pip solo puede
+# tener uno de los dos activo por entorno. Se resuelve con marcadores de entorno (PEP 508)
+# para que cada máquina instale el que le corresponde con el mismo "pip install -r
+# requirements.txt" -- no hace falta elegir a mano ni mantener dos requirements.txt:
+#   - Windows: onnxruntime-directml -- acelera por GPU vía DirectX 12, funciona igual con
+#     NVIDIA/AMD/Intel sin depender de un toolkit CUDA instalado aparte (clave para
+#     portabilidad: no se le puede pedir al usuario que instale CUDA).
+#   - macOS/Linux: onnxruntime estándar -- en macOS el wheel oficial ya trae compilado el
+#     CoreMLExecutionProvider (nada que instalar aparte); en Linux corre por CPU
+#     (CPUExecutionProvider), que es la opción portable sin pedirle drivers CUDA/ROCm al
+#     usuario -- ver core/utils/hardware_detector.py para el mismo criterio ya aplicado a
+#     los encoders de FFmpeg (hardware si está confirmado, software si no).
+onnxruntime-directml>=1.20.0; sys_platform == "win32"
+onnxruntime>=1.20.0; sys_platform != "win32"
+numpy>=1.26.0

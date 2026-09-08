@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ExtensionManifest Version="7.0" ExtensionBundleId="com.dowp.importer" ExtensionBundleVersion="1.9.0" ExtensionBundleName="DowP Importer">
+    <ExtensionList>
+        <Extension Id="com.dowp.importer" Version="1.9.0" />
+    </ExtensionList>
+    <ExecutionEnvironment>
+        <HostList>
+            <Host Name="PPRO" Version="[14.0,99.9]" />
+            <Host Name="AEFT" Version="[17.0,99.9]" />
+            <!-- Photoshop publica dos identificadores segun la instalacion (PHSP y PHXS):
+                 hay que declarar los dos o el panel no aparece en algunas maquinas. -->
+            <Host Name="PHSP" Version="[22.0,99.9]" />
+            <Host Name="PHXS" Version="[22.0,99.9]" />
+        </HostList>
+        <CSXS-RequiredProperties>
+            <Property Name="PlayerDebugMode">1</Property>
+            <Property Name="RequiredScriptAccess">full</Property>
+            <Property Name="EnableNetworkAccess">true</Property>
+        </CSXS-RequiredProperties>
+        <LocaleList>
+            <Locale Code="All" />
+        </LocaleList>
+        <RequiredRuntimeList>
+            <Runtime Name="CSXS" Version="7.0" />
+        </RequiredRuntimeList>
+    </ExecutionEnvironment>
+    <DispatchInfoList>
+        <Extension Id="com.dowp.importer">
+            <DispatchInfo>
+                <Resources>
+                    <MainPath>./index.html</MainPath>
+                    <ScriptPath>./js/extendscript.js</ScriptPath>
+                    <!-- Node.js habilita child_process, la unica via fiable
+                         para lanzar DowP en macOS (ExtendScript no puede).
+                         NO se activa el flag mixed-context a proposito:
+                         definiria module/exports globales y el UMD de
+                         socket.io.js dejaria de publicar window.io. Sin el,
+                         CEP expone Node en window.cep_node. -->
+                    <CEFCommandLine>
+                        <Parameter>--enable-nodejs</Parameter>
+                        <Parameter>--allow-file-access</Parameter>
+                        <Parameter>--allow-file-access-from-files</Parameter>
+                    </CEFCommandLine>
+                </Resources>
+                <Lifecycle>
+                    <!-- SIN <StartOn>: cargar la extension al arrancar el host hacia que
+                         Photoshop se saltara la pantalla de inicio y abriera el panel solo,
+                         incluso con el panel cerrado por el usuario. La extension se carga
+                         cuando el usuario abre el panel; a partir de ahi, la marca de
+                         persistencia de main.js (Photoshop) la mantiene viva aunque se
+                         minimice o se cierre el panel, que es lo que necesita la conexion
+                         con DowP. -->
+                    <AutoVisible>true</AutoVisible>
+                </Lifecycle>
+                <UI>
+                    <Type>Panel</Type>
+                    <Menu>DowP Importer</Menu>
+                    <Geometry>
+                        <Size>
+                            <Height>250</Height>
+                            <Width>200</Width>
+                        </Size>
+                    </Geometry>
+                    <Icons>
+                        <Icon Type="Normal">./icons/icon.png</Icon>
+                        <Icon Type="DarkNormal">./icons/icon.png</Icon>
+                    </Icons>
+                </UI>
+            </DispatchInfo>
+        </Extension>
+    </DispatchInfoList>
+</ExtensionManifest>

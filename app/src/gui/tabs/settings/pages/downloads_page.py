@@ -1,0 +1,215 @@
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QScrollArea, QSpinBox
+from PySide6.QtCore import Qt
+from core.utils.i18n import logger
+from core.utils.config_manager import get_config, save_config
+from gui.widgets.toggle_switch import ToggleSwitch
+from gui.styles import get_theme_token
+
+
+class DownloadsPage(QWidget):
+    """Página de ajustes de Descargas."""
+
+    def __init__(self):
+        super().__init__()
+        self._is_loading = True
+        self.init_ui()
+        self.load_current_settings()
+        self._is_loading = False
+
+    def init_ui(self):
+        self.main_layout = QVBoxLayout(self)
+        self.main_layout.setContentsMargins(0, 0, 0, 0)
+        self.main_layout.setSpacing(12)
+
+        # Title
+        self.title_label = QLabel(self.tr("Descargas"))
+        self.title_label.setObjectName("settingsTitle")
+        self.main_layout.addWidget(self.title_label)
+
+        # Divider
+        line = QFrame()
+        line.setObjectName("settingsDivider")
+        line.setFrameShape(QFrame.HLine)
+        line.setFrameShadow(QFrame.Sunken)
+        self.main_layout.addWidget(line)
+
+        # Crear el QScrollArea
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setFrameShape(QFrame.NoFrame)
+        self.scroll_area.setStyleSheet("QScrollArea { background-color: transparent; border: none; }")
+
+        # Widget contenedor para el contenido del scroll
+        self.scroll_content = QWidget()
+        self.scroll_content.setObjectName("settingsScrollContent")
+        self.scroll_content.setStyleSheet("QWidget#settingsScrollContent { background-color: transparent; }")
+
+        # Layout para el contenido del scroll
+        self.content_layout = QVBoxLayout(self.scroll_content)
+        self.content_layout.setContentsMargins(0, 10, 10, 0)
+        self.content_layout.setSpacing(12)
+        self.content_layout.setAlignment(Qt.AlignTop)
+
+        # --- SECCIÓN: OPCIONES DE DESCARGA ---
+        self.dl_section_label = QLabel(self.tr("Opciones de Descarga"))
+        self.dl_section_label.setObjectName("settingsSectionTitle")
+        self.content_layout.addWidget(self.dl_section_label)
+
+        # 1. Switch: Incrustar Metadatos
+        self.metadata_row = QHBoxLayout()
+        self.metadata_vbox = QVBoxLayout()
+        self.metadata_label = QLabel(self.tr("Incrustar Metadatos"))
+        self.metadata_label.setObjectName("settingsLabel")
+        self.metadata_desc = QLabel(self.tr("Añade información del video (título, autor, fecha) dentro del archivo multimedia."))
+        self.metadata_desc.setStyleSheet("color: #888888; font-size: 11px;")
+        self.metadata_vbox.addWidget(self.metadata_label)
+        self.metadata_vbox.addWidget(self.metadata_desc)
+        self.metadata_switch = ToggleSwitch()
+        self.metadata_row.addLayout(self.metadata_vbox)
+        self.metadata_row.addStretch()
+        self.metadata_row.addWidget(self.metadata_switch)
+        self.content_layout.addLayout(self.metadata_row)
+
+        # 2. Switch: Incrustar Carátula
+        self.thumb_row = QHBoxLayout()
+        self.thumb_vbox = QVBoxLayout()
+        self.thumb_label = QLabel(self.tr("Incrustar carátula"))
+        self.thumb_label.setObjectName("settingsLabel")
+        self.thumb_desc = QLabel(self.tr("Utiliza la miniatura del video como imagen de portada del archivo descargado."))
+        self.thumb_desc.setStyleSheet("color: #888888; font-size: 11px;")
+        self.thumb_vbox.addWidget(self.thumb_label)
+        self.thumb_vbox.addWidget(self.thumb_desc)
+        self.thumb_switch = ToggleSwitch()
+        self.thumb_row.addLayout(self.thumb_vbox)
+        self.thumb_row.addStretch()
+        self.thumb_row.addWidget(self.thumb_switch)
+        self.content_layout.addLayout(self.thumb_row)
+
+        # 3. Switch: Eliminar Sponsors (SponsorBlock)
+        self.sponsors_row = QHBoxLayout()
+        self.sponsors_vbox = QVBoxLayout()
+        self.sponsors_label = QLabel(self.tr("Eliminar sponsors"))
+        self.sponsors_label.setObjectName("settingsLabel")
+        self.sponsors_desc = QLabel(self.tr("Utiliza SponsorBlock para identificar y omitir segmentos publicitarios dentro del video."))
+        self.sponsors_desc.setStyleSheet("color: #888888; font-size: 11px;")
+        self.sponsors_vbox.addWidget(self.sponsors_label)
+        self.sponsors_vbox.addWidget(self.sponsors_desc)
+        self.sponsors_switch = ToggleSwitch()
+        self.sponsors_row.addLayout(self.sponsors_vbox)
+        self.sponsors_row.addStretch()
+        self.sponsors_row.addWidget(self.sponsors_switch)
+        self.content_layout.addLayout(self.sponsors_row)
+
+        # 4. Switch: Impersonate
+        self.imp_row = QHBoxLayout()
+        self.imp_vbox = QVBoxLayout()
+        self.imp_label = QLabel(self.tr("Usar Impersonate (Disfraz de Navegador)"))
+        self.imp_label.setObjectName("settingsLabel")
+        self.imp_desc = QLabel(self.tr("Evita bloqueos de YouTube simulando ser Chrome. (Puede ser más lento)"))
+        self.imp_desc.setStyleSheet("color: #888888; font-size: 11px;")
+        self.imp_vbox.addWidget(self.imp_label)
+        self.imp_vbox.addWidget(self.imp_desc)
+        self.imp_switch = ToggleSwitch()
+        self.imp_row.addLayout(self.imp_vbox)
+        self.imp_row.addStretch()
+        self.imp_row.addWidget(self.imp_switch)
+        self.content_layout.addLayout(self.imp_row)
+
+        # 5. SpinBox: Descargas simultáneas
+        self.concurrent_row = QHBoxLayout()
+        self.concurrent_vbox = QVBoxLayout()
+        self.concurrent_label = QLabel(self.tr("Descargas simultáneas"))
+        self.concurrent_label.setObjectName("settingsLabel")
+        self.concurrent_desc = QLabel(self.tr("Número máximo de descargas que se procesarán en paralelo a la vez (1 a 10)."))
+        self.concurrent_desc.setStyleSheet("color: #888888; font-size: 11px;")
+        self.concurrent_vbox.addWidget(self.concurrent_label)
+        self.concurrent_vbox.addWidget(self.concurrent_desc)
+        
+        self.concurrent_spin = QSpinBox()
+        self.concurrent_spin.setRange(1, 10)
+        self.concurrent_spin.setFixedWidth(70)
+        self.concurrent_spin.setFixedHeight(28)
+        self.concurrent_spin.setStyleSheet(f"""
+            QSpinBox {{
+                background-color: {get_theme_token('fondo_secundario', '#1e1e1e')};
+                color: {get_theme_token('texto_principal', '#ffffff')};
+                border: 1px solid {get_theme_token('borde', '#2d2d2d')};
+                border-radius: 6px;
+                padding: 2px 6px;
+                font-weight: bold;
+            }}
+        """)
+        self.concurrent_row.addLayout(self.concurrent_vbox)
+        self.concurrent_row.addStretch()
+        self.concurrent_row.addWidget(self.concurrent_spin)
+        self.content_layout.addLayout(self.concurrent_row)
+
+        # Finalizar setup del scroll area
+        self.scroll_area.setWidget(self.scroll_content)
+        self.main_layout.addWidget(self.scroll_area)
+
+        # Configuración de colores del switch (basado en tema)
+        self.update_switch_colors()
+
+        # Connections
+        self.metadata_switch.toggled.connect(self.on_embed_metadata_toggled)
+        self.thumb_switch.toggled.connect(self.on_embed_thumbnail_toggled)
+        self.sponsors_switch.toggled.connect(self.on_remove_sponsors_toggled)
+        self.imp_switch.toggled.connect(self.on_impersonate_toggled)
+        self.concurrent_spin.valueChanged.connect(self.on_concurrent_downloads_changed)
+
+    def update_switch_colors(self):
+        config = get_config()
+        accent = "#B9E640" if config.get("theme") == "dark" else "#1DC038"
+        self.metadata_switch.setTrackColors("#333333", accent)
+        self.thumb_switch.setTrackColors("#333333", accent)
+        self.sponsors_switch.setTrackColors("#333333", accent)
+        self.imp_switch.setTrackColors("#333333", accent)
+
+    def load_current_settings(self):
+        config = get_config()
+        self.metadata_switch.setChecked(config.get("embed_metadata", True))
+        self.thumb_switch.setChecked(config.get("embed_thumbnail", True))
+        self.sponsors_switch.setChecked(config.get("remove_sponsors", False))
+        self.imp_switch.setChecked(config.get("use_impersonate", False))
+        self.concurrent_spin.setValue(config.get("max_concurrent_downloads", 3))
+
+    def on_embed_metadata_toggled(self, checked):
+        if self._is_loading: return
+        config = get_config()
+        config["embed_metadata"] = checked
+        save_config(config)
+        logger.info(f"DownloadsPage: Incrustar metadatos cambiado a: {checked}")
+
+    def on_embed_thumbnail_toggled(self, checked):
+        if self._is_loading: return
+        config = get_config()
+        config["embed_thumbnail"] = checked
+        save_config(config)
+        logger.info(f"DownloadsPage: Incrustar carátula cambiado a: {checked}")
+
+    def on_remove_sponsors_toggled(self, checked):
+        if self._is_loading: return
+        config = get_config()
+        config["remove_sponsors"] = checked
+        save_config(config)
+        logger.info(f"DownloadsPage: Eliminar sponsors cambiado a: {checked}")
+
+    def on_impersonate_toggled(self, checked):
+        if self._is_loading: return
+        config = get_config()
+        config["use_impersonate"] = checked
+        save_config(config)
+        logger.info(f"DownloadsPage: Uso de Impersonate cambiado a: {checked}")
+
+    def on_concurrent_downloads_changed(self, value):
+        if self._is_loading: return
+        config = get_config()
+        config["max_concurrent_downloads"] = value
+        save_config(config)
+        logger.info(f"DownloadsPage: Descargas simultáneas cambiadas a: {value}")
+        from core.utils.queue_manager import QueueManager
+        qm = QueueManager.get_instance() if hasattr(QueueManager, "get_instance") else None
+        if qm:
+            qm.update_max_concurrent_downloads(value)
+

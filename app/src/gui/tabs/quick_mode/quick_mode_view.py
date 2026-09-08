@@ -134,6 +134,7 @@ class QuickModeTab(QWidget):
         bar.setObjectName("quickRecodeBar")
         bar.setCursor(Qt.PointingHandCursor)
         bar.setMinimumWidth(200)
+        bar.setToolTip(self.tr("Abrir opciones de recodificación para convertir formatos"))
         layout = QHBoxLayout(bar)
         layout.setContentsMargins(15, 6, 15, 6)
         layout.setSpacing(6)
@@ -199,10 +200,12 @@ class QuickModeTab(QWidget):
         self.combo_tags = AutoPopupComboBox()
         self.combo_tags.setObjectName("tagsComboBox")
         self.combo_tags.setPlaceholderText(self.tr("Etiqueta"))
+        self.combo_tags.setToolTip(self.tr("Aplica rutas y configuraciones predefinidas según la etiqueta elegida"))
         self.combo_tags.currentIndexChanged.connect(self._on_label_changed)
 
         # ComboBox de Modo (a la derecha de etiqueta)
         self.mode_combo = AutoPopupComboBox()
+        self.mode_combo.setToolTip(self.tr("Elige descargar Video + Audio, Solo Audio o Solo Video"))
         self.mode_combo.addItem(self.tr("Video + Audio"), "video+audio")
         self.mode_combo.addItem(self.tr("Solo Audio"), "audio_only")
         self.mode_combo.addItem(self.tr("Solo Video"), "video_only")
@@ -211,6 +214,7 @@ class QuickModeTab(QWidget):
 
         # ComboBox de Calidad (a la derecha de modo)
         self.quality_combo = RichComboBox()
+        self.quality_combo.setToolTip(self.tr("Selecciona la resolución o calidad máxima deseada para el medio"))
         self.quality_combo.setItemDelegate(RichTextDelegate(self.quality_combo))
 
         # Botón conmutable para activar el recorte de fragmentos - pegado a la URL (ver
@@ -218,7 +222,7 @@ class QuickModeTab(QWidget):
         self.btn_cut = QPushButton()
         self.btn_cut.setCheckable(True)
         self.btn_cut.setFixedSize(32, 32)
-        self.btn_cut.setToolTip(self.tr("Activar recorte de fragmento"))
+        self.btn_cut.setToolTip(self.tr("Activar recorte de fragmentos de video o audio"))
         self.btn_cut.setIconSize(QSize(18, 18))
         self.btn_cut.toggled.connect(self._on_cut_toggled)
         apply_cut_button_style(self.btn_cut, "normal", icon_size=18, shape="square")
@@ -252,6 +256,7 @@ class QuickModeTab(QWidget):
         layout.setSpacing(12)
 
         self.chk_playlist_selector = QCheckBox(self.tr("Playlist"))
+        self.chk_playlist_selector.setToolTip(self.tr("Si es una playlist, permite elegir qué videos descargar"))
         self.chk_playlist_selector.toggled.connect(self._on_playlist_selector_toggled)
         layout.addWidget(self.chk_playlist_selector)
 
@@ -264,9 +269,11 @@ class QuickModeTab(QWidget):
         layout.addWidget(divider)
 
         self.chk_thumb_file = QCheckBox(self.tr("Guardar miniatura"))
+        self.chk_thumb_file.setToolTip(self.tr("Guarda también la imagen de portada en un archivo aparte"))
         layout.addWidget(self.chk_thumb_file)
 
         self.chk_thumb_only = QCheckBox(self.tr("Solo miniatura"))
+        self.chk_thumb_only.setToolTip(self.tr("Descarga EXCLUSIVAMENTE la imagen de portada (no descarga el video/audio)"))
         self.chk_thumb_only.toggled.connect(self._on_thumbnail_only_toggled)
         layout.addWidget(self.chk_thumb_only)
 
@@ -612,7 +619,11 @@ class QuickModeTab(QWidget):
             
             sub_tut = TutorialOverlay(self._dummy_frag_dialog, frag_steps)
             sub_tut.finished.connect(self._dummy_frag_dialog.accept)
+            
+            self.tutorial_overlay.card.hide()
             self._dummy_frag_dialog.exec()
+            self.tutorial_overlay.card.show()
+            
             self._dummy_frag_dialog.deleteLater()
             self._dummy_frag_dialog = None
 
@@ -647,7 +658,11 @@ class QuickModeTab(QWidget):
             
             sub_tut = TutorialOverlay(self._dummy_playlist_dialog, play_steps)
             sub_tut.finished.connect(self._dummy_playlist_dialog.accept)
+            
+            self.tutorial_overlay.card.hide()
             self._dummy_playlist_dialog.exec()
+            self.tutorial_overlay.card.show()
+            
             self._dummy_playlist_dialog.deleteLater()
             self._dummy_playlist_dialog = None
 

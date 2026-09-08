@@ -27,8 +27,10 @@ class UpdateCheckWorker(QThread):
         self._install_dir = install_dir  # None -> compute_diff usa sys.executable (frozen)
 
     def run(self):
+        from core.utils.config_manager import get_config
+        channel = get_config().get("update_channel", "stable")
         try:
-            manifest = fetch_and_verify_manifest(UPDATE_REPO)
+            manifest = fetch_and_verify_manifest(UPDATE_REPO, channel=channel)
         except Exception as e:
             # Incluye ManifestVerificationError (firma invalida/manifiesto ausente),
             # errores de red y el 404 normal de "este repo todavia no tiene releases".

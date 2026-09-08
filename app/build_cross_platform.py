@@ -143,7 +143,8 @@ def build_updater_helper(dist_root, work_root):
     asi que la extraccion a temp en cada arranque no importa, y evita meter
     un segundo _internal/ dentro del arbol de DowP.exe. Sin --add-data de
     src/ completo: el helper solo importa core.updater/.logger/.utils.paths
-    (puro stdlib), no necesita iconos, temas, ni el importer.
+    (puro stdlib), no necesita temas ni el importer -- solo su propio icono
+    (DowP_Updater.ico/.icns), pasado aparte via --icon, no --add-data.
 
     Sale DENTRO del mismo arbol que dist_root (junto a DowP.exe en Windows,
     dentro de Contents/MacOS en el .app de macOS): al vivir en el arbol que
@@ -164,6 +165,8 @@ def build_updater_helper(dist_root, work_root):
         "--specpath", os.path.join(work_root, "helper"),
         "--paths", SRC_DIR,
     ]
+    if HELPER_ICON_FILE and os.path.exists(HELPER_ICON_FILE):
+        helper_args.extend(["--icon", HELPER_ICON_FILE])
     if not IS_MACOS:
         # En Windows suprime el flash de una consola al lanzar el helper. En
         # macOS, --onefile + --windowed hace que PyInstaller genere ADEMAS un
@@ -195,10 +198,18 @@ IS_MACOS = CURRENT_SYSTEM == "Darwin"
 
 if IS_WINDOWS:
     ICON_FILE = os.path.join(SRC_DIR, "assets", "icons", "app", "DowP_Logo.ico")
+    HELPER_ICON_FILE = os.path.join(SRC_DIR, "assets", "icons", "app", "DowP_Updater.ico")
 elif IS_MACOS:
     ICON_FILE = os.path.join(SRC_DIR, "assets", "icons", "app", "DowP_Logo.icns")
+    # Cosmetico nada mas: el helper se compila --onefile SIN --windowed en macOS
+    # (ver build_updater_helper()), asi que no hay .app/Info.plist que lo asocie
+    # a este icono -- Finder le sigue mostrando el generico de ejecutable Unix.
+    # Se pasa de todas formas por si un PyInstaller futuro lo aprovecha, y por
+    # paridad con Windows, donde si se ve en el Explorador.
+    HELPER_ICON_FILE = os.path.join(SRC_DIR, "assets", "icons", "app", "DowP_Updater.icns")
 else:
     ICON_FILE = None  # PyInstaller no soporta --icon nativamente en Linux
+    HELPER_ICON_FILE = None
 
 if not os.path.exists(MAIN_SCRIPT):
     print(f"ERROR: no se encontro main.py en {MAIN_SCRIPT}")

@@ -1566,3 +1566,53 @@ class EditingMediaTab(FreesoundMixin, PlaybackMixin, TreeListMixin, QWidget):
         current_item = self.tree_folders.currentItem()
         if current_item and current_item.data(0, Qt.UserRole).get("tipo") in ("root_physical", "root_virtual"):
             self._update_media_list()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        from core.utils.config_manager import get_config, save_config
+        config = get_config()
+        if not config.get("tutorial_editing_media_seen", False):
+            # Usar QTimer para permitir que la UI se renderice antes de mostrar el tutorial
+            QTimer.singleShot(500, self.start_tutorial)
+            config["tutorial_editing_media_seen"] = True
+            save_config(config)
+
+    def start_tutorial(self):
+        from gui.widgets.tutorial_overlay import TutorialOverlay
+        steps = [
+            {
+                "title": self.tr("Botón Indexar Carpetas"),
+                "desc": self.tr("¡Indexa tus carpetas o archivos favoritos! DowP procesará los metadatos en segundo plano para que la búsqueda sea instantánea."),
+                "widgets": [self.btn_add_folder]
+            },
+            {
+                "title": self.tr("Árbol de Fuentes"),
+                "desc": self.tr("Revisa tus medios indexados fácilmente, navega por tu disco, y guarda tus carpetas favoritas o colecciones personalizadas."),
+                "widgets": [self.tree_folders]
+            },
+            {
+                "title": self.tr("Medios Web"),
+                "desc": self.tr("Además, expandiendo la sección 'Medios Web', puedes buscar y descargar sonidos o imágenes directamente de sitios como Freesound y Wikimedia para tus proyectos."),
+                "widgets": [self.tree_folders]
+            },
+            {
+                "title": self.tr("Explorador Central"),
+                "desc": self.tr("Organiza y busca tus archivos. ¡El secreto aquí es que puedes arrastrar cualquier medio directamente a tus programas favoritos u otras pestañas!"),
+                "widgets": [self.media_stack, self.search_input]
+            },
+            {
+                "title": self.tr("Vista Previa y Detalles"),
+                "desc": self.tr("Reproduce, visualiza los detalles técnicos de tus archivos y corta segmentos rápidamente para enviarlos a tu editor o guardarlos en disco."),
+                "widgets": [self.preview_box, self.info_box]
+            },
+            {
+                "title": self.tr("Ventana de Subclips"),
+                "desc": self.tr("Al igual que en el Modo Rápido, con las tijeras puedes realizar múltiples cortes a un mismo medio, arrastrarlos o mandarlos a tu software de edición en un clic."),
+                "widgets": [self.preview_box.btn_edit_subclip, self.btn_edit_subclip, self.btn_send_editor]
+            }
+        ]
+        
+        main_window = self.window()
+        self.tutorial_overlay = TutorialOverlay(main_window, steps)
+        self.tutorial_overlay.resize(main_window.size())
+        self.tutorial_overlay.show()

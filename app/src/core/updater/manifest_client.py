@@ -45,17 +45,45 @@ def _find_asset(release: dict, name: str) -> dict | None:
     return None
 
 
-def fetch_and_verify_manifest(repo: str) -> dict:
-    """Descarga manifest.json + manifest.json.sig del release `latest` de
-    `repo` ("owner/nombre") y devuelve el manifiesto ya parseado, solo si la
+def _get_latest_release(repo: str, channel: str) -> dict:
+    """El release mas nuevo de `repo`, segun el canal.
+
+    "stable" usa /releases/latest -- GitHub EXCLUYE ahi cualquier release marcado
+    prerelease, por diseño de su API. "beta" en cambio lista los releases (sin ese
+    filtro, mas nuevo primero) y toma el primero, prerelease o no -- es la unica
+    forma de que un cliente en canal beta vea builds marcados prerelease en GitHub.
+
+    Sin token en ningun caso (repo publico, mismo criterio que el resto de este
+    archivo). Lanza requests.HTTPError si no hay ninguno (equivalente al 404 de
+    /latest) para que el llamador lo trate igual en los dos canales."""
+    if channel == "beta":
+        res = requests.get(
+            f"{API_BASE}/repos/{repo}/releases", params={"per_page": 1}, timeout=TIMEOUT
+        )
+        res.raise_for_status()
+        releases = res.json()
+        if not releases:
+            # La peticion en si tuvo éxito (200, lista vacia) -- no hay un 404 natural
+            # que relanzar como en /latest. UpdateCheckWorker atrapa esto igual con su
+            # except Exception generico, tratandolo como "sin novedades".
+            raise requests.HTTPError(f"Sin releases todavia en {repo} (canal beta).")
+        return releases[0]
+
+    res = requests.get(f"{API_BASE}/repos/{repo}/releases/latest", timeout=TIMEOUT)
+    res.raise_for_status()
+    return res.json()
+
+
+def fetch_and_verify_manifest(repo: str, channel: str = "stable") -> dict:
+    """Descarga manifest.json + manifest.json.sig del release mas nuevo de
+    `repo` ("owner/nombre") segun `channel` ("stable" | "beta", ver
+    _get_latest_release) y devuelve el manifiesto ya parseado, solo si la
     firma es valida.
 
     Lanza ManifestVerificationError si la firma no verifica, y
     requests.HTTPError / requests.ConnectionError si falla la red -- ninguno
     de los dos casos debe interpretarse silenciosamente como "sin novedades"."""
-    res = requests.get(f"{API_BASE}/repos/{repo}/releases/latest", timeout=TIMEOUT)
-    res.raise_for_status()
-    release = res.json()
+    release = _get_latest_release(repo, channel)
 
     manifest_asset = _find_asset(release, "manifest.json")
     sig_asset = _find_asset(release, "manifest.json.sig")

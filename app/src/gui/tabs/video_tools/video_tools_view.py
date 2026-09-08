@@ -1148,3 +1148,60 @@ class VideoToolsTab(QWidget):
             self.progress_bar.setProperty("status", "wait")
             self.progress_bar.style().unpolish(self.progress_bar)
             self.progress_bar.style().polish(self.progress_bar)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        from core.utils.config_manager import get_config, save_config
+        config = get_config()
+        if not config.get("tutorial_video_tools_seen", False):
+            QTimer.singleShot(500, self.start_tutorial)
+            config["tutorial_video_tools_seen"] = True
+            save_config(config)
+
+    def start_tutorial(self):
+        from gui.widgets.tutorial_overlay import TutorialOverlay
+        steps = [
+            {
+                "title": self.tr("Lista de Archivos"),
+                "desc": self.tr("Arrastra aquí tus archivos de video o audio. Puedes procesar un solo archivo o una lista completa en lote."),
+                "widgets": [self.queue_widget]
+            },
+            {
+                "title": self.tr("Vista Previa Interactiva"),
+                "desc": self.tr("Reproduce tus videos y visualiza en tiempo real los recortes espaciales o marcas de agua que configures."),
+                "widgets": [self.preview_widget]
+            },
+            {
+                "title": self.tr("Recorte de Tiempo (Trim)"),
+                "desc": self.tr("Ajusta los marcadores inicial y final en la línea de tiempo para exportar solo un fragmento exacto del video."),
+                "widgets": [self.timeline_widget]
+            },
+            {
+                "title": self.tr("Pestañas de Edición"),
+                "desc": self.tr("Navega entre estas pestañas para usar preajustes guardados, comprimir videos rápido, convertir formatos o hacer ediciones básicas."),
+                "widgets": [self.options_widget],
+                "on_enter": lambda: (
+                    self.right_panel.open_overlay() if not self.right_panel.is_docked() and not self.right_panel.is_overlay_open() else None,
+                    self.options_widget.tabs.setCurrentIndex(0)
+                )
+            },
+            {
+                "title": self.tr("Opciones Avanzadas"),
+                "desc": self.tr("En Avanzado tienes control profesional: puedes recortar la imagen, incrustar marcas de agua arrastrándolas en la vista previa y mucho más."),
+                "widgets": [self.options_widget],
+                "on_enter": lambda: (
+                    self.right_panel.open_overlay() if not self.right_panel.is_docked() and not self.right_panel.is_overlay_open() else None,
+                    self.options_widget.tabs.setCurrentIndex(4)
+                )
+            },
+            {
+                "title": self.tr("Exportación y Ejecución"),
+                "desc": self.tr("Elige la carpeta de destino, la regla para archivos existentes, y pulsa iniciar. ¡Y lo mejor es que puedes arrastrar el resultado directamente a tu editor de video favorito!"),
+                "widgets": [self.output_card]
+            }
+        ]
+        
+        main_window = self.window()
+        self.tutorial_overlay = TutorialOverlay(main_window, steps)
+        self.tutorial_overlay.resize(main_window.size())
+        self.tutorial_overlay.show()

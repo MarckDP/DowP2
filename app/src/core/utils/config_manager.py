@@ -3,6 +3,7 @@ import os
 import json
 from core.logger.logger_manager import logger
 from core.utils.paths import get_config_path
+from core.version import IS_BETA
 
 CONFIG_FILE = get_config_path()
 
@@ -57,6 +58,7 @@ def get_config():
         "ffmpeg_channel": "recommended",# "recommended" | "latest" | "nightly"
         "ffmpeg_keep_ffplay": False,    # False = eliminar ffplay, True = conservar
         "ffmpeg_custom_path": "",       # Ruta personalizada a ffmpeg.exe o carpeta
+        "update_channel": "beta" if IS_BETA else "stable",  # "stable" | "beta" (incluye prereleases de GitHub)
         "max_concurrent_downloads": 3,  # Número máximo de descargas simultáneas (1 a 10)
         "hardware_info": {},            # Información del sistema y GPU detectada
         "analyze_playlist": True,       # Estado de casilla de análisis de playlist

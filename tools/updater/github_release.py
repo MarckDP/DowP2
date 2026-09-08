@@ -46,11 +46,16 @@ def get_latest_release(repo: str, token: str) -> dict | None:
     return res.json()
 
 
-def create_release(repo: str, tag: str, token: str, name: str | None = None) -> dict:
+def create_release(repo: str, tag: str, token: str, name: str | None = None,
+                    prerelease: bool = False) -> dict:
+    """prerelease=True lo marca como pre-release de GitHub: invisible para
+    /releases/latest (lo que usa un cliente en canal "stable"), solo lo ven
+    quienes tengan el canal "beta" activado (que lista todos los releases sin
+    ese filtro -- ver core/updater/manifest_client.py del lado del cliente)."""
     res = requests.post(
         f"{API_BASE}/repos/{repo}/releases",
         headers=_headers(token),
-        json={"tag_name": tag, "name": name or tag, "draft": False, "prerelease": False},
+        json={"tag_name": tag, "name": name or tag, "draft": False, "prerelease": prerelease},
         timeout=TIMEOUT,
     )
     res.raise_for_status()

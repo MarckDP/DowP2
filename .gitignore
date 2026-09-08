@@ -68,3 +68,8 @@ ACTUALIZACIONES.md
 # publica, updater_public_key.pem, si). El staging es salida regenerable.
 tools/updater/secrets/
 tools/updater/.staging/
+
+# Instalador de Windows (Inno Setup): herramienta local del maintainer, igual
+# criterio que tools/updater/secrets/ -- no es secreto, pero no hace falta
+# versionarlo. output/ ademas es el .exe del instalador ya compilado.
+installer/

@@ -701,6 +701,7 @@ class MainWindow(QMainWindow):
         self.tab_settings.theme_changed.connect(self.update_theme)
         self.tab_settings.font_changed.connect(self.update_font)
         self.tab_settings.integrations_changed.connect(self.editor_status_widget.refresh_app_icons)
+        self.tab_settings.labels_changed.connect(self.refresh_labels)
         self.tab_settings.update_status_changed.connect(self.editor_status_widget.set_update_badge_visible)
         self.tabs.currentChanged.connect(self.on_tab_changed)
 
@@ -801,6 +802,16 @@ class MainWindow(QMainWindow):
         config = get_config()
         theme_name = config.get("theme", "dark")
         self.setStyleSheet(load_stylesheet(theme_name))
+
+    def refresh_labels(self):
+        """Fuerza la recarga de las etiquetas en todas las pestañas relevantes."""
+        logger.info("MainWindow: Recargando etiquetas globalmente por cambio en Ajustes")
+        if hasattr(self, "tab_single") and self.tab_single and hasattr(self.tab_single, "video_details"):
+            self.tab_single.video_details.load_labels()
+        if hasattr(self, "tab_quick") and self.tab_quick and hasattr(self.tab_quick, "load_labels"):
+            self.tab_quick.load_labels()
+        if hasattr(self, "tab_video") and self.tab_video and hasattr(self.tab_video, "load_labels"):
+            self.tab_video.load_labels()
 
     def _handle_nccalcsize(self, msg):
         """WM_NCCALCSIZE: el área de cliente pasa a ocupar toda la ventana (si no,

@@ -230,6 +230,57 @@ class SubclipEditorDialog(QDialog):
             pos = win.mapToGlobal(QPoint(0, 0))
             self.setGeometry(pos.x(), pos.y(), win.width(), win.height())
 
+        from core.utils.config_manager import get_config, save_config
+        config = get_config()
+        if not config.get("tutorial_subclip_seen", False):
+            # Usar un QTimer asociado a 'self' para que se cancele si el diálogo se cierra rápido
+            self._tut_timer = QTimer(self)
+            self._tut_timer.setSingleShot(True)
+            self._tut_timer.setInterval(500)
+            self._tut_timer.timeout.connect(self.start_tutorial)
+            self._tut_timer.start()
+            config["tutorial_subclip_seen"] = True
+            save_config(config)
+
+    def start_tutorial(self):
+        try:
+            from gui.widgets.tutorial_overlay import TutorialOverlay
+            steps = [
+                {
+                    "title": self.tr("Reproductor y Controles"),
+                    "desc": self.tr("Usa los corchetes o las teclas I y O para marcar los puntos de entrada (In) y salida (Out) de tu recorte en la forma de onda."),
+                    "widgets": [self.trim_player]
+                },
+                {
+                    "title": self.tr("Añadir Subclip"),
+                    "desc": self.tr("Cuando tengas el fragmento deseado, haz clic en '+' para guardarlo. ¡Puedes realizar múltiples recortes diferentes a un mismo archivo!"),
+                    "widgets": [self.btn_add_subclip]
+                },
+                {
+                    "title": self.tr("Lista de Subclips"),
+                    "desc": self.tr("Aquí aparecerán todos tus cortes. Puedes cambiarles el nombre, previsualizarlos individualmente y revisarlos antes de usarlos."),
+                    "widgets": [self.list_subclips]
+                },
+                {
+                    "title": self.tr("Corte Físico y Arrastre"),
+                    "desc": self.tr("Con este botón de tijeras puedes generar archivos reales (físicos) de tus cortes, ¡e incluso presionarlo y arrastrar hacia otra ventana para exportarlos!"),
+                    "widgets": [self.btn_physical_cut]
+                },
+                {
+                    "title": self.tr("Enviar al Editor"),
+                    "desc": self.tr("¿Prefieres no renderizar? Si usas Premiere, DaVinci, After Effects o Photoshop, envía tus recortes con un solo clic directamente a la línea de tiempo de tu programa."),
+                    "widgets": [self.btn_send]
+                }
+            ]
+            
+            main_window = self.window()
+            self.tutorial_overlay = TutorialOverlay(main_window, steps)
+            self.tutorial_overlay.resize(main_window.size())
+            self.tutorial_overlay.show()
+        except Exception as e:
+            from core.logger.logger_manager import logger
+            logger.error(f"[SubclipDialog] Error mostrando tutorial: {e}")
+
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.fillRect(self.rect(), QColor(0, 0, 0, 185))

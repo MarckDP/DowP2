@@ -1557,3 +1557,97 @@ class ImageToolsTab(QWidget):
         self.image_queue.add_files(paths)
         after = len(self.image_queue.get_all_filepaths()) if hasattr(self.image_queue, "get_all_filepaths") else before + len(paths)
         return max(0, after - before)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        from core.utils.config_manager import get_config, save_config
+        config = get_config()
+        if not config.get("tutorial_image_tools_seen", False):
+            # Usar QTimer para permitir que la UI se renderice antes de mostrar el tutorial
+            QTimer.singleShot(500, self.start_tutorial)
+            config["tutorial_image_tools_seen"] = True
+            save_config(config)
+
+    def start_tutorial(self):
+        from gui.widgets.tutorial_overlay import TutorialOverlay
+        steps = [
+            {
+                "title": self.tr("Reescalado con Inteligencia Artificial"),
+                "desc": self.tr("Aumenta la resolución y calidad de tus imágenes utilizando modelos de IA ncnn."),
+                "widgets": [self.btn_upscale],
+                "on_enter": lambda: self.btn_upscale.set_open(True)
+            },
+            {
+                "title": self.tr("Quitar Fondo"),
+                "desc": self.tr("Elimina automáticamente el fondo de cualquier imagen. Tienes diferentes modelos IA pesados para objetos, ropa o siluetas."),
+                "widgets": [self.btn_rembg],
+                "on_enter": lambda: self.btn_rembg.set_open(True)
+            },
+            {
+                "title": self.tr("Redimensionar"),
+                "desc": self.tr("Cambia el tamaño de la imagen por porcentaje o píxeles. ¡Especialmente bueno y sin pérdida al trabajar con imágenes vectoriales!"),
+                "widgets": [self.btn_resize],
+                "on_enter": lambda: self.btn_resize.set_open(True)
+            },
+            {
+                "title": self.tr("Control de Lienzo"),
+                "desc": self.tr("Ajusta los márgenes o recorta la imagen libremente para adaptarla al formato que necesites."),
+                "widgets": [self.btn_canvas],
+                "on_enter": lambda: self.btn_canvas.set_open(True)
+            },
+            {
+                "title": self.tr("Panel de Capas y Dibujo"),
+                "desc": self.tr("Aquí puedes gestionar todas las formas, dibujos y fondos que añadas a tu imagen. Veamos sus opciones."),
+                "widgets": [self.btn_layers_panel],
+                "on_enter": lambda: self.btn_layers_panel.setChecked(True)
+            },
+            {
+                "title": self.tr("Estilos de Forma"),
+                "desc": self.tr("Antes de dibujar un rectángulo o línea, elige aquí el color de relleno, el color del borde y su grosor."),
+                "widgets": [self.layers_panel.btn_fill_color, self.layers_panel.btn_stroke_color, self.layers_panel.entry_stroke_width],
+            },
+            {
+                "title": self.tr("Tamaño de Pincel"),
+                "desc": self.tr("Si eliges la herramienta de dibujo libre (pincel), aquí puedes controlar qué tan grueso será el trazo."),
+                "widgets": [self.layers_panel.slider_brush_size],
+            },
+            {
+                "title": self.tr("Añadir Fondo"),
+                "desc": self.tr("Si eliminaste el fondo original o tienes una imagen transparente, usa este botón para colocar un fondo de color sólido detrás de todo."),
+                "widgets": [self.layers_panel.btn_add_background],
+            },
+            {
+                "title": self.tr("Vista Previa y Título"),
+                "desc": self.tr("Aquí puedes ver los cambios en tiempo real y renombrar el archivo final. Puedes usar el botón 'Comparar' para ver el antes y el después."),
+                "widgets": [self.entry_title, self.preview],
+                "on_enter": lambda: self.btn_layers_panel.setChecked(False) # Cerramos el panel de capas para ver mejor
+            },
+            {
+                "title": self.tr("Copiar Resultado"),
+                "desc": self.tr("¡Si necesitas la imagen ya procesada para usarla rápido en otro programa, simplemente cópiala desde aquí!"),
+                "widgets": [self.btn_copy_result],
+            },
+            {
+                "title": self.tr("Cola de Procesamiento y Pegado"),
+                "desc": self.tr("Arrastra varias imágenes para procesarlas en lote. También puedes usar el botón 'Pegar' para importar directamente imágenes desde tu portapapeles."),
+                "widgets": [self.image_queue, self.image_queue.btn_paste],
+                "on_enter": lambda: self.right_panel.open_overlay() if not self.right_panel.is_docked() and not self.right_panel.is_overlay_open() else None
+            },
+            {
+                "title": self.tr("Formato y Calidad"),
+                "desc": self.tr("Define en qué formato quieres guardar tus resultados, su calidad y cualquier otro ajuste final."),
+                "widgets": [self.convert_panel],
+                "on_enter": lambda: self.right_panel.open_overlay() if not self.right_panel.is_docked() and not self.right_panel.is_overlay_open() else None
+            },
+            {
+                "title": self.tr("Exportación"),
+                "desc": self.tr("Elige la carpeta de destino, la regla para archivos duplicados y haz clic en 'Convertir' para procesar todo el lote."),
+                "widgets": [self.output_bar],
+                "on_enter": lambda: self.right_panel.open_overlay() if not self.right_panel.is_docked() and not self.right_panel.is_overlay_open() else None
+            }
+        ]
+        
+        main_window = self.window()
+        self.tutorial_overlay = TutorialOverlay(main_window, steps)
+        self.tutorial_overlay.resize(main_window.size())
+        self.tutorial_overlay.show()

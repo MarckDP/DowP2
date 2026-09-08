@@ -235,11 +235,13 @@ class AdvancedProcessTab(QWidget):
 
         self.chk_playlist_analysis = QCheckBox(self.tr("Playlist"))
         self.chk_playlist_analysis.setChecked(analyze_pl_val)
+        self.chk_playlist_analysis.setToolTip(self.tr("Si se activa y pegas una playlist, permite encolar múltiples medios a la vez."))
         layout.addWidget(self.chk_playlist_analysis)
 
         self.chk_fast_mode = QCheckBox(self.tr("Modo rápido"))
         self.chk_fast_mode.setChecked(fast_mode_val if analyze_pl_val else False)
         self.chk_fast_mode.setEnabled(analyze_pl_val)
+        self.chk_fast_mode.setToolTip(self.tr("Habilita un análisis ultrarrápido que añade todos los elementos de golpe (puede no mostrar info completa al instante)."))
         layout.addWidget(self.chk_fast_mode)
 
         # Divisor vertical
@@ -257,14 +259,17 @@ class AdvancedProcessTab(QWidget):
 
         self.chk_thumb_manual = QCheckBox(self.tr("Manual"))
         self.chk_thumb_manual.setChecked(batch_thumb_mode == "manual")
+        self.chk_thumb_manual.setToolTip(self.tr("Decidir configuración de miniatura manualmente en cada ítem."))
         layout.addWidget(self.chk_thumb_manual)
 
         self.chk_thumb_media = QCheckBox(self.tr("Con medio"))
         self.chk_thumb_media.setChecked(batch_thumb_mode == "with_media")
+        self.chk_thumb_media.setToolTip(self.tr("Descargar la miniatura junto con cada medio por defecto."))
         layout.addWidget(self.chk_thumb_media)
 
         self.chk_thumb_only = QCheckBox(self.tr("Solo miniatura"))
         self.chk_thumb_only.setChecked(batch_thumb_mode == "thumbnail_only")
+        self.chk_thumb_only.setToolTip(self.tr("Descargar EXCLUSIVAMENTE la miniatura de cada medio (ignora audio/video)."))
         layout.addWidget(self.chk_thumb_only)
 
         # Divisor vertical para separar de las opciones globales
@@ -284,11 +289,13 @@ class AdvancedProcessTab(QWidget):
         self.combo_global_mode.addItem(self.tr("Video + Audio"), "video+audio")
         self.combo_global_mode.addItem(self.tr("Solo Audio"), "audio_only")
         self.combo_global_mode.addItem(self.tr("Solo Video"), "video_only")
+        self.combo_global_mode.setToolTip(self.tr("Modo global por defecto para nuevos ítems."))
         layout.addWidget(self.combo_global_mode)
 
         self.combo_global_quality = RichComboBox()
         self.combo_global_quality.setItemDelegate(RichTextDelegate(self.combo_global_quality))
         self.combo_global_quality.setSizeAdjustPolicy(QComboBox.AdjustToContents)
+        self.combo_global_quality.setToolTip(self.tr("Calidad o resolución máxima global para nuevos ítems."))
         layout.addWidget(self.combo_global_quality)
 
         layout.addStretch(1)
@@ -841,6 +848,18 @@ class AdvancedProcessTab(QWidget):
                 logger.info(f"AdvancedProcessTab: TaskbarProgressManager vinculado a HWND {hwnd}")
             except Exception as e:
                 logger.error(f"AdvancedProcessTab: No se pudo inicializar TaskbarProgressManager: {e}")
+
+        # Iniciar tutorial si no se ha visto
+        from core.utils.config_manager import get_config, save_config
+        from PySide6.QtCore import QTimer
+        config = get_config()
+        if not config.get("tutorial_advanced_process_seen", False):
+            config["tutorial_advanced_process_seen"] = True
+            save_config(config)
+            # Asegurarse de empezar en modo SOLO
+            if not self.url_bar.solo_btn.isChecked():
+                self.url_bar.solo_btn.setChecked(True)
+            QTimer.singleShot(500, self.start_tutorial_solo)
 
     def toggle_queue_panel(self):
         self.queue_panel.toggle_expanded(self.width())
@@ -1456,3 +1475,107 @@ class AdvancedProcessTab(QWidget):
     @_last_downloaded_filepath.setter
     def _last_downloaded_filepath(self, value):
         self.download_controller.last_downloaded_filepath = value
+
+    def start_tutorial_solo(self):
+        from gui.widgets.tutorial_overlay import TutorialOverlay
+        from PySide6.QtCore import QTimer
+        
+        # Simular animación de SOLO a LOTES y vuelta
+        def animate_solo():
+            self.url_bar.solo_btn.setChecked(False)
+            QTimer.singleShot(800, lambda: self.url_bar.solo_btn.setChecked(True))
+            
+        steps = [
+            {
+                "title": self.tr("Modo SOLO y LOTES"),
+                "desc": self.tr("Este botón intercala entre los dos modos de la pestaña: SOLO (individual) y por LOTES. Empezaremos explorando el Modo SOLO."),
+                "widgets": [self.url_bar.solo_btn],
+                "on_enter": animate_solo
+            },
+            {
+                "title": self.tr("URL y Analizar"),
+                "desc": self.tr("La URL se pega igual que en el Modo Rápido, pero la gran diferencia es que aquí la URL primero se analiza para extraer toda su información antes de descargar."),
+                "widgets": [self.url_bar]
+            },
+            {
+                "title": self.tr("Vista Previa y Editor"),
+                "desc": self.tr("Aquí verás la miniatura del medio. Puedes guardarla directamente o usar 'Enviar a E.I' para mandarla a la pestaña Editor de Imagen y procesarla de distintas formas."),
+                "widgets": [self.video_details.thumb_container]
+            },
+            {
+                "title": self.tr("Título y Etiquetas"),
+                "desc": self.tr("Puedes cambiar manualmente el título final del medio y usar las Etiquetas para asignar rutas preconfiguradas rápidamente."),
+                "widgets": [self.video_details.title_input, self.video_details.combo_tags]
+            },
+            {
+                "title": self.tr("Pistas, Modos y Calidades"),
+                "desc": self.tr("¡Control total! Aquí puedes elegir con precisión quirúrgica las pistas de video, audio e idiomas disponibles del medio."),
+                "widgets": [self.video_details.mode_selector, self.video_details.video_container, self.video_details.audio_container]
+            },
+            {
+                "title": self.tr("Subtítulos"),
+                "desc": self.tr("Si el video tiene subtítulos, aparecerán aquí. Puedes descargarlos solos, incrustados con el video, o usar opciones extra como estandarizar a SRT o recortarlos."),
+                "widgets": [self.subtitle_options],
+                "on_enter": lambda: self.subtitle_options.set_expanded(True)
+            },
+            {
+                "title": self.tr("Recodificar"),
+                "desc": self.tr("Permite post-procesar el medio descargado (cambiar formato, códec, etc.) usando presets que configures en la pestaña Herramientas Multimedia."),
+                "widgets": [self.recode_options],
+                "on_enter": lambda: self.recode_options.set_expanded(True)
+            },
+            {
+                "title": self.tr("Opciones de Salida y Arrastre"),
+                "desc": self.tr("Aparte de la ruta, al finalizar una descarga se iluminará el Botón de Arrastre (icono de la mano). Te permite arrastrar el archivo directamente desde DowP a tu editor de video o carpeta."),
+                "widgets": [self.output_options],
+                "on_leave": lambda: QTimer.singleShot(200, self._transition_to_batch_tutorial)
+            }
+        ]
+        
+        main_window = self.window()
+        self.tutorial_overlay = TutorialOverlay(main_window, steps)
+        self.tutorial_overlay.resize(main_window.size())
+        self.tutorial_overlay.show()
+
+    def _transition_to_batch_tutorial(self):
+        from PySide6.QtCore import QTimer
+        # Cambiar a modo Lotes
+        self.url_bar.solo_btn.setChecked(False)
+        if not self.queue_panel.is_expanded:
+            self.toggle_queue_panel()
+        QTimer.singleShot(600, self.start_tutorial_batch)
+
+    def start_tutorial_batch(self):
+        from gui.widgets.tutorial_overlay import TutorialOverlay
+        steps = [
+            {
+                "title": self.tr("Lista de Lotes"),
+                "desc": self.tr("¡Bienvenido al modo LOTES! Aquí puedes encolar múltiples URLs. Puedes reordenarlas, arrastrar los archivos terminados o restaurar ítems para volver a descargarlos."),
+                "widgets": [self.queue_panel]
+            },
+            {
+                "title": self.tr("Playlist y Modo Rápido"),
+                "desc": self.tr("Activar ambas despliega la ventana de Playlist para elegir qué medios encolar. Si solo activas 'Playlist', el análisis extraerá TODOS los videos de golpe (útil pero lento en listas grandes)."),
+                "widgets": [self.chk_playlist_analysis, self.chk_fast_mode]
+            },
+            {
+                "title": self.tr("Miniaturas Globales"),
+                "desc": self.tr("Controla las miniaturas de toda la cola: decidir 'Manual' ítem por ítem, 'Con medio' para bajarlas todas, o 'Solo miniatura'."),
+                "widgets": [self.chk_thumb_manual, self.chk_thumb_media, self.chk_thumb_only]
+            },
+            {
+                "title": self.tr("Ajuste Global"),
+                "desc": self.tr("Permite forzar una calidad o formato aproximado para todos los ítems de la lista a la vez."),
+                "widgets": [self.combo_global_mode, self.combo_global_quality]
+            },
+            {
+                "title": self.tr("Si Existe (Opciones de Salida)"),
+                "desc": self.tr("En las opciones de salida de lotes encontrarás el menú 'Si existe', ideal para decidir qué hacer automáticamente si te topas con archivos duplicados."),
+                "widgets": [self.output_options.conflict_policy_combo]
+            }
+        ]
+        main_window = self.window()
+        self.tutorial_overlay = TutorialOverlay(main_window, steps)
+        self.tutorial_overlay.resize(main_window.size())
+        self.tutorial_overlay.show()
+

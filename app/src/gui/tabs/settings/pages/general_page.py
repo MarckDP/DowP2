@@ -1,12 +1,13 @@
-from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, 
-                                 QSpacerItem, QSizePolicy, QStyledItemDelegate, QScrollArea, 
-                                 QPushButton, QMessageBox, QToolButton)
+from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame,
+                                 QSpacerItem, QSizePolicy, QStyledItemDelegate, QScrollArea,
+                                 QPushButton, QMessageBox, QToolButton, QRadioButton, QButtonGroup)
 from PySide6.QtCore import Signal, Qt, QUrl
 from PySide6.QtGui import QDesktopServices
 from core.logger.logger_manager import logger
 from core.utils.config_manager import get_config, save_config
 from core.utils.paths import get_user_themes_dir, get_user_fonts_dir
 from core.utils.font_manager import get_available_fonts, init_fonts
+from core.version import IS_BETA
 from gui.styles import get_available_themes, apply_folder_open_button_style
 from gui.widgets.toggle_switch import ToggleSwitch
 from gui.widgets.combo_box import AutoPopupComboBox
@@ -15,6 +16,7 @@ class GeneralPage(QWidget):
     language_changed = Signal(str)
     theme_changed = Signal(str)
     font_changed = Signal(str)
+    update_channel_changed = Signal(str)
 
     def __init__(self):
         super().__init__()
@@ -56,6 +58,59 @@ class GeneralPage(QWidget):
         self.content_layout.setContentsMargins(0, 10, 10, 0)
         self.content_layout.setSpacing(12)
         self.content_layout.setAlignment(Qt.AlignTop)
+
+        # --- TARJETA: ACTUALIZACIONES DOWP ---
+        # Mismo mecanismo visual de tarjeta que usan DenoCardPanel/GhostscriptCardPanel
+        # en deps_page.py (setProperty variant="card", estilo centralizado via QSS) --
+        # arriba de todo a pedido explicito del usuario, no una fila mas de texto plano.
+        self.update_channel_card = QFrame()
+        self.update_channel_card.setObjectName("updateChannelCard")
+        self.update_channel_card.setProperty("variant", "card")
+
+        card_layout = QVBoxLayout(self.update_channel_card)
+        card_layout.setContentsMargins(14, 12, 14, 12)
+        card_layout.setSpacing(8)
+
+        card_top_row = QHBoxLayout()
+        card_top_row.setSpacing(8)
+        card_title = QLabel(self.tr("Actualizaciones DowP"))
+        card_title.setStyleSheet("font-size: 14px; font-weight: bold; color: #EEEEEE;")
+        card_top_row.addWidget(card_title)
+
+        card_info_btn = QToolButton()
+        card_info_btn.setText("?")
+        card_info_btn.setFixedSize(20, 20)
+        card_info_btn.setStyleSheet(
+            "QToolButton { border: 1px solid #555; border-radius: 10px;"
+            " color: #AAA; font-size: 11px; background: #2a2a2a; }"
+        )
+        card_info_btn.setToolTip(self.tr(
+            "Solo releases oficiales: recibe únicamente versiones estables, ya probadas.\n"
+            "Todas (incluye experimentales): recibe también compilaciones de prueba, antes de "
+            "que salgan como estables -- pueden traer errores nuevos sin detectar todavía."
+        ))
+        card_top_row.addWidget(card_info_btn)
+        card_top_row.addStretch()
+        card_layout.addLayout(card_top_row)
+
+        channel_row = QHBoxLayout()
+        channel_row.setSpacing(14)
+
+        self._group_update_channel = QButtonGroup(self)
+        self._radio_update_stable = self._make_radio(self.tr("Solo releases oficiales"), "stable")
+        self._radio_update_stable.setToolTip(self.tr("Solo versiones estables, ya probadas"))
+        self._radio_update_beta = self._make_radio(self.tr("Todas (incluye experimentales)"), "beta")
+        self._radio_update_beta.setToolTip(self.tr("También compilaciones de prueba, antes de que salgan como estables"))
+        self._group_update_channel.addButton(self._radio_update_stable, 0)
+        self._group_update_channel.addButton(self._radio_update_beta, 1)
+        self._group_update_channel.idClicked.connect(self._on_update_channel_radio_changed)
+
+        channel_row.addWidget(self._radio_update_stable)
+        channel_row.addWidget(self._radio_update_beta)
+        channel_row.addStretch()
+        card_layout.addLayout(channel_row)
+
+        self.content_layout.addWidget(self.update_channel_card)
 
         # --- SECCIÓN: ASPECTO ---
         self.aspecto_label = QLabel(self.tr("Aspecto"))
@@ -171,6 +226,30 @@ class GeneralPage(QWidget):
         self.adobe_row.addWidget(self.adobe_switch)
         self.content_layout.addLayout(self.adobe_row)
 
+        # 6. Botón: Restablecer Tutoriales
+        self.tutorials_row = QHBoxLayout()
+        self.tutorials_vbox = QVBoxLayout()
+        
+        self.tutorials_label = QLabel(self.tr("Tutoriales interactivos"))
+        self.tutorials_label.setObjectName("settingsLabel")
+        
+        self.tutorials_desc = QLabel(self.tr("Si deseas volver a ver los tutoriales iniciales de cada pestaña, puedes restablecerlos aquí."))
+        self.tutorials_desc.setStyleSheet("color: #888888; font-size: 11px;")
+        
+        self.tutorials_vbox.addWidget(self.tutorials_label)
+        self.tutorials_vbox.addWidget(self.tutorials_desc)
+        
+        self.btn_reset_tutorials = QPushButton(self.tr("Restablecer"))
+        self.btn_reset_tutorials.setCursor(Qt.PointingHandCursor)
+        self.btn_reset_tutorials.setFixedWidth(120)
+        self.btn_reset_tutorials.setProperty("variant", "secondary")
+        self.btn_reset_tutorials.clicked.connect(self._on_reset_tutorials_clicked)
+        
+        self.tutorials_row.addLayout(self.tutorials_vbox)
+        self.tutorials_row.addStretch()
+        self.tutorials_row.addWidget(self.btn_reset_tutorials)
+        self.content_layout.addLayout(self.tutorials_row)
+
         # Finalizar setup del scroll area
         self.scroll_area.setWidget(self.scroll_content)
         self.main_layout.addWidget(self.scroll_area)
@@ -228,7 +307,14 @@ class GeneralPage(QWidget):
 
     def load_current_settings(self):
         config = get_config()
-        
+
+        # Load Update Channel
+        default_channel = "beta" if IS_BETA else "stable"
+        if config.get("update_channel", default_channel) == "beta":
+            self._radio_update_beta.setChecked(True)
+        else:
+            self._radio_update_stable.setChecked(True)
+
         # Load Language
         lang = config.get("language", "es")
         index = self.lang_combo.findData(lang)
@@ -255,6 +341,22 @@ class GeneralPage(QWidget):
         self.auto_switch.setChecked(config.get("auto_analyze", True))
         self.paste_switch.setChecked(config.get("auto_paste_url", True))
         self.adobe_switch.setChecked(config.get("adobe_compat_default", True))
+
+    def _make_radio(self, text, code):
+        rb = QRadioButton(text)
+        rb.setProperty("code", code)
+        return rb
+
+    def _on_update_channel_radio_changed(self, btn_id):
+        if self._is_loading:
+            return
+        channel = "beta" if btn_id == 1 else "stable"
+        config = get_config()
+        if config.get("update_channel") != channel:
+            config["update_channel"] = channel
+            save_config(config)
+            logger.info(f"GeneralPage: Canal de actualizaciones cambiado a '{channel.upper()}'.")
+            self.update_channel_changed.emit(channel)
 
     def on_language_selection(self, index):
         if self._is_loading: return
@@ -312,3 +414,20 @@ class GeneralPage(QWidget):
         config["adobe_compat_default"] = checked
         save_config(config)
         logger.info(f"GeneralPage: Selección Adobe por defecto cambiada a: {checked}")
+
+    def _on_reset_tutorials_clicked(self):
+        config = get_config()
+        config["tutorial_quick_mode_seen"] = False
+        config["tutorial_advanced_process_seen"] = False
+        config["tutorial_image_tools_seen"] = False
+        config["tutorial_video_tools_seen"] = False
+        config["tutorial_editing_media_seen"] = False
+        config["tutorial_subclip_seen"] = False
+        save_config(config)
+        
+        QMessageBox.information(
+            self,
+            self.tr("Tutoriales restablecidos"),
+            self.tr("Los tutoriales interactivos volverán a mostrarse la próxima vez que abras sus respectivas pestañas.")
+        )
+        logger.info("GeneralPage: Tutoriales interactivos restablecidos.")

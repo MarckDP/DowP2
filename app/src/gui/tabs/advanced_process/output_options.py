@@ -80,12 +80,15 @@ class OutputOptionsWidget(QFrame):
         self.conflict_policy_combo.addItem(self.tr("Conservar"), "conservar")
         self.conflict_policy_combo.addItem(self.tr("Omitir"), "omitir")
         self.conflict_policy_combo.setCurrentIndex(1)  # "Conservar" por defecto
-        self.conflict_policy_combo.setToolTip(self.tr(
+        
+        conflict_tooltip = self.tr(
             "Determina qué hacer si un archivo con el mismo nombre ya existe:\n"
             "• Sobrescribir: reemplaza el archivo antiguo (con respaldo reversible).\n"
             "• Conservar: guarda el nuevo archivo como 'nombre (1).ext'.\n"
             "• Omitir: no descarga ese archivo."
-        ))
+        )
+        self.conflict_policy_combo.setToolTip(conflict_tooltip)
+        self.lbl_conflict_policy.setToolTip(conflict_tooltip)
 
         conflicts_fixed_height = 32
         self.conflict_policy_combo.setFixedHeight(conflicts_fixed_height)

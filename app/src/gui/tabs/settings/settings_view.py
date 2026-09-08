@@ -7,6 +7,7 @@ from PySide6.QtCore import Qt, Signal
 from core.utils.i18n import logger
 
 from core.updater.update_service import UpdateCheckWorker, UpdateDownloadWorker
+from core.version import get_display_version
 from gui.widgets.circular_progress import CircularProgress
 
 from .pages.general_page import GeneralPage
@@ -44,6 +45,7 @@ class SettingsTab(QWidget):
     theme_changed = Signal(str)
     font_changed = Signal(str)
     integrations_changed = Signal()
+    labels_changed = Signal()
     update_status_changed = Signal(bool)  # True = hay una actualizacion pendiente (para el badge de main_window)
 
     def __init__(self):
@@ -120,8 +122,7 @@ class SettingsTab(QWidget):
         sidebar_layout.addStretch()
 
         # Version Label
-        version = QApplication.instance().applicationVersion()
-        self.version_label = QLabel(f"v{version}")
+        self.version_label = QLabel(f"v{get_display_version()}")
         self.version_label.setStyleSheet("color: #555555; font-size: 11px; margin-bottom: 6px;")
         self.version_label.setAlignment(Qt.AlignCenter)
         sidebar_layout.addWidget(self.version_label)
@@ -187,6 +188,10 @@ class SettingsTab(QWidget):
         self.page_general.language_changed.connect(self.language_changed.emit)
         self.page_general.theme_changed.connect(self.theme_changed.emit)
         self.page_general.font_changed.connect(self.font_changed.emit)
+        self.page_general.update_channel_changed.connect(self._on_update_channel_changed)
+
+        # Pass signal from labels page
+        self.page_labels.labels_changed.connect(self.labels_changed.emit)
 
         # Pass signal from integrations page
         self.page_integrations.integration_toggled.connect(lambda app_id, checked: self.integrations_changed.emit())
@@ -261,18 +266,25 @@ class SettingsTab(QWidget):
         self.update_button.setEnabled(True)
         self.set_update_info(update_info)
 
+    def _on_update_channel_changed(self, channel):
+        """GeneralPage ya guardo el canal en config -- si no hay nada en curso,
+        volver a chequear con el canal nuevo (mismo criterio que
+        DependenciesPage._on_channel_changed llamando a _refresh_status())."""
+        logger.info(f"Updater: canal de actualizaciones cambiado a '{channel}', reintentando chequeo.")
+        if self._update_state == "idle":
+            self.start_update_check()
+
     def set_update_info(self, update_info):
         """update_info: UpdateInfo (hay algo que instalar) o None (nada nuevo /
         sin releases todavia / fallo de red -- todos indistinguibles a proposito
         para el usuario, ver update_service.UpdateCheckWorker)."""
         self._update_info = update_info
-        version = QApplication.instance().applicationVersion()
 
         if update_info is None:
             self._update_state = "idle"
             self.update_button.setText(self.tr("Buscar actualizaciones"))
             self._apply_update_button_style(gradient=False)
-            self.version_label.setText(f"v{version}")
+            self.version_label.setText(f"v{get_display_version()}")
             self.update_status_changed.emit(False)
         else:
             self._update_state = "available"

@@ -146,6 +146,13 @@ def main():
     parser.add_argument("--min-updatable", help="Por defecto, MIN_UPDATABLE_VERSION de version.py")
     parser.add_argument("--dry-run", action="store_true",
                          help="No toca GitHub: hashea, comprime y firma en local para validar el flujo")
+    parser.add_argument("--prerelease", action="store_true",
+                         help="Marca el release como pre-release de GitHub -- invisible para clientes "
+                              "en canal 'stable' (usan /releases/latest), solo lo ven quienes tengan "
+                              "el canal 'beta' activado en Ajustes. NO es lo mismo que el canal "
+                              "'beta' de la app en sí (ver core/version.py IS_BETA) -- esto es "
+                              "puramente el flag de GitHub, para builds que no quieres que le lleguen "
+                              "a todo el mundo en canal beta automaticamente.")
     args = parser.parse_args()
 
     if not os.path.isdir(args.dist):
@@ -216,7 +223,7 @@ def main():
 
     if not args.dry_run:
         if current_release is None:
-            current_release = gh.create_release(args.repo, tag, token)
+            current_release = gh.create_release(args.repo, tag, token, prerelease=args.prerelease)
         for file_hash, staged_path, obj_name in pending:
             if gh.find_asset(current_release, obj_name) is not None:
                 continue

@@ -1,6 +1,6 @@
 import os
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame, QApplication, QSizePolicy
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame, QSizePolicy
 )
 from PySide6.QtCore import Qt, QRect, QPoint, Signal, QPropertyAnimation, QEasingCurve, QEvent
 from PySide6.QtGui import QPainter, QPainterPath, QColor, QRegion
@@ -83,10 +83,12 @@ class TutorialOverlay(QWidget):
         self.lbl_title = QLabel()
         self.lbl_title.setObjectName("tutTitle")
         self.lbl_title.setWordWrap(True)
+        self.lbl_title.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
         
         self.lbl_desc = QLabel()
         self.lbl_desc.setObjectName("tutDesc")
         self.lbl_desc.setWordWrap(True)
+        self.lbl_desc.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
         
         card_layout.addWidget(self.lbl_title)
         card_layout.addWidget(self.lbl_desc)
@@ -223,7 +225,23 @@ class TutorialOverlay(QWidget):
         else:
             self.btn_next.setText(self.tr("Siguiente"))
             self.btn_skip.show()
-            
+
+        # Liberar cualquier restricción previa
+        self.card.setMinimumHeight(0)
+        self.card.setMaximumHeight(16777215)
+        self.lbl_title.setMinimumHeight(0)
+        self.lbl_desc.setMinimumHeight(0)
+
+        # Forzar que el layout recalcule los tamaños con el texto nuevo -- SIN
+        # bombear el event loop. QApplication.processEvents() aqui colgaba la
+        # app: _load_step() corre desde __init__(), y la primera vez que se ve
+        # un tutorial (flags "*_seen" en False) eso pasa durante la construccion
+        # inicial de MainWindow, antes de que la ventana exista de verdad --
+        # procesar eventos ahi reentra en pintado/resize de un arbol de widgets
+        # a medio construir y puede quedarse colgado sin excepcion ni log.
+        self.card.layout().invalidate()
+        self.card.layout().activate()
+
         self.card.adjustSize()
         self.update()
         self.update_card_position()

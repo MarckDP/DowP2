@@ -3,7 +3,8 @@
 Pantalla de inicio (Splash Screen) de DowP 2.0
 ===============================================
 Aparece instantáneamente al iniciar la aplicación. Muestra el logo a la
-izquierda centrado y "DowP 2.0.0" + estado de carga a la derecha.
+izquierda centrado y "DowP {version}" (ver core.version.get_display_version)
++ estado de carga a la derecha.
 
 Si las dependencias no están instaladas, muestra el progreso de descarga
 e instalación de cada una hasta que todo esté listo.
@@ -25,6 +26,7 @@ from gui.styles import get_theme_token
 from core.logger.logger_manager import logger
 from core.utils.paths import get_src_dir
 from core.utils.font_manager import get_active_font_family
+from core.version import get_display_version
 
 
 class DependencyCheckWorker(QThread):
@@ -277,8 +279,10 @@ class SplashScreen(QWidget):
         text_col.setSpacing(1)
         text_col.setContentsMargins(0, 0, 0, 0)
 
-        # "DowP 2.0.0" — nombre grande en negrita
-        title_lbl = QLabel("DowP 2.0.0", container)
+        # "DowP {version}" -- nombre grande en negrita. get_display_version()
+        # (no APP_VERSION crudo): muestra "Beta" en vez del numero interno
+        # mientras dure la fase beta, igual que el resto de la UI.
+        title_lbl = QLabel(f"DowP {get_display_version()}", container)
         title_lbl.setStyleSheet(f"""
             color: {text_main};
             font-family: {self._font_family};

@@ -543,23 +543,111 @@ una máquina que el maintainer controla directamente.
 
 ## 13. Manual operativo: publicar una versión nueva
 
-1. Subir `APP_VERSION` en `app/src/core/version.py`.
-2. Compilar (`python build_cross_platform.py` en `app/`, en cada plataforma que se vaya a
-   publicar).
-3. Setear `GITHUB_TOKEN` en el entorno (PAT, scope `repo`).
-4. Por cada plataforma:
-   ```
-   python tools/updater/publish.py --dist app/dist/DowP --platform windows-x64 \
-       --repo MarckDP/DowP2 --private-key tools/updater/secrets/private_key.pem
-   ```
-   (en macOS, `--dist app/dist/DowP.app`, `--platform macos-arm64` o `macos-x64`).
-5. Confirmar en `https://github.com/MarckDP/DowP2/releases/tag/v{version}` que el release
-   tiene `manifest.json`, `manifest.json.sig`, y los chunks de cada plataforma publicada.
+Orden estricto: **primero se publican las tres plataformas (chunks + manifiesto, lo que
+consume quien ya tiene la app instalada), recién después se arman los instaladores** (lo que
+baja alguien que la instala por primera vez, `.exe`/`.dmg`). Armar el instalador antes empaqueta
+un build que después puede quedar desactualizado si hace falta recompilar de nuevo.
+
+**Regla de oro, aprendida a las malas esta sesión**: cualquier cambio en
+`app/src/core/updater/` (el código que viaja DENTRO del binario — chunking, descarga, journal,
+swap) exige recompilar **todas** las plataformas antes de volver a publicar, no solo la
+tocada — el binario que le llega a un usuario tiene que saber leer el formato que el
+publicador de esa misma sesión está generando. Un cambio solo en `tools/updater/` (el
+publicador, fuera del binario) no lo exige.
+
+### Paso 0 — una sola vez por sesión de publicación
+
+```powershell
+# Windows (PowerShell)
+$env:GITHUB_TOKEN = "tu_token"
+```
+```bash
+# macOS
+export GITHUB_TOKEN="tu_token"
+```
+
+Si cambió el **algoritmo de chunking** (no solo el contenido de los archivos — ej. el cambio de
+agrupar por ruta a agrupar por contenido de esta sesión), los chunks viejos casi no coinciden
+con los nuevos y quedan como huérfanos, acercando el release al límite de 1000 assets de
+GitHub. En ese caso, **borrar el release primero**:
+`https://github.com/MarckDP/DowP2/releases` → `v{version}` → **Delete**. Para una actualización
+normal (solo cambiaron algunos archivos) no hace falta — el sistema es idempotente y reutiliza
+lo que no cambió.
+
+### Paso 1 — compilar y publicar, plataforma por plataforma
+
+**Windows** (PowerShell, con el Python del **venv del proyecto**, nunca el del sistema — usar
+uno distinto infló un build de 375MB a 859MB, ver sección de trampas en `ACTUALIZACIONES.md`):
+```powershell
+cd app
+..\.venv\Scripts\python.exe build_cross_platform.py
+cd ..
+.venv\Scripts\python.exe tools\updater\publish.py --dist app\dist\DowP --platform windows-x64 --repo MarckDP/DowP2 --private-key tools\updater\secrets\private_key.pem
+```
+
+**macOS x64** (VM Hackintosh, con el `.venv` de esa máquina activado):
+```bash
+cd app
+python3 build_cross_platform.py
+cd ..
+python3 tools/updater/publish.py --dist app/dist/DowP.app --platform macos-x64 --repo MarckDP/DowP2 --private-key tools/updater/secrets/private_key.pem
+```
+
+**macOS arm64** (compilado por GitHub Actions, no local — necesita el código ya pusheado a
+`main`):
+```bash
+# 1. Disparar manualmente: https://github.com/MarckDP/DowP2/actions -> el workflow de macOS -> Run workflow
+# 2. Bajar el artifact generado y extraerlo (ditto, NO unzip -- preserva symlinks/firma):
+unzip DowP-{version}-arm64-app.zip -d extraido_actions
+ditto -x -k extraido_actions/DowP-{version}-arm64-app.zip .
+# 3. Publicar:
+python3 tools/updater/publish.py --dist DowP.app --platform macos-arm64 --repo MarckDP/DowP2 --private-key tools/updater/secrets/private_key.pem
+```
+
+Confirmar en `https://github.com/MarckDP/DowP2/releases/tag/v{version}` que el release tiene
+`manifest.json`, `manifest.json.sig`, y los chunks de las tres plataformas.
 
 Si se corta a medias (ventana cerrada, corte de luz, error de red): **no hay que borrar nada**,
-volver a correr el mismo comando — es idempotente por diseño (sección 6, punto 7).
+volver a correr el mismo comando de esa plataforma — es idempotente por diseño (sección 6,
+punto 7).
 
 Para una beta que no debe ofrecerse a clientes en canal `"stable"`: agregar `--prerelease`.
+
+### Paso 2 — armar los instaladores (primera instalación, no pasa por GitHub Releases)
+
+Recién ahora, con los binarios ya recompilados y publicados. Cada uno se arma desde el `.app`/
+carpeta de build de SU plataforma — en la VM, si extrajiste x64 y arm64 en la misma carpeta
+`app/dist`, moveé/renombrá cada `.app` antes de pasar al siguiente para no pisarte uno con otro.
+
+**Windows** (Inno Setup — `installer/DowP.iss`, gitignored, herramienta local del maintainer):
+```powershell
+& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\DowP.iss
+```
+Sale en `installer\output\DowP_Setup_{version}.exe`. Para forzar una versión sin editar el
+`.iss`: agregar `/DMyAppVersion={version}` antes de `installer\DowP.iss`.
+
+**macOS x64**:
+```bash
+hdiutil create -volname "DowP" -srcfolder app/dist/DowP.app -ov -format UDZO DowP-{version}-x64.dmg
+```
+
+**macOS arm64** (con el `DowP.app` de arm64 ya extraído):
+```bash
+hdiutil create -volname "DowP" -srcfolder DowP.app -ov -format UDZO DowP-{version}-arm64.dmg
+```
+
+### Checklist para hacerlo sin ayuda de acá en adelante
+
+- [ ] `APP_VERSION` subido en `core/version.py` (si es una versión nueva).
+- [ ] `GITHUB_TOKEN` seteado en la terminal de esa sesión.
+- [ ] ¿Cambió algo en `app/src/core/updater/`? → recompilar TODAS las plataformas, no solo una.
+- [ ] ¿Cambió el algoritmo de chunking (no solo contenido)? → borrar el release antes de publicar.
+- [ ] Publicar las 3 plataformas (Windows, macOS x64, macOS arm64) — en ese o cualquier orden,
+      cada una es independiente.
+- [ ] Confirmar el manifest.json en GitHub tiene las 3 plataformas.
+- [ ] Recién ahí armar `.exe`/`.dmg` x2, desde los binarios YA publicados.
+- [ ] Repartir los instaladores a los usuarios finales (fuera de este sistema — mail, drive, lo
+      que uses).
 
 ## 14. Rutas y estado en disco del cliente
 

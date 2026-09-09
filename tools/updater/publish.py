@@ -1,6 +1,6 @@
 # tools/updater/publish.py
 """El publicador real del sistema de actualizaciones: genera el manifiesto firmado
-de una plataforma y lo sube, junto con los objetos nuevos, a un GitHub Release.
+de una plataforma y lo sube, junto con los chunks nuevos, a un GitHub Release.
 
     python tools/updater/publish.py \
         --dist app/dist/DowP --platform windows-x64 \
@@ -17,12 +17,16 @@ de una plataforma y lo sube, junto con los objetos nuevos, a un GitHub Release.
     python tools/updater/publish.py --dist app/dist/DowP.app --platform macos-arm64 \
         --repo MarckDP/DowP2 --private-key tools/updater/secrets/private_key.pem
 
-Ver ACTUALIZACIONES.md y el plan de la sesion para el diseno completo: manifiesto
-de hashes + almacen direccionado por contenido, sin bsdiff, URL completa por
-objeto. Simplificacion explicita de esta v1: la reutilizacion de objetos ya
-subidos solo mira el release inmediatamente anterior (`/releases/latest`), no
-todo el historial -- un archivo que cambio y volvio a un valor de hace varias
-versiones se resube (correcto, solo suboptimo).
+Ver ACTUALIZACIONES.md para el diseno completo y su historia: la v1 de este
+sistema subia un objeto por archivo (~2600 objetos en un build de Windows) y
+choco con el limite duro de GitHub de 1000 assets por release. La v2 (esta)
+agrupa los archivos en ~200 "chunks" por hash de ruta (ver
+core.updater.chunking) y sube un tar.zst por chunk -- lejos del limite de
+GitHub, y una actualizacion tipica solo invalida un puñado de chunks, no el
+build entero. Simplificacion explicita: la reutilizacion de chunks ya subidos
+solo mira el release inmediatamente anterior (`/releases/latest`), no todo el
+historial -- un chunk que cambio y volvio a un valor de hace varias versiones
+se resube (correcto, solo suboptimo).
 """
 import argparse
 import json
@@ -39,25 +43,22 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(os.path.dirname(HERE))
 VERSION_FILE = os.path.join(REPO_ROOT, "app", "src", "core", "version.py")
 STAGING_DIR = os.path.join(HERE, ".staging")
+MANIFEST_FORMAT = 2  # v2: manifiesto por chunks (ver docstring del modulo)
 
-# Subir un objeto a la vez tardaba del orden de una hora para ~2600 objetos (medido
-# en el primer publish real): cada request es un viaje de ida y vuelta a GitHub, y
-# en serie eso domina el tiempo total muy por encima de lo que tarda comprimir.
-# 10 en simultaneo es conservador a proposito -- GitHub documenta un limite de
-# ~100 requests concurrentes antes de aplicar rate limiting secundario, pero el
-# techo real para la mayoria de conexiones caseras es el propio ancho de banda de
-# subida: pasado cierto punto, mas hilos solo reparten el mismo ancho de banda
-# entre mas transferencias en vez de acelerar el total. github_release.upload_asset()
-# usa requests.post() a nivel de modulo (una Session efimera por llamada, no
-# compartida) -- seguro para llamar desde varios hilos a la vez sin cambios ahi.
+# Un chunk a la vez tardaba mucho para los objetos de la v1 (~2600, del orden
+# de una hora en serie); con ~200 chunks por plataforma la subida es mucho mas
+# corta, pero se mantiene la concurrencia igual -- no cuesta nada y sigue
+# siendo conservador contra el rate limiting secundario de GitHub (~100
+# requests concurrentes documentados antes de que se dispare).
 MAX_CONCURRENT_UPLOADS = 15
 
 # app/src no se instala como paquete -- se importa por ruta, igual que hace
-# main.py en runtime. get_platform_key() vive ahi (no aqui) porque el cliente
-# de descarga, que SI viaja dentro del bundle, tambien la necesita: que ambos
-# calculen la misma clave de plataforma es lo que evita que un valor tecleado
-# a mano en --platform deje un manifiesto que el cliente nunca encuentra.
+# main.py en runtime. get_platform_key()/chunk_id_for() viven ahi (no aqui)
+# porque el cliente, que SI viaja dentro del bundle, tambien los necesita: que
+# ambos calculen lo mismo es lo que hace que el manifiesto que arma el
+# publicador y el diff que calcula el cliente hablen el mismo idioma.
 sys.path.insert(0, os.path.join(REPO_ROOT, "app", "src"))
+from core.updater.chunking import chunk_id_for, compute_chunk_hash  # noqa: E402
 from core.updater.platform_key import get_platform_key  # noqa: E402
 
 
@@ -70,9 +71,21 @@ def read_version_module() -> dict:
     return namespace
 
 
+def iter_manifest_chunks(manifest: dict | None):
+    """Yield (platform, chunk_id, entry) para cada chunk de cada plataforma de
+    un manifiesto ya cargado. No-op si manifest es None (no habia release
+    anterior, o esta version todavia no tiene manifest.json)."""
+    if not manifest:
+        return
+    for platform, plat_data in manifest.get("platforms", {}).items():
+        for chunk_id, entry in plat_data.get("chunks", {}).items():
+            yield platform, chunk_id, entry
+
+
 def iter_manifest_files(manifest: dict | None):
-    """Yield (platform, relpath, entry) para cada archivo de cada plataforma de un
-    manifiesto ya cargado. No-op si manifest es None (no habia release anterior)."""
+    """Yield (platform, relpath, entry) para cada archivo de cada plataforma --
+    solo se usa para el resumen de "cuanto cambio" (prev_file_hashes), la
+    descarga real va por chunk."""
     if not manifest:
         return
     for platform, plat_data in manifest.get("platforms", {}).items():
@@ -80,87 +93,93 @@ def iter_manifest_files(manifest: dict | None):
             yield platform, relpath, entry
 
 
-def fetch_manifest_json(release: dict | None, token: str) -> dict | None:
+def find_asset_paginated(repo: str, release: dict, name: str, token: str) -> dict | None:
+    """Busca un asset por nombre paginando de verdad (github_release.list_release_assets)
+    en vez de confiar en el campo "assets" embebido en el release -- ver
+    ACTUALIZACIONES.md, esa lista embebida no demostro ser confiable como
+    fuente de "que esta subido ya" cuando un release tiene muchos assets."""
+    for asset in gh.list_release_assets(repo, release["id"], token):
+        if asset["name"] == name:
+            return asset
+    return None
+
+
+def fetch_manifest_json(repo: str, release: dict | None, token: str) -> dict | None:
     """Descarga y parsea manifest.json de un release, o None si el release no
     existe o no tiene ese asset todavia (release recien creado por otra plataforma
     en la misma corrida de publicacion multi-plataforma)."""
     if release is None:
         return None
-    asset = gh.find_asset(release, "manifest.json")
+    asset = find_asset_paginated(repo, release, "manifest.json", token)
     if asset is None:
         return None
     return json.loads(gh.download_asset_content(asset, token))
 
 
-def build_platform_manifest(dist_dir: str, reuse_map: dict, staging_dir: str,
-                             find_existing_asset, download_url_for) -> tuple[dict, list, int, int]:
-    """Hashea dist_dir y arma las entradas de esta plataforma.
+def build_platform_manifest(dist_dir: str, chunk_reuse_map: dict, staging_dir: str,
+                             find_existing_chunk_asset) -> tuple[dict, dict, list, int, int]:
+    """Hashea dist_dir, agrupa los archivos en chunks (chunk_id_for) y arma las
+    entradas de esta plataforma.
 
-    reuse_map: hash -> {"url": ..., "compressed_size": ...} de objetos que ya
-    estan subidos en algun release y se pueden referenciar sin volver a comprimir
-    ni subir.
-    find_existing_asset(obj_name) -> asset dict o None: el objeto ya existe como
-    asset del release ACTUAL (idempotencia ante un reintento tras un corte a
-    medias) -- a diferencia de reuse_map, aqui la URL se sabe por convencion
-    (download_url_for), no viene de un manifiesto ya escrito.
-    download_url_for(obj_name) -> URL de descarga por convencion en el release actual.
+    chunk_reuse_map: chunk_hash -> {"url": ..., "compressed_size": ...} de chunks
+    que ya estan subidos en algun release (esta version por otra plataforma, o la
+    version anterior) y se pueden referenciar sin volver a empaquetar ni subir.
+    find_existing_chunk_asset(asset_name) -> asset dict o None: el chunk ya existe
+    FISICAMENTE como asset del release actual (idempotencia ante un reintento tras
+    un corte a medias), con su "browser_download_url" real.
 
-    Devuelve (files_dict, pendientes_de_subir, cambia_bytes, total_bytes), donde
-    pendientes_de_subir es [(hash, ruta_comprimida, nombre_asset), ...].
+    Un chunk realmente nuevo (ni en chunk_reuse_map ni ya subido) todavia no sabe
+    su URL final -- eso se decide recien al subirlo en main(), asi que su "url"
+    queda en None aqui y se completa despues.
+
+    Devuelve (files_dict, chunks_dict, pendientes_de_subir, cambia_bytes, total_bytes),
+    donde pendientes_de_subir es [(chunk_hash, ruta_comprimida, nombre_asset), ...].
     """
     local_files = objectstore.hash_tree(dist_dir)
-    files, pending, changed_bytes, total_bytes = {}, [], 0, 0
-    # hash -> compressed_size de objetos ya vistos EN ESTA MISMA corrida. Necesario
-    # porque dos relpaths distintos pueden compartir contenido (DLLs duplicados, o
-    # en macOS los symlinks entre Contents/Frameworks y Contents/Resources -- ver
-    # ACTUALIZACIONES.md): sin esto, el mismo obj_name se agregaba dos veces a
-    # `pending` y la segunda subida fallaba con 422 (GitHub ya lo tenia, subido
-    # segundos antes en la misma corrida) -- reuse_map y find_existing_asset solo
-    # cubren objetos de OTRA corrida/plataforma, no duplicados dentro de esta.
-    staged_this_run = {}
 
-    for relpath, info in sorted(local_files.items()):
-        file_hash, size = info["hash"], info["size"]
-        total_bytes += size
+    by_chunk: dict[str, list] = {}
+    files = {}
+    total_bytes = 0
+    for relpath, info in local_files.items():
+        cid = chunk_id_for(relpath)
+        files[relpath] = {"hash": info["hash"], "size": info["size"], "chunk": cid}
+        by_chunk.setdefault(cid, []).append((relpath, info["hash"]))
+        total_bytes += info["size"]
 
-        if file_hash in reuse_map:
-            reused = reuse_map[file_hash]
-            files[relpath] = {
-                "hash": file_hash, "size": size,
-                "compressed_size": reused["compressed_size"], "url": reused["url"],
+    chunks, pending, changed_bytes = {}, [], 0
+
+    for cid, entries in sorted(by_chunk.items()):
+        chunk_hash = compute_chunk_hash(entries)
+        relpaths_sorted = sorted(relpath for relpath, _h in entries)
+        chunk_size = sum(local_files[relpath]["size"] for relpath in relpaths_sorted)
+
+        if chunk_hash in chunk_reuse_map:
+            reused = chunk_reuse_map[chunk_hash]
+            chunks[cid] = {
+                "hash": chunk_hash, "compressed_size": reused["compressed_size"], "url": reused["url"],
             }
             continue
 
-        changed_bytes += size
-        obj_name = objectstore.object_name(file_hash)
+        changed_bytes += chunk_size
+        asset_name = objectstore.chunk_asset_name(chunk_hash)
 
-        existing_asset = find_existing_asset(obj_name)
+        existing_asset = find_existing_chunk_asset(asset_name)
         if existing_asset is not None:
-            # Ya subido en un intento anterior de esta misma corrida: no hace
-            # falta comprimir de nuevo, solo referenciarlo.
-            files[relpath] = {
-                "hash": file_hash, "size": size,
-                "compressed_size": existing_asset["size"], "url": download_url_for(obj_name),
+            # Ya subido de verdad (esta corrida u otra anterior interrumpida):
+            # no hace falta empaquetar de nuevo, solo referenciarlo con su URL real.
+            chunks[cid] = {
+                "hash": chunk_hash, "compressed_size": existing_asset["size"],
+                "url": existing_asset["browser_download_url"],
             }
             continue
 
-        if file_hash in staged_this_run:
-            files[relpath] = {
-                "hash": file_hash, "size": size,
-                "compressed_size": staged_this_run[file_hash], "url": download_url_for(obj_name),
-            }
-            continue
+        staged_path, compressed_size = objectstore.stage_chunk(
+            relpaths_sorted, dist_dir, chunk_hash, staging_dir,
+        )
+        chunks[cid] = {"hash": chunk_hash, "compressed_size": compressed_size, "url": None}
+        pending.append((chunk_hash, staged_path, asset_name))
 
-        full_path = os.path.join(dist_dir, relpath.replace("/", os.sep))
-        staged_path, compressed_size = objectstore.stage_object(full_path, file_hash, staging_dir)
-        staged_this_run[file_hash] = compressed_size
-        files[relpath] = {
-            "hash": file_hash, "size": size,
-            "compressed_size": compressed_size, "url": download_url_for(obj_name),
-        }
-        pending.append((file_hash, staged_path, obj_name))
-
-    return files, pending, changed_bytes, total_bytes
+    return files, chunks, pending, changed_bytes, total_bytes
 
 
 def main():
@@ -210,9 +229,9 @@ def main():
     os.makedirs(staging_dir, exist_ok=True)
 
     # Log persistente en disco, ademas de stdout -- si la ventana de la consola se
-    # cierra sola a mitad de una corrida larga (pasa: 2600+ subidas es una hora o
-    # mas de proceso desatendido), el traceback impreso se pierde con ella. Esto
-    # deja rastro igual, sin cambiar nada de lo que ya se imprime por pantalla.
+    # cierra sola a mitad de una corrida larga, el traceback impreso se pierde con
+    # ella. Esto deja rastro igual, sin cambiar nada de lo que ya se imprime por
+    # pantalla.
     log_path = os.path.join(staging_dir, "publish_log.txt")
 
     def log(msg: str) -> None:
@@ -225,85 +244,99 @@ def main():
 
     if not args.dry_run:
         current_release = gh.get_release_by_tag(args.repo, tag, token)
-        current_manifest = fetch_manifest_json(current_release, token)
+        current_manifest = fetch_manifest_json(args.repo, current_release, token)
 
         prev_release = gh.get_latest_release(args.repo, token)
         if prev_release and prev_release.get("tag_name") != tag:
-            prev_manifest = fetch_manifest_json(prev_release, token)
+            prev_manifest = fetch_manifest_json(args.repo, prev_release, token)
 
-    # hash -> {url, compressed_size} de objetos ya subidos en algun release (esta
-    # version parcialmente publicada por otra plataforma, o la version anterior).
-    reuse_map = {}
-    for _plat, _rel, entry in iter_manifest_files(current_manifest):
-        reuse_map[entry["hash"]] = {"url": entry["url"], "compressed_size": entry["compressed_size"]}
-    prev_hashes = set()
-    for _plat, _rel, entry in iter_manifest_files(prev_manifest):
-        prev_hashes.add(entry["hash"])
-        reuse_map.setdefault(entry["hash"], {"url": entry["url"], "compressed_size": entry["compressed_size"]})
+    # chunk_hash -> {url, compressed_size} de chunks ya subidos en algun release
+    # (esta version parcialmente publicada por otra plataforma, o la version
+    # anterior) -- evita volver a empaquetar/subir un chunk sin cambios.
+    chunk_reuse_map = {}
+    for _plat, _cid, entry in iter_manifest_chunks(current_manifest):
+        chunk_reuse_map[entry["hash"]] = {"url": entry["url"], "compressed_size": entry["compressed_size"]}
+    prev_file_hashes = set()
+    for _plat, _rp, entry in iter_manifest_files(prev_manifest):
+        prev_file_hashes.add(entry["hash"])
+    for _plat, _cid, entry in iter_manifest_chunks(prev_manifest):
+        chunk_reuse_map.setdefault(entry["hash"], {"url": entry["url"], "compressed_size": entry["compressed_size"]})
 
-    def find_existing_asset(obj_name: str):
-        if args.dry_run or current_release is None:
-            return None
-        return gh.find_asset(current_release, obj_name)
+    # Fuente de verdad real de "que chunk esta subido ya", paginada -- ver
+    # find_asset_paginated. Con ~200 chunks por plataforma nunca se acerca al
+    # limite de 1000 assets/release de GitHub, asi que (a diferencia de la v1)
+    # no hace falta repartir en releases aparte: todo vive en el release de la
+    # version, junto a manifest.json/.sig.
+    existing_chunks_by_name = {}
+    if not args.dry_run and current_release is not None:
+        existing_chunks_by_name = {
+            a["name"]: a for a in gh.list_release_assets(args.repo, current_release["id"], token)
+        }
 
-    def download_url_for(obj_name: str) -> str:
-        # Predecible por convencion de GitHub: no hace falta que el release
-        # exista todavia para saber que URL tendra un asset una vez subido.
-        repo = args.repo or "<repo>"
-        return f"https://github.com/{repo}/releases/download/{tag}/{obj_name}"
+    def find_existing_chunk_asset(asset_name: str):
+        return existing_chunks_by_name.get(asset_name)
 
-    files, pending, changed_bytes, total_bytes = build_platform_manifest(
-        args.dist, reuse_map, staging_dir, find_existing_asset, download_url_for,
+    files, chunks, pending, changed_bytes, total_bytes = build_platform_manifest(
+        args.dist, chunk_reuse_map, staging_dir, find_existing_chunk_asset,
     )
 
     # Reutilizados-de-verdad (sin cambios respecto a la version anterior) vs el
-    # resto, para el resumen -- distinto de "esta en reuse_map", que tambien
-    # cuenta objetos compartidos con otra plataforma de esta MISMA version.
-    unchanged = sum(1 for e in files.values() if e["hash"] in prev_hashes)
-    download_bytes = sum(e["size"] for e in files.values() if e["hash"] not in prev_hashes)
+    # resto, para el resumen -- a nivel de ARCHIVO individual (independiente de
+    # en que chunk haya caido), para que el numero siga significando lo mismo
+    # que en la v1 de este sistema.
+    unchanged = sum(1 for e in files.values() if e["hash"] in prev_file_hashes)
+    download_bytes = sum(e["size"] for e in files.values() if e["hash"] not in prev_file_hashes)
+
+    if args.dry_run:
+        # Nunca se sube nada, asi que no hay release real donde caeria un chunk
+        # nuevo -- placeholder solo para que el manifiesto local quede completo
+        # e inspeccionable, no una URL que vaya a existir de verdad.
+        for entry in chunks.values():
+            if entry["url"] is None:
+                entry["url"] = (f"https://github.com/{args.repo or '<repo>'}/releases/download/"
+                                 f"{tag}/{objectstore.chunk_asset_name(entry['hash'])}")
 
     if not args.dry_run:
         if current_release is None:
             current_release = gh.create_release(args.repo, tag, token, prerelease=args.prerelease)
 
-        # Filtro secuencial primero (barato, en memoria contra el snapshot ya
-        # traido) -- lo unico que se paraleliza es la subida en si, que es lo
-        # que de verdad tarda (ver MAX_CONCURRENT_UPLOADS mas arriba).
-        to_upload = [
-            (staged_path, obj_name) for _file_hash, staged_path, obj_name in pending
-            if gh.find_asset(current_release, obj_name) is None
-        ]
-
-        if to_upload:
-            log(f"Subiendo {len(to_upload)} objeto(s) nuevo(s) "
+        if pending:
+            log(f"Subiendo {len(pending)} chunk(s) nuevo(s) de {len(chunks)} totales "
                 f"(hasta {MAX_CONCURRENT_UPLOADS} en simultaneo). Log en: {log_path}")
             done = 0
             with ThreadPoolExecutor(max_workers=MAX_CONCURRENT_UPLOADS) as pool:
                 futures = {
-                    pool.submit(gh.upload_asset, current_release, staged_path, obj_name, token): obj_name
-                    for staged_path, obj_name in to_upload
+                    pool.submit(gh.upload_asset, current_release, staged_path, asset_name, token): asset_name
+                    for _chunk_hash, staged_path, asset_name in pending
                 }
                 for future in as_completed(futures):
-                    obj_name = futures[future]
+                    asset_name = futures[future]
                     try:
                         future.result()
                     except Exception:
-                        # Se deja constancia de CUAL objeto fallo y el traceback
+                        # Se deja constancia de CUAL chunk fallo y el traceback
                         # completo en el log antes de relanzar -- si la ventana
-                        # se cierra sola (pasa en corridas largas desatendidas),
-                        # esto sigue en disco.
-                        log(f"FALLO subiendo {obj_name}:\n{traceback.format_exc()}")
+                        # se cierra sola, esto sigue en disco.
+                        log(f"FALLO subiendo {asset_name}:\n{traceback.format_exc()}")
                         raise
                     done += 1
-                    if done % 100 == 0 or done == len(to_upload):
-                        log(f"  {done}/{len(to_upload)}")
+                    if done % 20 == 0 or done == len(pending):
+                        log(f"  {done}/{len(pending)}")
             log("Subida completa.")
 
+        chunk_hash_to_url = {
+            chunk_hash: f"https://github.com/{args.repo}/releases/download/{tag}/{asset_name}"
+            for chunk_hash, _staged_path, asset_name in pending
+        }
+        for entry in chunks.values():
+            if entry["url"] is None:
+                entry["url"] = chunk_hash_to_url[entry["hash"]]
+
     final_manifest = current_manifest or {}
-    final_manifest["format"] = 1
+    final_manifest["format"] = MANIFEST_FORMAT
     final_manifest["app_version"] = version
     final_manifest["min_updatable_version"] = min_updatable
-    final_manifest.setdefault("platforms", {})[platform_key] = {"files": files}
+    final_manifest.setdefault("platforms", {})[platform_key] = {"files": files, "chunks": chunks}
 
     manifest_path = os.path.join(staging_dir, "manifest.json")
     with open(manifest_path, "w", encoding="utf-8", newline="\n") as f:
@@ -317,13 +350,15 @@ def main():
 
     print(f"\nPlataforma: {platform_key}  |  Version: {version}  |  Tag: {tag}")
     print(f"  Archivos totales   : {len(files):>6}  ({objectstore.mb(total_bytes)})")
-    print(f"  Sin cambios        : {unchanged:>6}")
-    print(f"  Nuevos/modificados : {len(files) - unchanged:>6}  ({objectstore.mb(download_bytes)})")
+    print(f"  Chunks totales     : {len(chunks):>6}")
+    print(f"  Sin cambios        : {unchanged:>6} archivo(s)")
+    print(f"  Nuevos/modificados : {len(files) - unchanged:>6} archivo(s)  ({objectstore.mb(download_bytes)})")
+    print(f"  Chunks a subir     : {len(pending):>6}")
     print(f"  Manifiesto         : {manifest_path}")
     print(f"  Firma              : {sig_path}")
 
     if args.dry_run:
-        print("\n[--dry-run] No se toco GitHub. Objetos comprimidos en:", staging_dir)
+        print("\n[--dry-run] No se toco GitHub. Chunks comprimidos en:", staging_dir)
         return
 
     gh.replace_asset(current_release, manifest_path, "manifest.json", args.repo, token,

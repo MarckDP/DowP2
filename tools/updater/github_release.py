@@ -81,17 +81,45 @@ def create_release(repo: str, tag: str, token: str, name: str | None = None,
     return res.json()
 
 
-def find_asset(release: dict, name: str) -> dict | None:
-    for asset in release.get("assets", []):
-        if asset["name"] == name:
-            return asset
-    return None
+def list_release_assets(repo: str, release_id: int, token: str) -> list:
+    """Todos los assets de un release, paginando de a 100 -- nunca confiar en
+    el campo "assets" embebido en get_release_by_tag()/get_latest_release()
+    para saber que esta subido de verdad (no demostro ser confiable en un
+    release con muchos assets: un objeto ya subido en una corrida anterior
+    quedaba invisible en corridas siguientes, con 422 "already_exists"
+    reproducible al reintentar subirlo). Con el esquema de chunks (~200 por
+    plataforma, ver publish.py) esto ya no hace falta por volumen, pero se
+    mantiene como la unica fuente de verdad real, sin excepciones."""
+    assets = []
+    page = 1
+    while True:
+        res = _request(
+            requests.get, f"{API_BASE}/repos/{repo}/releases/{release_id}/assets",
+            headers=_headers(token), params={"per_page": 100, "page": page},
+        )
+        res.raise_for_status()
+        batch = res.json()
+        if not batch:
+            break
+        assets.extend(batch)
+        page += 1
+    return assets
 
 
 def upload_asset(release: dict, file_path: str, asset_name: str, token: str,
                   content_type: str = "application/octet-stream") -> dict:
     """Sube file_path como asset_name. Asume que ya se comprobo (con find_asset)
-    que no existe todavia -- GitHub responde 422 si el nombre ya esta en uso."""
+    que no existe todavia -- GitHub responde 422 si el nombre ya esta en uso.
+
+    Un 422 "already_exists" aqui puede pasar igual, sin que sea un bug del
+    llamador: si el intento original de este mismo POST fue de verdad recibido
+    y creo el asset en GitHub, pero la respuesta que llego a este lado fue un
+    403/429 de rate limit secundario (ver `_request`), el reintento automatico
+    vuelve a mandar el mismo nombre -- y como los objetos son inmutables por
+    contenido (mismo hash = mismo contenido, ver build_platform_manifest), que
+    ya exista es exactamente el resultado buscado, no una colision real. Se
+    trata como exito. Un 422 por otro motivo (`code` distinto de
+    "already_exists") si se sigue propagando como error real."""
     upload_url = release["upload_url"].split("{")[0]  # quita el template "{?name,label}"
     with open(file_path, "rb") as f:
         data = f.read()
@@ -101,6 +129,13 @@ def upload_asset(release: dict, file_path: str, asset_name: str, token: str,
         params={"name": asset_name},
         data=data,
     )
+    if res.status_code == 422:
+        try:
+            errors = res.json().get("errors", [])
+        except ValueError:
+            errors = []
+        if any(e.get("code") == "already_exists" for e in errors):
+            return {"name": asset_name, "already_existed": True}
     res.raise_for_status()
     return res.json()
 
@@ -115,9 +150,14 @@ def replace_asset(release: dict, file_path: str, asset_name: str, repo: str, tok
                    content_type: str = "application/octet-stream") -> dict:
     """Sube asset_name, borrando primero cualquier version anterior con el mismo
     nombre. Para archivos que SI cambian en cada corrida (manifest.json y su
-    firma) -- a diferencia de los objetos por hash, que son inmutables por
-    definicion y nunca deberian pasar por aqui."""
-    existing = find_asset(release, asset_name)
+    firma) -- a diferencia de los chunks por hash, que son inmutables por
+    definicion y nunca deberian pasar por aqui.
+
+    Busca el existente paginando (list_release_assets), no con find_asset()
+    sobre el campo embebido -- ese campo no demostro ser confiable como fuente
+    de "que esta subido ya" cuando el release tiene muchos assets (ver
+    list_release_assets)."""
+    existing = next((a for a in list_release_assets(repo, release["id"], token) if a["name"] == asset_name), None)
     if existing:
         delete_asset(repo, existing["id"], token)
     return upload_asset(release, file_path, asset_name, token, content_type)

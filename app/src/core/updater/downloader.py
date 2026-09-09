@@ -1,8 +1,15 @@
 # src/core/updater/downloader.py
-"""Descarga y descomprime a un staging local los archivos que update_checker
+"""Descarga y extrae a un staging local los chunks que update_checker
 determino que hacen falta. No aplica nada sobre la instalacion real -- eso es
-el helper de swap (pieza 3, todavia no implementada)."""
+el helper de swap (journal.py + swap_executor.py).
+
+Cada chunk es un tar comprimido con zstd (ver tools/updater/objectstore.py)
+que contiene varios archivos -- se descarga y descomprime en streaming (nunca
+se carga entero en memoria) y se extrae directo a staging_dir, verificando el
+hash de CADA archivo extraido contra lo que dice el manifiesto antes de
+aceptarlo."""
 import os
+import tarfile
 from dataclasses import dataclass, field
 
 import requests
@@ -21,66 +28,86 @@ class DownloadResult:
     failed_files: list = field(default_factory=list)
 
 
-def _download_one(url: str, dest_path: str, expected_hash: str) -> bool:
-    """Descarga url en streaming, la descomprime con zstd tambien en streaming
-    (nunca carga el objeto comprimido entero en memoria) y verifica el hash del
-    resultado antes de aceptarlo. Escribe a un .part y hace os.replace() al
-    final -- si se corta a medias, el archivo bueno anterior (si lo habia) no
-    se pierde y el .part huerfano no pasa la verificacion de hash de la
-    proxima corrida."""
-    os.makedirs(os.path.dirname(dest_path) or ".", exist_ok=True)
-    tmp_path = dest_path + ".part"
+def _download_and_extract_chunk(url: str, expected_files: dict, staging_dir: str) -> None:
+    """Descarga url en streaming, la descomprime con zstd tambien en streaming y
+    extrae cada archivo del tar directo a staging_dir/relpath, verificando su
+    hash contra expected_files (relpath -> {"hash", ...}) antes de aceptarlo.
+    Escribe a un .part y hace os.replace() al final por archivo -- mismo
+    criterio de resistencia a cortes que la v1 de este sistema.
 
+    Lanza si algun archivo esperado no aparece en el tar, o si algun hash no
+    coincide -- el llamador decide como tratarlo (todo el chunk se descarta)."""
     decompressor = zstandard.ZstdDecompressor()
+    seen = set()
     with requests.get(url, stream=True, timeout=TIMEOUT) as r:
         r.raise_for_status()
-        with open(tmp_path, "wb") as out, decompressor.stream_writer(out) as writer:
-            for chunk in r.iter_content(chunk_size=CHUNK_SIZE):
-                if chunk:
-                    writer.write(chunk)
+        r.raw.decode_content = True
+        with decompressor.stream_reader(r.raw) as zstream, tarfile.open(fileobj=zstream, mode="r|") as tar:
+            for member in tar:
+                if not member.isfile() or member.name not in expected_files:
+                    continue
+                dest_path = os.path.join(staging_dir, member.name.replace("/", os.sep))
+                os.makedirs(os.path.dirname(dest_path) or ".", exist_ok=True)
+                tmp_path = dest_path + ".part"
+                src = tar.extractfile(member)
+                with open(tmp_path, "wb") as out:
+                    while True:
+                        block = src.read(CHUNK_SIZE)
+                        if not block:
+                            break
+                        out.write(block)
 
-    if hash_file(tmp_path) != expected_hash:
-        logger.error(f"Updater: hash no coincide tras descargar {url} -- descartado.")
-        os.remove(tmp_path)
-        return False
+                if hash_file(tmp_path) != expected_files[member.name]["hash"]:
+                    os.remove(tmp_path)
+                    raise ValueError(f"hash no coincide para {member.name} dentro del chunk")
 
-    os.replace(tmp_path, dest_path)
-    return True
+                os.replace(tmp_path, dest_path)
+                seen.add(member.name)
+
+    missing = set(expected_files) - seen
+    if missing:
+        raise ValueError(f"el chunk no traia {len(missing)} archivo(s) esperado(s): {sorted(missing)}")
 
 
 def download_update(update_info, staging_dir: str, progress_callback=None) -> "DownloadResult":
     """progress_callback(bytes_completados, bytes_totales), en unidades de
-    bytes EN LA RED (compressed_size) -- es lo que de verdad avanza mientras
-    se descarga, a diferencia del tamano descomprimido.
+    bytes EN LA RED (compressed_size de cada chunk) -- es lo que de verdad
+    avanza mientras se descarga, a diferencia del tamano descomprimido.
 
-    Idempotente: un archivo ya presente en staging_dir con el hash correcto no
-    se vuelve a descargar (permite reanudar tras cerrar la app a medias)."""
-    total = sum(
-        entry.get("compressed_size") or entry["size"]
-        for entry in update_info.files_to_download.values()
-    )
+    Idempotente: un chunk cuyos archivos ya estan en staging_dir con el hash
+    correcto no se vuelve a descargar (permite reanudar tras cerrar la app a
+    medias)."""
+    total = sum(entry["compressed_size"] for entry in update_info.chunks_to_download.values())
     completed = 0
-    failed = []
+    failed_relpaths = []
 
-    for relpath, entry in update_info.files_to_download.items():
-        dest_path = os.path.join(staging_dir, relpath.replace("/", os.sep))
-        chunk_size = entry.get("compressed_size") or entry["size"]
+    for chunk_id, chunk_entry in update_info.chunks_to_download.items():
+        expected_files = {
+            relpath: entry for relpath, entry in update_info.files_to_download.items()
+            if entry["chunk"] == chunk_id
+        }
 
-        already_ok = os.path.exists(dest_path) and hash_file(dest_path) == entry["hash"]
+        already_ok = all(
+            os.path.exists(os.path.join(staging_dir, relpath.replace("/", os.sep)))
+            and hash_file(os.path.join(staging_dir, relpath.replace("/", os.sep))) == entry["hash"]
+            for relpath, entry in expected_files.items()
+        )
         if not already_ok:
             try:
-                already_ok = _download_one(entry["url"], dest_path, entry["hash"])
-            except requests.RequestException as e:
-                logger.error(f"Updater: fallo descargando {relpath}: {e}")
-                already_ok = False
+                _download_and_extract_chunk(chunk_entry["url"], expected_files, staging_dir)
+            except (requests.RequestException, tarfile.TarError, ValueError, OSError) as e:
+                logger.error(f"Updater: fallo descargando el chunk {chunk_id}: {e}")
+                failed_relpaths.extend(expected_files)
+                completed += chunk_entry["compressed_size"]
+                if progress_callback:
+                    progress_callback(completed, total)
+                continue
 
-        if not already_ok:
-            failed.append(relpath)
-
-        completed += chunk_size
+        completed += chunk_entry["compressed_size"]
         if progress_callback:
             progress_callback(completed, total)
 
-    if failed:
-        logger.error(f"Updater: {len(failed)} archivo(s) no se pudieron descargar/verificar: {failed}")
-    return DownloadResult(ok=not failed, failed_files=failed)
+    if failed_relpaths:
+        logger.error(f"Updater: {len(failed_relpaths)} archivo(s) no se pudieron descargar/verificar "
+                      f"(via chunks): {failed_relpaths}")
+    return DownloadResult(ok=not failed_relpaths, failed_files=failed_relpaths)

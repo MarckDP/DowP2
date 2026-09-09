@@ -28,6 +28,7 @@ import argparse
 import json
 import os
 import sys
+import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import github_release as gh
@@ -49,7 +50,7 @@ STAGING_DIR = os.path.join(HERE, ".staging")
 # entre mas transferencias en vez de acelerar el total. github_release.upload_asset()
 # usa requests.post() a nivel de modulo (una Session efimera por llamada, no
 # compartida) -- seguro para llamar desde varios hilos a la vez sin cambios ahi.
-MAX_CONCURRENT_UPLOADS = 10
+MAX_CONCURRENT_UPLOADS = 15
 
 # app/src no se instala como paquete -- se importa por ruta, igual que hace
 # main.py en runtime. get_platform_key() vive ahi (no aqui) porque el cliente
@@ -208,6 +209,17 @@ def main():
     staging_dir = os.path.join(STAGING_DIR, tag)
     os.makedirs(staging_dir, exist_ok=True)
 
+    # Log persistente en disco, ademas de stdout -- si la ventana de la consola se
+    # cierra sola a mitad de una corrida larga (pasa: 2600+ subidas es una hora o
+    # mas de proceso desatendido), el traceback impreso se pierde con ella. Esto
+    # deja rastro igual, sin cambiar nada de lo que ya se imprime por pantalla.
+    log_path = os.path.join(staging_dir, "publish_log.txt")
+
+    def log(msg: str) -> None:
+        print(msg)
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(msg + "\n")
+
     current_release, prev_release = None, None
     current_manifest, prev_manifest = None, None
 
@@ -263,8 +275,8 @@ def main():
         ]
 
         if to_upload:
-            print(f"Subiendo {len(to_upload)} objeto(s) nuevo(s) "
-                  f"(hasta {MAX_CONCURRENT_UPLOADS} en simultaneo)...")
+            log(f"Subiendo {len(to_upload)} objeto(s) nuevo(s) "
+                f"(hasta {MAX_CONCURRENT_UPLOADS} en simultaneo). Log en: {log_path}")
             done = 0
             with ThreadPoolExecutor(max_workers=MAX_CONCURRENT_UPLOADS) as pool:
                 futures = {
@@ -272,10 +284,20 @@ def main():
                     for staged_path, obj_name in to_upload
                 }
                 for future in as_completed(futures):
-                    future.result()  # relanza cualquier error real de esa subida puntual
+                    obj_name = futures[future]
+                    try:
+                        future.result()
+                    except Exception:
+                        # Se deja constancia de CUAL objeto fallo y el traceback
+                        # completo en el log antes de relanzar -- si la ventana
+                        # se cierra sola (pasa en corridas largas desatendidas),
+                        # esto sigue en disco.
+                        log(f"FALLO subiendo {obj_name}:\n{traceback.format_exc()}")
+                        raise
                     done += 1
                     if done % 100 == 0 or done == len(to_upload):
-                        print(f"  {done}/{len(to_upload)}")
+                        log(f"  {done}/{len(to_upload)}")
+            log("Subida completa.")
 
     final_manifest = current_manifest or {}
     final_manifest["format"] = 1

@@ -96,6 +96,14 @@ def build_platform_manifest(dist_dir: str, reuse_map: dict, staging_dir: str,
     """
     local_files = objectstore.hash_tree(dist_dir)
     files, pending, changed_bytes, total_bytes = {}, [], 0, 0
+    # hash -> compressed_size de objetos ya vistos EN ESTA MISMA corrida. Necesario
+    # porque dos relpaths distintos pueden compartir contenido (DLLs duplicados, o
+    # en macOS los symlinks entre Contents/Frameworks y Contents/Resources -- ver
+    # ACTUALIZACIONES.md): sin esto, el mismo obj_name se agregaba dos veces a
+    # `pending` y la segunda subida fallaba con 422 (GitHub ya lo tenia, subido
+    # segundos antes en la misma corrida) -- reuse_map y find_existing_asset solo
+    # cubren objetos de OTRA corrida/plataforma, no duplicados dentro de esta.
+    staged_this_run = {}
 
     for relpath, info in sorted(local_files.items()):
         file_hash, size = info["hash"], info["size"]
@@ -122,8 +130,16 @@ def build_platform_manifest(dist_dir: str, reuse_map: dict, staging_dir: str,
             }
             continue
 
+        if file_hash in staged_this_run:
+            files[relpath] = {
+                "hash": file_hash, "size": size,
+                "compressed_size": staged_this_run[file_hash], "url": download_url_for(obj_name),
+            }
+            continue
+
         full_path = os.path.join(dist_dir, relpath.replace("/", os.sep))
         staged_path, compressed_size = objectstore.stage_object(full_path, file_hash, staging_dir)
+        staged_this_run[file_hash] = compressed_size
         files[relpath] = {
             "hash": file_hash, "size": size,
             "compressed_size": compressed_size, "url": download_url_for(obj_name),

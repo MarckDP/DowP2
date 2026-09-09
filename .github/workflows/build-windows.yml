@@ -1,0 +1,105 @@
+name: Build Windows (manual)
+
+# Disparo manual a proposito, mismo criterio que build-macos.yml: gastar minutos
+# de Actions solo cuando de verdad hace falta un build de prueba/release, no en
+# cada push.
+on:
+  workflow_dispatch: {}
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r app/requirements.txt
+          pip install pyinstaller==6.22.2
+
+      - name: Compilar DowP (DowP.exe + helper de swap)
+        working-directory: app
+        run: python build_cross_platform.py
+
+      - name: "Leer version de la app (unica fuente: core/version.py)"
+        id: appver
+        working-directory: app
+        run: |
+          $version = python -c "import sys; sys.path.insert(0,'src'); from core.version import APP_VERSION; print(APP_VERSION)"
+          echo "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Instalar Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      - name: Generar installer/DowP.iss
+        # installer/DowP.iss esta en .gitignore a proposito (herramienta local del
+        # maintainer, no un secreto, ver .gitignore) -- el checkout de este runner
+        # NO lo trae. Se genera aqui, inline, con el MISMO contenido que el archivo
+        # local (ver installer/DowP.iss): si cambias algo en uno, replicalo en el
+        # otro. MyAppVersion se deja indefinido a proposito -- llega por /D al
+        # compilar, en el paso siguiente.
+        run: |
+          New-Item -ItemType Directory -Force -Path installer | Out-Null
+          @'
+          #define MyAppName "DowP"
+          #ifndef MyAppVersion
+            #define MyAppVersion "0.0.0"
+          #endif
+          #define MyAppPublisher "MarckDP"
+          #define MyAppExeName "DowP.exe"
+          #define MyAppIconFile "..\app\src\assets\icons\app\DowP_Logo.ico"
+          #define MyAppDistDir "..\app\dist\DowP"
+
+          [Setup]
+          AppId={{ED4B4BD2-DCD4-4496-866F-94322AC0A7C8}
+          AppName={#MyAppName}
+          AppVersion={#MyAppVersion}
+          AppPublisher={#MyAppPublisher}
+          AppSupportURL=https://github.com/MarckDP/DowP2
+          DefaultDirName={localappdata}\Programs\{#MyAppName}
+          DefaultGroupName={#MyAppName}
+          DisableProgramGroupPage=yes
+          PrivilegesRequired=lowest
+          PrivilegesRequiredOverridesAllowed=commandline
+          OutputDir=output
+          OutputBaseFilename=DowP_Setup_{#MyAppVersion}
+          SetupIconFile={#MyAppIconFile}
+          UninstallDisplayIcon={app}\{#MyAppExeName}
+          Compression=lzma2
+          SolidCompression=yes
+          WizardStyle=modern
+          ArchitecturesInstallIn64BitMode=x64compatible
+
+          [Languages]
+          Name: "spanish"; MessagesFile: "compiler:Languages\Spanish.isl"
+          Name: "english"; MessagesFile: "compiler:Default.isl"
+
+          [Tasks]
+          Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+
+          [Files]
+          Source: "{#MyAppDistDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+
+          [Icons]
+          Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
+          Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
+          Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+
+          [Run]
+          Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent
+          '@ | Set-Content -Path installer\DowP.iss -Encoding UTF8
+
+      - name: Compilar el instalador
+        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\DowP.iss /DMyAppVersion=${{ steps.appver.outputs.version }}'
+
+      - name: Subir el instalador como artifact (descarga y uso directo)
+        uses: actions/upload-artifact@v4
+        with:
+          name: DowP_Setup_${{ steps.appver.outputs.version }}
+          path: installer/output/DowP_Setup_*.exe
+          retention-days: 5

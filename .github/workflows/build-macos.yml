@@ -14,7 +14,12 @@ jobs:
         include:
           - os: macos-14   # Apple Silicon (arm64) -- el caso estricto: sin firma no arranca
             arch_label: arm64
-          - os: macos-13   # Intel (x64)
+          # Intel (x64). GitHub viene reduciendo la flota Intel de macOS a favor de
+          # Apple Silicon -- si este leg se queda "Waiting for a runner" muchos
+          # minutos (ya paso una vez), es casi seguro escasez de runners Intel en
+          # el tier gratis, no un error de este workflow. La VM Hackintosh local
+          # ya demostro ser un camino x64 confiable end-to-end si esto falla.
+          - os: macos-13
             arch_label: x64
     runs-on: ${{ matrix.os }}
     steps:
@@ -34,13 +39,26 @@ jobs:
         working-directory: app
         run: python build_cross_platform.py
 
-      - name: Empaquetar el .app preservando firma/atributos (ditto, no zip)
-        working-directory: app/dist
-        run: ditto -c -k --keepParent DowP.app DowP-macos-${{ matrix.arch_label }}.zip
+      - name: "Leer version de la app (unica fuente: core/version.py)"
+        id: appver
+        working-directory: app
+        run: |
+          VERSION=$(python -c "import sys; sys.path.insert(0,'src'); from core.version import APP_VERSION; print(APP_VERSION)")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Subir como artifact del run
+      - name: Empaquetar en .dmg (listo para abrir y arrastrar, no un .app suelto en un zip)
+        working-directory: app/dist
+        run: |
+          mkdir dmg_staging
+          cp -R DowP.app dmg_staging/
+          ln -s /Applications dmg_staging/Applications
+          hdiutil create -volname "DowP" -srcfolder dmg_staging -ov -format UDZO \
+            "DowP-${{ steps.appver.outputs.version }}-${{ matrix.arch_label }}.dmg"
+          rm -rf dmg_staging
+
+      - name: Subir el .dmg como artifact (descarga y uso directo)
         uses: actions/upload-artifact@v4
         with:
-          name: DowP-macos-${{ matrix.arch_label }}
-          path: app/dist/DowP-macos-${{ matrix.arch_label }}.zip
+          name: DowP-${{ steps.appver.outputs.version }}-${{ matrix.arch_label }}
+          path: app/dist/DowP-${{ steps.appver.outputs.version }}-${{ matrix.arch_label }}.dmg
           retention-days: 5

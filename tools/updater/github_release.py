@@ -7,10 +7,13 @@ local (PAT) que en la futura CI (GITHUB_TOKEN, que Actions inyecta solo).
 Todas las funciones reciben `repo` como "owner/nombre" y `token` como el valor
 crudo (nunca se loggea).
 """
+import time
+
 import requests
 
 API_BASE = "https://api.github.com"
 TIMEOUT = 30
+MAX_RATE_LIMIT_RETRIES = 6
 
 
 def _headers(token: str, accept: str = "application/vnd.github+json") -> dict:
@@ -72,19 +75,34 @@ def find_asset(release: dict, name: str) -> dict | None:
 def upload_asset(release: dict, file_path: str, asset_name: str, token: str,
                   content_type: str = "application/octet-stream") -> dict:
     """Sube file_path como asset_name. Asume que ya se comprobo (con find_asset)
-    que no existe todavia -- GitHub responde 422 si el nombre ya esta en uso."""
+    que no existe todavia -- GitHub responde 422 si el nombre ya esta en uso.
+
+    Reintenta ante el "rate limit secundario" de GitHub (403/429 con header
+    Retry-After): se dispara subiendo muchos objetos seguidos con varios hilos
+    en simultaneo (ver MAX_CONCURRENT_UPLOADS en publish.py) -- no es un error
+    de permisos ni del token, es GitHub pidiendo que se baje el ritmo. Un 403
+    SIN ese header no se reintenta: ahi si es un fallo real (permisos, token
+    invalido), reintentarlo a ciegas solo tapa el error."""
     upload_url = release["upload_url"].split("{")[0]  # quita el template "{?name,label}"
     with open(file_path, "rb") as f:
         data = f.read()
-    res = requests.post(
-        upload_url,
-        headers={**_headers(token), "Content-Type": content_type},
-        params={"name": asset_name},
-        data=data,
-        timeout=TIMEOUT,
-    )
-    res.raise_for_status()
-    return res.json()
+
+    for attempt in range(MAX_RATE_LIMIT_RETRIES):
+        res = requests.post(
+            upload_url,
+            headers={**_headers(token), "Content-Type": content_type},
+            params={"name": asset_name},
+            data=data,
+            timeout=TIMEOUT,
+        )
+        retry_after = res.headers.get("Retry-After")
+        if res.status_code in (403, 429) and retry_after is not None and attempt < MAX_RATE_LIMIT_RETRIES - 1:
+            wait_s = int(retry_after) + 1
+            print(f"  Rate limit de GitHub subiendo {asset_name} -- esperando {wait_s}s (intento {attempt + 1}/{MAX_RATE_LIMIT_RETRIES})...")
+            time.sleep(wait_s)
+            continue
+        res.raise_for_status()
+        return res.json()
 
 
 def delete_asset(repo: str, asset_id: int, token: str) -> None:

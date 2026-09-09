@@ -64,6 +64,7 @@ app/tools/codec_matrix/_tmp_probe/
 app/tools/codec_matrix/runs/
 ACTUALIZACIONES.md
 SISTEMA_DE_ACTUALIZACIONES.md
+macos.md
 
 # Updater (tools/updater/): la clave privada Ed25519 NUNCA se commitea (la
 # publica, updater_public_key.pem, si). El staging es salida regenerable.

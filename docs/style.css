@@ -1,0 +1,90 @@
+body {
+    background-color: #121212;
+    color: #e0e0e0;
+    font-family: Arial, sans-serif;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    margin: 0;
+}
+
+.container {
+    text-align: center;
+    background: #1e1e1e;
+    padding: 3rem;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    max-width: 600px;
+    width: 90%;
+}
+
+h1 {
+    font-size: 3rem;
+    margin-bottom: 0.5rem;
+    color: #ffffff;
+}
+
+p {
+    color: #aaaaaa;
+    margin-bottom: 2rem;
+}
+
+.btn.primary {
+    display: inline-block;
+    background-color: #007bff;
+    color: white;
+    text-decoration: none;
+    padding: 1rem 2rem;
+    font-size: 1.2rem;
+    font-weight: bold;
+    border-radius: 4px;
+    transition: background-color 0.2s;
+    margin-bottom: 2rem;
+}
+
+.btn.primary:hover {
+    background-color: #0056b3;
+}
+
+.alt-downloads p {
+    font-size: 0.9rem;
+    color: #888888;
+    margin-bottom: 1rem;
+}
+
+.cards {
+    display: flex;
+    gap: 1rem;
+    justify-content: center;
+    flex-wrap: wrap;
+}
+
+.card {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.3rem;
+    text-decoration: none;
+    background: #2a2a2a;
+    border: 1px solid #444444;
+    padding: 0.4rem 0.8rem;
+    border-radius: 4px;
+    color: #e0e0e0;
+    transition: background-color 0.2s;
+}
+
+.card strong {
+    font-size: 0.75rem;
+    color: #ffffff;
+    font-weight: normal;
+}
+
+.card span {
+    font-size: 0.7rem;
+    color: #888888;
+}
+
+.card:hover {
+    background: #3a3a3a;
+}

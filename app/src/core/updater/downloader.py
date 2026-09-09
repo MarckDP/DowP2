@@ -4,11 +4,14 @@ determino que hacen falta. No aplica nada sobre la instalacion real -- eso es
 el helper de swap (journal.py + swap_executor.py).
 
 Cada chunk es un tar comprimido con zstd (ver tools/updater/objectstore.py)
-que contiene varios archivos -- se descarga y descomprime en streaming (nunca
-se carga entero en memoria) y se extrae directo a staging_dir, verificando el
-hash de CADA archivo extraido contra lo que dice el manifiesto antes de
-aceptarlo."""
+con un miembro POR CONTENIDO UNICO, nombrado por su hash (no por ruta) -- el
+mismo contenido puede corresponder a varias rutas locales distintas (symlinks
+Frameworks/Resources en macOS, ver ACTUALIZACIONES.md). Se descarga y
+descomprime en streaming (nunca se carga entero en memoria), se verifica el
+hash de cada miembro extraido, y se copia a TODAS las rutas locales que lo
+referencian antes de aceptarlo."""
 import os
+import shutil
 import tarfile
 from dataclasses import dataclass, field
 
@@ -29,14 +32,21 @@ class DownloadResult:
 
 
 def _download_and_extract_chunk(url: str, expected_files: dict, staging_dir: str) -> None:
-    """Descarga url en streaming, la descomprime con zstd tambien en streaming y
-    extrae cada archivo del tar directo a staging_dir/relpath, verificando su
-    hash contra expected_files (relpath -> {"hash", ...}) antes de aceptarlo.
-    Escribe a un .part y hace os.replace() al final por archivo -- mismo
+    """Descarga url en streaming, la descomprime con zstd tambien en streaming
+    y extrae cada miembro del tar (nombrado por su hash, ver
+    tools/updater/objectstore.stage_chunk) a TODAS las rutas locales de
+    expected_files (relpath -> {"hash", ...}) que compartan ese hash,
+    verificandolo antes de aceptarlo. Escribe a un .part y hace os.replace()
+    al final para la primera ruta, y copia desde ahi al resto -- mismo
     criterio de resistencia a cortes que la v1 de este sistema.
 
-    Lanza si algun archivo esperado no aparece en el tar, o si algun hash no
-    coincide -- el llamador decide como tratarlo (todo el chunk se descarta)."""
+    Lanza si algun contenido esperado no aparece en el tar, o si algun hash
+    no coincide -- el llamador decide como tratarlo (todo el chunk se
+    descarta)."""
+    by_hash: dict[str, list] = {}
+    for relpath, entry in expected_files.items():
+        by_hash.setdefault(entry["hash"], []).append(relpath)
+
     decompressor = zstandard.ZstdDecompressor()
     seen = set()
     with requests.get(url, stream=True, timeout=TIMEOUT) as r:
@@ -44,11 +54,12 @@ def _download_and_extract_chunk(url: str, expected_files: dict, staging_dir: str
         r.raw.decode_content = True
         with decompressor.stream_reader(r.raw) as zstream, tarfile.open(fileobj=zstream, mode="r|") as tar:
             for member in tar:
-                if not member.isfile() or member.name not in expected_files:
+                if not member.isfile() or member.name not in by_hash:
                     continue
-                dest_path = os.path.join(staging_dir, member.name.replace("/", os.sep))
-                os.makedirs(os.path.dirname(dest_path) or ".", exist_ok=True)
-                tmp_path = dest_path + ".part"
+                relpaths = by_hash[member.name]
+                first_dest = os.path.join(staging_dir, relpaths[0].replace("/", os.sep))
+                os.makedirs(os.path.dirname(first_dest) or ".", exist_ok=True)
+                tmp_path = first_dest + ".part"
                 src = tar.extractfile(member)
                 with open(tmp_path, "wb") as out:
                     while True:
@@ -57,16 +68,20 @@ def _download_and_extract_chunk(url: str, expected_files: dict, staging_dir: str
                             break
                         out.write(block)
 
-                if hash_file(tmp_path) != expected_files[member.name]["hash"]:
+                if hash_file(tmp_path) != member.name:
                     os.remove(tmp_path)
-                    raise ValueError(f"hash no coincide para {member.name} dentro del chunk")
+                    raise ValueError(f"hash no coincide para el contenido {member.name} dentro del chunk")
 
-                os.replace(tmp_path, dest_path)
+                os.replace(tmp_path, first_dest)
                 seen.add(member.name)
+                for relpath in relpaths[1:]:
+                    dest_path = os.path.join(staging_dir, relpath.replace("/", os.sep))
+                    os.makedirs(os.path.dirname(dest_path) or ".", exist_ok=True)
+                    shutil.copy2(first_dest, dest_path)
 
-    missing = set(expected_files) - seen
+    missing = set(by_hash) - seen
     if missing:
-        raise ValueError(f"el chunk no traia {len(missing)} archivo(s) esperado(s): {sorted(missing)}")
+        raise ValueError(f"el chunk no traia {len(missing)} contenido(s) esperado(s): {sorted(missing)}")
 
 
 def download_update(update_info, staging_dir: str, progress_callback=None) -> "DownloadResult":

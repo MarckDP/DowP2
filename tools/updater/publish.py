@@ -19,14 +19,16 @@ de una plataforma y lo sube, junto con los chunks nuevos, a un GitHub Release.
 
 Ver ACTUALIZACIONES.md para el diseno completo y su historia: la v1 de este
 sistema subia un objeto por archivo (~2600 objetos en un build de Windows) y
-choco con el limite duro de GitHub de 1000 assets por release. La v2 (esta)
-agrupa los archivos en ~200 "chunks" por hash de ruta (ver
+choco con el limite duro de GitHub de 1000 assets por release. La v2 agrupa
+los CONTENIDOS UNICOS en ~200 "chunks" por hash de contenido (ver
 core.updater.chunking) y sube un tar.zst por chunk -- lejos del limite de
-GitHub, y una actualizacion tipica solo invalida un puñado de chunks, no el
-build entero. Simplificacion explicita: la reutilizacion de chunks ya subidos
-solo mira el release inmediatamente anterior (`/releases/latest`), no todo el
-historial -- un chunk que cambio y volvio a un valor de hace varias versiones
-se resube (correcto, solo suboptimo).
+GitHub, deduplicando de verdad (un mismo contenido bajo varias rutas, como los
+symlinks Frameworks/Resources de macOS, se sube una sola vez), y una
+actualizacion tipica solo invalida un puñado de chunks, no el build entero.
+Simplificacion explicita: la reutilizacion de chunks ya subidos solo mira el
+release inmediatamente anterior (`/releases/latest`), no todo el historial --
+un chunk que cambio y volvio a un valor de hace varias versiones se resube
+(correcto, solo suboptimo).
 """
 import argparse
 import json
@@ -118,7 +120,8 @@ def fetch_manifest_json(repo: str, release: dict | None, token: str) -> dict | N
 
 def build_platform_manifest(dist_dir: str, chunk_reuse_map: dict, staging_dir: str,
                              find_existing_chunk_asset) -> tuple[dict, dict, list, int, int]:
-    """Hashea dist_dir, agrupa los archivos en chunks (chunk_id_for) y arma las
+    """Hashea dist_dir, agrupa los CONTENIDOS UNICOS en chunks (chunk_id_for,
+    por hash de contenido -- no de ruta, ver core.updater.chunking) y arma las
     entradas de esta plataforma.
 
     chunk_reuse_map: chunk_hash -> {"url": ..., "compressed_size": ...} de chunks
@@ -137,21 +140,26 @@ def build_platform_manifest(dist_dir: str, chunk_reuse_map: dict, staging_dir: s
     """
     local_files = objectstore.hash_tree(dist_dir)
 
-    by_chunk: dict[str, list] = {}
+    # Un representante (cualquiera) por cada contenido unico -- de donde leer
+    # los bytes reales al empaquetar, sin importar cuantos relpaths compartan
+    # ese mismo hash (symlinks Frameworks/Resources en macOS, por ejemplo).
+    hash_to_relpath: dict[str, str] = {}
     files = {}
     total_bytes = 0
+    by_chunk: dict[str, set] = {}
     for relpath, info in local_files.items():
-        cid = chunk_id_for(relpath)
-        files[relpath] = {"hash": info["hash"], "size": info["size"], "chunk": cid}
-        by_chunk.setdefault(cid, []).append((relpath, info["hash"]))
+        file_hash = info["hash"]
+        hash_to_relpath.setdefault(file_hash, relpath)
+        cid = chunk_id_for(file_hash)
+        files[relpath] = {"hash": file_hash, "size": info["size"], "chunk": cid}
+        by_chunk.setdefault(cid, set()).add(file_hash)
         total_bytes += info["size"]
 
     chunks, pending, changed_bytes = {}, [], 0
 
-    for cid, entries in sorted(by_chunk.items()):
-        chunk_hash = compute_chunk_hash(entries)
-        relpaths_sorted = sorted(relpath for relpath, _h in entries)
-        chunk_size = sum(local_files[relpath]["size"] for relpath in relpaths_sorted)
+    for cid, hashes in sorted(by_chunk.items()):
+        chunk_hash = compute_chunk_hash(hashes)
+        chunk_size = sum(local_files[hash_to_relpath[h]]["size"] for h in hashes)
 
         if chunk_hash in chunk_reuse_map:
             reused = chunk_reuse_map[chunk_hash]
@@ -173,9 +181,8 @@ def build_platform_manifest(dist_dir: str, chunk_reuse_map: dict, staging_dir: s
             }
             continue
 
-        staged_path, compressed_size = objectstore.stage_chunk(
-            relpaths_sorted, dist_dir, chunk_hash, staging_dir,
-        )
+        hash_to_path = {h: os.path.join(dist_dir, hash_to_relpath[h].replace("/", os.sep)) for h in hashes}
+        staged_path, compressed_size = objectstore.stage_chunk(hash_to_path, chunk_hash, staging_dir)
         chunks[cid] = {"hash": chunk_hash, "compressed_size": compressed_size, "url": None}
         pending.append((chunk_hash, staged_path, asset_name))
 

@@ -168,23 +168,34 @@ plataforma, un release nunca se acerca al límite de 1000 de GitHub aunque acumu
 plataformas — y una actualización típica (unos pocos archivos propios cambiados) solo invalida
 un puñado de chunks, no el build entero.
 
-**Asignación de archivo a chunk** (`chunk_id_for`):
+**Asignación de contenido a chunk** (`chunk_id_for`):
 
 ```python
-def chunk_id_for(relpath: str) -> str:
-    digest = hashlib.blake2b(relpath.encode("utf-8"), digest_size=4).digest()
-    return f"{int.from_bytes(digest, 'big') % NUM_CHUNKS:04d}"
+def chunk_id_for(file_hash: str) -> str:
+    return f"{int(file_hash[:8], 16) % NUM_CHUNKS:04d}"
 ```
 
-Es una función pura del **texto de la ruta**, no del contenido del archivo. Esto es
-deliberado: si dependiera del contenido, un archivo modificado "saltaría" de chunk entre
-versiones y no habría forma de saber qué chunk viejo invalidar. Al ser puro por ruta, el mismo
-`relpath` siempre cae en el mismo chunk, versión tras versión, exista o no todavía.
+Es una función pura del **hash del contenido**, no de la ruta del archivo. Primera versión de
+este diseño (misma sesión) usaba el hash de la *ruta* en vez del contenido — se cambió tras
+detectar, en el primer publish real de macOS, que los symlinks cruzados entre
+`Contents/Frameworks` y `Contents/Resources` (ver sección 10) hacen que el mismo contenido
+aparezca bajo dos rutas distintas; agrupando por ruta, esas dos copias caían en chunks
+distintos y se subían/bajaban dos veces (**~435MB de puro desperdicio**, medido en un release
+real: 785MB reportados contra solo 350MB de contenido único). Agrupando por hash de contenido,
+las dos rutas apuntan siempre al mismo chunk, y ese contenido se empaqueta y transfiere una
+sola vez sin importar cuántas rutas lo referencien — recupera la deduplicación que ya tenía la
+v1 ("un objeto por archivo"), sin volver a pagar el costo del límite de 1000 assets/release.
 
-**Hash combinado de un chunk** (`compute_chunk_hash`): concatenación ordenada (por relpath) de
-cada `(relpath, hash_de_archivo)` del grupo, hasheada con blake2b-256. Cambia si cambia el
-contenido de cualquier archivo del chunk, si se agrega uno nuevo, o si se saca uno — es
-exactamente la señal de "hay que volver a bajar este chunk entero".
+**Hash combinado de un chunk** (`compute_chunk_hash`): concatenación ordenada de los
+**contenidos únicos** (deduplicados) asignados al chunk, hasheada con blake2b-256. Cambia si
+cambia el contenido de cualquiera, si se agrega uno nuevo, o si se saca uno — es exactamente
+la señal de "hay que volver a bajar este chunk entero".
+
+**Empaquetado** (`objectstore.stage_chunk`): el `.tar` de un chunk guarda cada contenido
+nombrado por su **propio hash** (no por relpath) — un mismo miembro del tar puede corresponder
+a varias rutas del lado del cliente. `downloader._download_and_extract_chunk` extrae cada
+miembro una vez, verifica su hash, y lo copia a **todas** las rutas locales que lo referencian
+(`files[relpath].hash` coincidente) antes de darlo por aceptado.
 
 **Caso concreto verificado**: si en el futuro se agregan archivos que hoy no existen (por
 ejemplo, más librerías de PySide6), esos `relpath` nuevos caen en algún chunk por el mismo

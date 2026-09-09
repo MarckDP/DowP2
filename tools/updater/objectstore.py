@@ -46,11 +46,19 @@ def chunk_asset_name(chunk_hash: str) -> str:
     return f"{chunk_hash}.tar.zst"
 
 
-def stage_chunk(relpaths: list, dist_dir: str, chunk_hash: str, staging_dir: str) -> tuple[str, int]:
-    """Empaqueta relpaths (ya ordenados) de dist_dir en un tar, comprimido en
+def stage_chunk(hash_to_path: dict, chunk_hash: str, staging_dir: str) -> tuple[str, int]:
+    """Empaqueta el CONTENIDO UNICO de cada entrada de hash_to_path (hash hex
+    -> ruta absoluta de un archivo real con ese contenido -- cualquiera de
+    los que compartan hash sirve, ver publish.py) en un tar, comprimido en
     streaming con zstd, nombrado por chunk_hash -- el hash combinado del
-    grupo (ver core.updater.chunking.compute_chunk_hash), no un hash del tar
-    en si (tar no es reproducible byte a byte y no hace falta que lo sea).
+    grupo (ver core.updater.chunking.compute_chunk_hash).
+
+    Cada archivo se guarda en el tar con su propio HASH como nombre (arcname),
+    no con su relpath original: el mismo contenido puede corresponder a
+    varias rutas distintas del lado del cliente (symlinks Frameworks/
+    Resources en macOS, ver ACTUALIZACIONES.md), y empaquetar/desempaquetar
+    por hash en vez de por ruta es lo que permite escribirlo en todas esas
+    rutas sin subirlo mas de una vez.
 
     Devuelve (ruta_del_chunk_comprimido, tamano_comprimido). Si el chunk ya
     esta en staging (misma corrida re-ejecutada tras un corte), no lo vuelve
@@ -64,9 +72,8 @@ def stage_chunk(relpaths: list, dist_dir: str, chunk_hash: str, staging_dir: str
     tmp_path = dst_path + ".tmp"
     with open(tmp_path, "wb") as dst, compressor.stream_writer(dst) as zdst:
         with tarfile.open(fileobj=zdst, mode="w|") as tar:
-            for relpath in relpaths:
-                full_path = os.path.join(dist_dir, relpath.replace("/", os.sep))
-                tar.add(full_path, arcname=relpath)
+            for file_hash in sorted(hash_to_path):
+                tar.add(hash_to_path[file_hash], arcname=file_hash)
     os.replace(tmp_path, dst_path)
     return dst_path, os.path.getsize(dst_path)
 

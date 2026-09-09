@@ -28,6 +28,7 @@ import argparse
 import json
 import os
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import github_release as gh
 import objectstore
@@ -37,6 +38,18 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(os.path.dirname(HERE))
 VERSION_FILE = os.path.join(REPO_ROOT, "app", "src", "core", "version.py")
 STAGING_DIR = os.path.join(HERE, ".staging")
+
+# Subir un objeto a la vez tardaba del orden de una hora para ~2600 objetos (medido
+# en el primer publish real): cada request es un viaje de ida y vuelta a GitHub, y
+# en serie eso domina el tiempo total muy por encima de lo que tarda comprimir.
+# 10 en simultaneo es conservador a proposito -- GitHub documenta un limite de
+# ~100 requests concurrentes antes de aplicar rate limiting secundario, pero el
+# techo real para la mayoria de conexiones caseras es el propio ancho de banda de
+# subida: pasado cierto punto, mas hilos solo reparten el mismo ancho de banda
+# entre mas transferencias en vez de acelerar el total. github_release.upload_asset()
+# usa requests.post() a nivel de modulo (una Session efimera por llamada, no
+# compartida) -- seguro para llamar desde varios hilos a la vez sin cambios ahi.
+MAX_CONCURRENT_UPLOADS = 10
 
 # app/src no se instala como paquete -- se importa por ruta, igual que hace
 # main.py en runtime. get_platform_key() vive ahi (no aqui) porque el cliente
@@ -240,10 +253,29 @@ def main():
     if not args.dry_run:
         if current_release is None:
             current_release = gh.create_release(args.repo, tag, token, prerelease=args.prerelease)
-        for file_hash, staged_path, obj_name in pending:
-            if gh.find_asset(current_release, obj_name) is not None:
-                continue
-            gh.upload_asset(current_release, staged_path, obj_name, token)
+
+        # Filtro secuencial primero (barato, en memoria contra el snapshot ya
+        # traido) -- lo unico que se paraleliza es la subida en si, que es lo
+        # que de verdad tarda (ver MAX_CONCURRENT_UPLOADS mas arriba).
+        to_upload = [
+            (staged_path, obj_name) for _file_hash, staged_path, obj_name in pending
+            if gh.find_asset(current_release, obj_name) is None
+        ]
+
+        if to_upload:
+            print(f"Subiendo {len(to_upload)} objeto(s) nuevo(s) "
+                  f"(hasta {MAX_CONCURRENT_UPLOADS} en simultaneo)...")
+            done = 0
+            with ThreadPoolExecutor(max_workers=MAX_CONCURRENT_UPLOADS) as pool:
+                futures = {
+                    pool.submit(gh.upload_asset, current_release, staged_path, obj_name, token): obj_name
+                    for staged_path, obj_name in to_upload
+                }
+                for future in as_completed(futures):
+                    future.result()  # relanza cualquier error real de esa subida puntual
+                    done += 1
+                    if done % 100 == 0 or done == len(to_upload):
+                        print(f"  {done}/{len(to_upload)}")
 
     final_manifest = current_manifest or {}
     final_manifest["format"] = 1
